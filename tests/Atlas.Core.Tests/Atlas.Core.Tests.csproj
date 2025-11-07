@@ -17,7 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\1.Core\Atlas.Core\Atlas.Core.csproj" />
+    <ProjectReference Include="..\..\src\Atlas.Core\Atlas.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>
