@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,47 +17,85 @@ using System.Threading.Tasks;
 namespace Atlas.Data.Common.Extensions
 {
     /// <summary>
+    /// EF批量操作配置选项
+    /// </summary>
+    public class EFBulkOptions
+    {
+        /// <summary>
+        /// 批次大小，默认1000
+        /// </summary>
+        public int BatchSize { get; set; } = 1000;
+
+        /// <summary>
+        /// 是否返回插入后的ID，默认true
+        /// </summary>
+        public bool ReturnGeneratedIds { get; set; } = true;
+
+        /// <summary>
+        /// 空值处理策略，默认插入NULL
+        /// </summary>
+        public NullValueHandling NullValueHandling { get; set; } = NullValueHandling.InsertNull;
+    }
+
+    /// <summary>
+    /// 空值处理策略
+    /// </summary>
+    public enum NullValueHandling
+    {
+        /// <summary>
+        /// 插入NULL值
+        /// </summary>
+        InsertNull,
+
+        /// <summary>
+        /// 忽略空值字段（不插入该列）
+        /// </summary>
+        Ignore
+    }
+
+    /// <summary>
     /// 批量操作扩展方法
     /// 提供高性能的批量插入和更新功能，支持自动审计、乐观锁和事务管理
     /// </summary>
-    public static class SmartBatchExtensions
+    public static class BulkExtensions
     {
         #region 批量插入
 
         /// <summary>
         /// 批量插入实体
         /// </summary>
-        /// <typeparam name="TEntity">实体类型</typeparam>
-        /// <param name="context">数据库上下文</param>
-        /// <param name="entities">待插入的实体集合</param>
-        /// <param name="batchSize">批次大小，默认1000条</param>
-        /// <param name="cancellationToken">取消令牌</param>
-        /// <returns>插入的记录数</returns>
-        public static async Task<int> BatchInsertAsync<TEntity>(
+        public static async Task<int> BulkInsertAsync<TEntity>(
             this DbContext context,
             IEnumerable<TEntity> entities,
             int batchSize = 1000,
             CancellationToken cancellationToken = default)
             where TEntity : class
         {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (entities == null) throw new ArgumentNullException(nameof(entities));
-
-            var currentUserId = GetCurrentUserId(context);
-            return await BatchInsertAsync(context, entities, currentUserId, batchSize, cancellationToken);
+            return await BulkInsertAsync(context, entities, new EFBulkOptions { BatchSize = batchSize }, cancellationToken);
         }
 
         /// <summary>
-        /// 批量插入实体
+        /// 批量插入实体（带配置）
         /// </summary>
-        /// <typeparam name="TEntity">实体类型</typeparam>
-        /// <param name="context">数据库上下文</param>
-        /// <param name="entities">待插入的实体集合</param>
-        /// <param name="currentUserId">当前用户ID</param>
-        /// <param name="batchSize">批次大小，默认1000条</param>
-        /// <param name="cancellationToken">取消令牌</param>
-        /// <returns>插入的记录数</returns>
-        public static async Task<int> BatchInsertAsync<TEntity>(
+        public static async Task<int> BulkInsertAsync<TEntity>(
+            this DbContext context,
+            IEnumerable<TEntity> entities,
+            EFBulkOptions options,
+            CancellationToken cancellationToken = default)
+            where TEntity : class
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (entities == null) throw new ArgumentNullException(nameof(entities));
+            if (options == null) throw new ArgumentNullException(nameof(options));
+
+            var currentUserId = GetCurrentUserId(context);
+            return await BulkInsertAsync(context, entities, currentUserId, options, cancellationToken);
+        }
+
+        /// <summary>
+        /// 批量插入实体（指定用户ID）
+        /// </summary>
+        public static async Task<int> BulkInsertAsync<TEntity>(
             this DbContext context,
             IEnumerable<TEntity> entities,
             long? currentUserId,
@@ -64,13 +103,29 @@ namespace Atlas.Data.Common.Extensions
             CancellationToken cancellationToken = default)
             where TEntity : class
         {
+            return await BulkInsertAsync(context, entities, currentUserId,
+                new EFBulkOptions { BatchSize = batchSize }, cancellationToken);
+        }
+
+        /// <summary>
+        /// 批量插入实体（指定用户ID和配置）
+        /// </summary>
+        public static async Task<int> BulkInsertAsync<TEntity>(
+            this DbContext context,
+            IEnumerable<TEntity> entities,
+            long? currentUserId,
+            EFBulkOptions options,
+            CancellationToken cancellationToken = default)
+            where TEntity : class
+        {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (entities == null) throw new ArgumentNullException(nameof(entities));
+            if (options == null) throw new ArgumentNullException(nameof(options));
 
             var entityList = entities.ToList();
             if (entityList.Count == 0) return 0;
 
-            return await BatchInsertDirectAsync(context, entityList, currentUserId, batchSize, cancellationToken);
+            return await BulkInsertDirectAsync(context, entityList, currentUserId, options, cancellationToken);
         }
 
         #endregion
@@ -80,14 +135,10 @@ namespace Atlas.Data.Common.Extensions
         /// <summary>
         /// 批量更新实体
         /// </summary>
-        /// <typeparam name="TEntity">实体类型</typeparam>
-        /// <param name="context">数据库上下文</param>
-        /// <param name="entities">待更新的实体集合</param>
-        /// <param name="cancellationToken">取消令牌</param>
-        /// <returns>更新的记录数</returns>
-        public static async Task<int> BatchUpdateAsync<TEntity>(
+        public static async Task<int> BulkUpdateAsync<TEntity>(
             this DbContext context,
             IEnumerable<TEntity> entities,
+            Expression<Func<TEntity, object>>? updateFields = null,
             CancellationToken cancellationToken = default)
             where TEntity : class
         {
@@ -95,21 +146,16 @@ namespace Atlas.Data.Common.Extensions
             if (entities == null) throw new ArgumentNullException(nameof(entities));
 
             var currentUserId = GetCurrentUserId(context);
-            return await BatchUpdateAsync(context, entities, currentUserId, cancellationToken);
+            return await BulkUpdateAsync(context, entities, updateFields, currentUserId, cancellationToken);
         }
 
         /// <summary>
-        /// 批量更新实体
+        /// 批量更新实体（指定用户ID）
         /// </summary>
-        /// <typeparam name="TEntity">实体类型</typeparam>
-        /// <param name="context">数据库上下文</param>
-        /// <param name="entities">待更新的实体集合</param>
-        /// <param name="currentUserId">当前用户ID</param>
-        /// <param name="cancellationToken">取消令牌</param>
-        /// <returns>更新的记录数</returns>
-        public static async Task<int> BatchUpdateAsync<TEntity>(
+        public static async Task<int> BulkUpdateAsync<TEntity>(
             this DbContext context,
             IEnumerable<TEntity> entities,
+            Expression<Func<TEntity, object>>? updateFields,
             long? currentUserId,
             CancellationToken cancellationToken = default)
             where TEntity : class
@@ -120,7 +166,52 @@ namespace Atlas.Data.Common.Extensions
             var entityList = entities.ToList();
             if (entityList.Count == 0) return 0;
 
-            return await BatchUpdateDirectAsync(context, entityList, currentUserId, cancellationToken);
+            return await BulkUpdateDirectAsync(context, entityList, updateFields, currentUserId,
+                new EFBulkOptions(), cancellationToken);
+        }
+
+        /// <summary>
+        /// 批量更新实体（带配置）
+        /// </summary>
+        public static async Task<int> BulkUpdateAsync<TEntity>(
+            this DbContext context,
+            IEnumerable<TEntity> entities,
+            Expression<Func<TEntity, object>> updateFields,
+            EFBulkOptions options,
+            CancellationToken cancellationToken = default)
+            where TEntity : class
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (entities == null) throw new ArgumentNullException(nameof(entities));
+            if (options == null) throw new ArgumentNullException(nameof(options));
+
+            var currentUserId = GetCurrentUserId(context);
+            var entityList = entities.ToList();
+            if (entityList.Count == 0) return 0;
+
+            return await BulkUpdateDirectAsync(context, entityList, updateFields, currentUserId, options, cancellationToken);
+        }
+
+        /// <summary>
+        /// 批量更新实体（完整参数）
+        /// </summary>
+        public static async Task<int> BulkUpdateAsync<TEntity>(
+            this DbContext context,
+            IEnumerable<TEntity> entities,
+            Expression<Func<TEntity, object>> updateFields,
+            long? currentUserId,
+            EFBulkOptions options,
+            CancellationToken cancellationToken = default)
+            where TEntity : class
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (entities == null) throw new ArgumentNullException(nameof(entities));
+            if (options == null) throw new ArgumentNullException(nameof(options));
+
+            var entityList = entities.ToList();
+            if (entityList.Count == 0) return 0;
+
+            return await BulkUpdateDirectAsync(context, entityList, updateFields, currentUserId, options, cancellationToken);
         }
 
         #endregion
@@ -130,11 +221,11 @@ namespace Atlas.Data.Common.Extensions
         /// <summary>
         /// 直接批量插入（不依赖ChangeTracker）
         /// </summary>
-        private static async Task<int> BatchInsertDirectAsync<TEntity>(
+        private static async Task<int> BulkInsertDirectAsync<TEntity>(
             DbContext context,
             List<TEntity> entities,
             long? currentUserId,
-            int batchSize,
+            EFBulkOptions options,
             CancellationToken cancellationToken)
             where TEntity : class
         {
@@ -155,8 +246,7 @@ namespace Atlas.Data.Common.Extensions
                     if (entity is BaseEntity baseEntity && baseEntity.Id == 0)
                     {
                         throw new InvalidOperationException(
-                            $"实体 {typeof(TEntity).Name} 的主键不是数据库自动生成类型，必须在插入前设置ID值。" +
-                            $"请确保实体的ID已被赋值，或将主键配置为数据库自增。");
+                            $"实体 {typeof(TEntity).Name} 的主键不是数据库自动生成类型，必须在插入前设置ID值。");
                     }
                 }
             }
@@ -185,69 +275,102 @@ namespace Atlas.Data.Common.Extensions
 
             try
             {
-                for (int i = 0; i < entities.Count; i += batchSize)
+                for (int i = 0; i < entities.Count; i += options.BatchSize)
                 {
-                    var batch = entities.Skip(i).Take(batchSize).ToList();
+                    var batch = entities.Skip(i).Take(options.BatchSize).ToList();
 
-                    // 设置审计字段
                     foreach (var entity in batch)
                     {
                         SetAuditFieldsForInsert(entity, currentUserId, now);
                     }
 
-                    // 构建SQL
                     var sql = new StringBuilder();
-                    sql.Append($"INSERT INTO {fullTableName} (");
-
-                    var columnNames = properties.Select(p => $"`{p.GetColumnName()}`").ToList();
-                    sql.Append(string.Join(", ", columnNames));
-                    sql.Append(") VALUES ");
-
                     var parameters = new List<DbParameter>();
                     var valueClauses = new List<string>();
                     int paramIndex = 0;
 
-                    foreach (var entity in batch)
+                    if (options.NullValueHandling == NullValueHandling.Ignore)
                     {
-                        var values = new List<string>();
-                        foreach (var prop in properties)
+                        foreach (var entity in batch)
                         {
-                            var value = prop.PropertyInfo?.GetValue(entity);
-                            var param = connection.CreateCommand().CreateParameter();
-                            param.ParameterName = $"@p{paramIndex}";
-                            param.Value = value ?? DBNull.Value;
-                            parameters.Add(param);
-                            values.Add($"@p{paramIndex}");
-                            paramIndex++;
+                            var entityColumns = new List<string>();
+                            var entityValues = new List<string>();
+
+                            foreach (var prop in properties)
+                            {
+                                var value = prop.PropertyInfo?.GetValue(entity);
+                                if (value != null)
+                                {
+                                    entityColumns.Add($"`{prop.GetColumnName()}`");
+                                    var param = connection.CreateCommand().CreateParameter();
+                                    param.ParameterName = $"@p{paramIndex}";
+                                    param.Value = value;
+                                    parameters.Add(param);
+                                    entityValues.Add($"@p{paramIndex}");
+                                    paramIndex++;
+                                }
+                            }
+
+                            if (entityColumns.Count > 0)
+                            {
+                                sql.Append($"INSERT INTO {fullTableName} (");
+                                sql.Append(string.Join(", ", entityColumns));
+                                sql.Append(") VALUES (");
+                                sql.Append(string.Join(", ", entityValues));
+                                sql.AppendLine(");");
+                            }
                         }
-                        valueClauses.Add($"({string.Join(", ", values)})");
                     }
-
-                    sql.Append(string.Join(", ", valueClauses));
-
-                    // 执行SQL
-                    using var command = connection.CreateCommand();
-                    command.CommandText = sql.ToString();
-                    foreach (var param in parameters)
+                    else
                     {
-                        command.Parameters.Add(param);
-                    }
+                        var columnNames = properties.Select(p => $"`{p.GetColumnName()}`").ToList();
+                        sql.Append($"INSERT INTO {fullTableName} (");
+                        sql.Append(string.Join(", ", columnNames));
+                        sql.Append(") VALUES ");
 
-                    var affected = await command.ExecuteNonQueryAsync(cancellationToken);
-                    totalInserted += affected;
-
-                    // ID回填
-                    if (isDbGeneratedId && idProperty != null)
-                    {
-                        using var cmd = connection.CreateCommand();
-                        cmd.CommandText = "SELECT LAST_INSERT_ID()";
-                        var lastInsertId = Convert.ToInt64(await cmd.ExecuteScalarAsync(cancellationToken));
-
-                        for (int j = 0; j < batch.Count; j++)
+                        foreach (var entity in batch)
                         {
-                            var entity = batch[j];
-                            var newId = lastInsertId + j;
-                            idProperty.PropertyInfo?.SetValue(entity, newId);
+                            var values = new List<string>();
+                            foreach (var prop in properties)
+                            {
+                                var value = prop.PropertyInfo?.GetValue(entity);
+                                var param = connection.CreateCommand().CreateParameter();
+                                param.ParameterName = $"@p{paramIndex}";
+                                param.Value = value ?? DBNull.Value;
+                                parameters.Add(param);
+                                values.Add($"@p{paramIndex}");
+                                paramIndex++;
+                            }
+                            valueClauses.Add($"({string.Join(", ", values)})");
+                        }
+
+                        sql.Append(string.Join(", ", valueClauses));
+                    }
+
+                    if (parameters.Count > 0)
+                    {
+                        using var command = connection.CreateCommand();
+                        command.CommandText = sql.ToString();
+                        foreach (var param in parameters)
+                        {
+                            command.Parameters.Add(param);
+                        }
+
+                        var affected = await command.ExecuteNonQueryAsync(cancellationToken);
+                        totalInserted += affected;
+
+                        if (options.ReturnGeneratedIds && isDbGeneratedId && idProperty != null)
+                        {
+                            using var cmd = connection.CreateCommand();
+                            cmd.CommandText = "SELECT LAST_INSERT_ID()";
+                            var lastInsertId = Convert.ToInt64(await cmd.ExecuteScalarAsync(cancellationToken));
+
+                            for (int j = 0; j < batch.Count; j++)
+                            {
+                                var entity = batch[j];
+                                var newId = lastInsertId + j;
+                                idProperty.PropertyInfo?.SetValue(entity, newId);
+                            }
                         }
                     }
                 }
@@ -268,10 +391,12 @@ namespace Atlas.Data.Common.Extensions
         /// <summary>
         /// 直接批量更新（不依赖ChangeTracker）
         /// </summary>
-        private static async Task<int> BatchUpdateDirectAsync<TEntity>(
+        private static async Task<int> BulkUpdateDirectAsync<TEntity>(
             DbContext context,
             List<TEntity> entities,
+            Expression<Func<TEntity, object>>? updateFields,
             long? currentUserId,
+            EFBulkOptions options,
             CancellationToken cancellationToken)
             where TEntity : class
         {
@@ -291,7 +416,6 @@ namespace Atlas.Data.Common.Extensions
 
             var now = DateTime.UtcNow;
 
-            // 保存原始version（在设置审计字段之前）
             var originalVersions = new Dictionary<object, int>();
             if (hasVersion && versionProperty != null)
             {
@@ -303,15 +427,37 @@ namespace Atlas.Data.Common.Extensions
                 }
             }
 
-            // 设置审计字段（会递增version）
             foreach (var entity in entities)
             {
                 SetAuditFieldsForUpdate(entity, currentUserId, now);
             }
 
-            // 获取所有非主键属性
+            var updatePropertyNames = new HashSet<string>();
+            if (updateFields != null)
+            {
+                var propertyNames = ExtractPropertyNames(updateFields);
+                foreach (var name in propertyNames)
+                {
+                    updatePropertyNames.Add(name);
+                }
+            }
+
             var updateProperties = entityType.GetProperties()
-                .Where(p => !p.IsKey() && !p.ValueGenerated.HasFlag(ValueGenerated.OnUpdate))
+                .Where(p =>
+                {
+                    if (p.IsKey()) return false;
+                    if (p.ValueGenerated.HasFlag(ValueGenerated.OnUpdate)) return false;
+
+                    if (updatePropertyNames.Count > 0)
+                    {
+                        if (p.Name == "UpdatedAt" || p.Name == "UpdatedBy" || p.Name == "Version")
+                            return true;
+
+                        return updatePropertyNames.Contains(p.Name);
+                    }
+
+                    return true;
+                })
                 .ToList();
 
             var connection = context.Database.GetDbConnection();
@@ -363,7 +509,7 @@ namespace Atlas.Data.Common.Extensions
                     using var command = connection.CreateCommand();
                     command.Transaction = transaction.GetDbTransaction();
                     command.CommandText = sqlBatch.ToString();
-                    foreach (var param in parameters)
+                    foreach (var  param in parameters)
                     {
                         command.Parameters.Add(param);
                     }
@@ -373,8 +519,7 @@ namespace Atlas.Data.Common.Extensions
                     if (hasVersion && affected != entities.Count)
                     {
                         throw new DbUpdateConcurrencyException(
-                            $"乐观锁冲突：期望更新 {entities.Count} 条记录，实际更新 {affected} 条。" +
-                            $"数据可能已被其他用户修改。");
+                            $"乐观锁冲突：期望更新 {entities.Count} 条记录，实际更新 {affected} 条。");
                     }
 
                     await transaction.CommitAsync(cancellationToken);
@@ -396,6 +541,38 @@ namespace Atlas.Data.Common.Extensions
         #endregion
 
         #region 辅助方法
+
+        /// <summary>
+        /// 从表达式树中提取属性名称
+        /// </summary>
+        private static List<string> ExtractPropertyNames<TEntity>(Expression<Func<TEntity, object>> selector)
+        {
+            var propertyNames = new List<string>();
+
+            if (selector.Body is NewExpression newExpression)
+            {
+                foreach (var argument in newExpression.Arguments)
+                {
+                    if (argument is MemberExpression memberExpression)
+                    {
+                        propertyNames.Add(memberExpression.Member.Name);
+                    }
+                }
+            }
+            else if (selector.Body is MemberExpression memberExpr)
+            {
+                propertyNames.Add(memberExpr.Member.Name);
+            }
+            else if (selector.Body is UnaryExpression unaryExpression)
+            {
+                if (unaryExpression.Operand is MemberExpression memberOperand)
+                {
+                    propertyNames.Add(memberOperand.Member.Name);
+                }
+            }
+
+            return propertyNames;
+        }
 
         /// <summary>
         /// 设置插入时的审计字段
@@ -452,31 +629,5 @@ namespace Atlas.Data.Common.Extensions
         }
 
         #endregion
-    }
-
-    /// <summary>
-    /// 批量保存结果
-    /// </summary>
-    public class BatchSaveResult
-    {
-        /// <summary>
-        /// 插入的记录数
-        /// </summary>
-        public int InsertedCount { get; set; }
-
-        /// <summary>
-        /// 更新的记录数
-        /// </summary>
-        public int UpdatedCount { get; set; }
-
-        /// <summary>
-        /// 总操作记录数
-        /// </summary>
-        public int TotalCount => InsertedCount + UpdatedCount;
-
-        public override string ToString()
-        {
-            return $"插入: {InsertedCount}, 更新: {UpdatedCount}, 总计: {TotalCount}";
-        }
     }
 }

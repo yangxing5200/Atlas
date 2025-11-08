@@ -28,7 +28,7 @@ namespace Atlas.Integration.Tests
         private readonly TestDbContext _context;
         private readonly MockCurrentUserService _mockUserService;
         private readonly ITestOutputHelper _output;
-        private readonly IIdGenerator _idGenerator= new SnowflakeIdGeneratorFactory(1, 1).GetGenerator();
+        private readonly IIdGenerator _idGenerator = new SnowflakeIdGeneratorFactory(1, 1).GetGenerator();
 
         public BatchMySqlTests(ITestOutputHelper output)
         {
@@ -99,7 +99,7 @@ namespace Atlas.Integration.Tests
 
             // Act
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var cnt = await _context.BatchInsertAsync(tenants);
+            var cnt = await _context.BulkInsertAsync(tenants);
             sw.Stop();
 
             // Assert
@@ -135,7 +135,7 @@ namespace Atlas.Integration.Tests
                 new TestTenant { Name      = "租户C", Code = "MC", Status = 1 },
             };
 
-            await _context.BatchInsertAsync(tenants);
+            await _context.BulkInsertAsync(tenants);
             var originalVersions = tenants.Select(t => t.Version).ToList();
             var originalCreatedAts = tenants.Select(t => t.CreatedAt).ToList();
 
@@ -154,7 +154,7 @@ namespace Atlas.Integration.Tests
 
             // Act
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var cnt = await _context.BatchUpdateAsync(tenants);
+            var cnt = await _context.BulkUpdateAsync(tenants, x => new { x.Status });
             sw.Stop();
 
             // Assert
@@ -210,7 +210,7 @@ namespace Atlas.Integration.Tests
 
             // Act
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var cnt = await _context.BatchInsertAsync(tenants, batchSize: batchSize);
+            var cnt = await _context.BulkInsertAsync(tenants, batchSize: batchSize);
             sw.Stop();
 
             // Assert
@@ -250,7 +250,7 @@ namespace Atlas.Integration.Tests
 
             // Act
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var cnt = await _context.BatchInsertAsync(users);
+            var cnt = await _context.BulkInsertAsync(users);
             sw.Stop();
 
             // Assert
@@ -310,7 +310,7 @@ namespace Atlas.Integration.Tests
                 .ToList();
 
             var sw2 = System.Diagnostics.Stopwatch.StartNew();
-            await _context.BatchInsertAsync(tenants2);
+            await _context.BulkInsertAsync(tenants2);
             sw2.Stop();
 
             _output.WriteLine($"📊 SmartBatchSave: {sw2.ElapsedMilliseconds}ms");
