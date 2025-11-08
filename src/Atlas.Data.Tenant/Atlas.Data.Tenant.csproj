@@ -1,7 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <ProjectReference Include="..\Atlas.Core\Atlas.Core.csproj" />
     <ProjectReference Include="..\Atlas.Data.Abstractions\Atlas.Data.Abstractions.csproj" />
+    <ProjectReference Include="..\Atlas.Data.EntityFramework\Atlas.Data.Common.csproj" />
+    <ProjectReference Include="..\Atlas.Models.Tenant\Atlas.Models.Tenant.csproj" />
   </ItemGroup>
 
   <ItemGroup>

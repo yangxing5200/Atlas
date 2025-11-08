@@ -78,4 +78,17 @@ namespace Atlas.Core.Entities
         /// </summary>
         public long? DeletedBy { get; set; }
     }
+
+    public abstract class VersionedEntity : AuditableEntity
+    {
+        /// <summary>
+        /// 版本号（用于乐观锁）
+        /// </summary>
+        public int Version { get; set; }
+    }
+
+    public abstract class TenantVersionedEntity : VersionedEntity
+    {
+        public long TenantId { get; set; }
+    }
 }

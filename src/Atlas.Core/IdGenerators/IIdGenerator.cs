@@ -1,6 +1,4 @@
-﻿// Atlas.Core/IdGenerators/IIdGenerator.cs
-
-namespace Atlas.Core.IdGenerators;
+﻿namespace Atlas.Core.IdGenerators;
 
 /// <summary>
 /// ID 生成器接口

@@ -1,3 +1,5 @@
+using Xunit;
+
 namespace Atlas.Integration.Tests;
 
 public class UnitTest1
