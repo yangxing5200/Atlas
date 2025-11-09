@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Atlas.Infrastructure.Caching.Serialization;
 
@@ -14,8 +15,13 @@ public class JsonCacheSerializer : ICacheSerializer
     {
         _options = new JsonSerializerOptions
         {
-            PropertyNameCaseInsensitive = true,
-            WriteIndented = false
+            // 启用循环引用处理
+            ReferenceHandler = ReferenceHandler.Preserve,
+
+            // 其他常用配置
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = false,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
     }
 

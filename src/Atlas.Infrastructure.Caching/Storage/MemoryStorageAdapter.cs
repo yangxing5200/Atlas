@@ -94,6 +94,10 @@ public class MemoryStorageAdapter : StorageAdapterBase
         {
             if (await RemoveAsync(key, cancellationToken))
                 count++;
+            if (key.EndsWith("*"))
+            {
+                await RemoveAsync(key.TrimEnd('*'), cancellationToken);
+            }
         }
         return count;
     }

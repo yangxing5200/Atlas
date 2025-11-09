@@ -181,7 +181,7 @@ public class CacheIntegrationTests : IAsyncLifetime
         var services = new ServiceCollection();
 
         // Logging
-        services.AddLogging();
+        services.AddLogging(b => b.AddDebug());
 
         // CurrentUser
         services.AddSingleton<ICurrentUserService>(TestCurrentUserService.CreateTenant1User());
@@ -254,6 +254,8 @@ public class CacheIntegrationTests : IAsyncLifetime
     #endregion
 
     #region 场景1: 基础缓存流程（Redis）
+
+
 
     [Fact]
     public async Task Scenario1_BasicCacheFlow_WithRedis_ShouldWorkCorrectly()
@@ -613,7 +615,7 @@ public class CacheIntegrationTests : IAsyncLifetime
     {
         // 租户1的服务提供者
         var tenant1Services = new ServiceCollection();
-        tenant1Services.AddLogging();
+        tenant1Services.AddLogging(b => b.AddDebug());
         tenant1Services.AddSingleton<ICurrentUserService>(TestCurrentUserService.CreateTenant1User());
         tenant1Services.AddAtlasCache(options =>
         {
@@ -625,7 +627,7 @@ public class CacheIntegrationTests : IAsyncLifetime
 
         // 租户2的服务提供者
         var tenant2Services = new ServiceCollection();
-        tenant2Services.AddLogging();
+        tenant2Services.AddLogging(b => b.AddDebug());
         tenant2Services.AddSingleton<ICurrentUserService>(TestCurrentUserService.CreateTenant2User());
         tenant2Services.AddAtlasCache(options =>
         {
@@ -689,7 +691,7 @@ public class CacheIntegrationTests : IAsyncLifetime
 
         // 创建新的服务实例（模拟应用重启）
         var newServices = new ServiceCollection();
-        newServices.AddLogging();
+        newServices.AddLogging(b => b.AddDebug());
         newServices.AddSingleton<ICurrentUserService>(TestCurrentUserService.CreateTenant1User());
         newServices.AddAtlasCache(options =>
         {
@@ -804,7 +806,7 @@ public class RedisFixture : IAsyncLifetime
         try
         {
             var services = new ServiceCollection();
-            services.AddLogging();
+            services.AddLogging(b => b.AddDebug());
             services.AddSingleton<ICurrentUserService>(TestCurrentUserService.CreateTenant1User());
             services.AddAtlasCache(options =>
             {
