@@ -24,6 +24,7 @@ namespace Atlas.Data.Global
 
         //   实现IHasCurrentUser接口（供SmartBatchExtensions使用）
         public long? CurrentUserId => _currentUserService.UserId;
+        public long? StoreId => _currentUserService.StoreId;
         public long? CurrentTenantId => _currentUserService.TenantId;
 
         // DbSet定义

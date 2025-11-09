@@ -30,6 +30,8 @@
     </ItemGroup>
 
     <ItemGroup>
+      <ProjectReference Include="..\..\src\Atlas.Infrastructure.Caching\Atlas.Infrastructure.Caching.csproj" />
+      <ProjectReference Include="..\Atlas.Core.Tests\Atlas.Core.Tests.csproj" />
       <ProjectReference Include="..\Atlas.Data.Tests\Atlas.Data.Tests.csproj" />
     </ItemGroup>
 

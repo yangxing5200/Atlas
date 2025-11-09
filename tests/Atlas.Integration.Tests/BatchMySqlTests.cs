@@ -1,8 +1,4 @@
-﻿// ============================================================
-// 文件路径: Atlas.Integration.Tests/SmartBatchMySqlTests.cs
-// ============================================================
-
-using Atlas.Core.IdGenerators;
+﻿using Atlas.Core.IdGenerators;
 using Atlas.Data.Common.Extensions;
 using Atlas.Data.Common.Interceptors;
 using Atlas.Data.Tests;
@@ -154,7 +150,7 @@ namespace Atlas.Integration.Tests
 
             // Act
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var cnt = await _context.BulkUpdateAsync(tenants, x => new { x.Status });
+            var cnt = await _context.BulkUpdateAsync(tenants);
             sw.Stop();
 
             // Assert

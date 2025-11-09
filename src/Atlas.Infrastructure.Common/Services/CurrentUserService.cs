@@ -20,6 +20,8 @@ namespace Atlas.Infrastructure.Common.Services
 
         public string UserName => GetUserName();
 
+        public long? StoreId => GetStoreId();
+
         public long? TenantId => GetTenantId();
 
         public bool IsAuthenticated =>
@@ -53,6 +55,23 @@ namespace Atlas.Infrastructure.Common.Services
             return httpContext.User.Identity?.Name
                 ?? httpContext.User.FindFirst(ClaimTypes.Name)?.Value
                 ?? httpContext.User.FindFirst("name")?.Value;
+        }
+
+        private long? GetStoreId()
+        {
+            var httpContext = _httpContextAccessor.HttpContext;
+            if (httpContext?.User == null) return null;
+
+            // 尝试从Claim中获取TenantId
+            var storeIdClaim = httpContext.User.FindFirst("storeId")
+                ?? httpContext.User.FindFirst("sid");
+
+            if (storeIdClaim != null && long.TryParse(storeIdClaim.Value, out var storeId))
+            {
+                return storeId;
+            }
+
+            return null;
         }
 
         private long? GetTenantId()

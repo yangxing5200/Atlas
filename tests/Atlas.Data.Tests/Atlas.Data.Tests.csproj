@@ -36,6 +36,7 @@
       <ProjectReference Include="..\..\src\Atlas.Core\Atlas.Core.csproj" />
       <ProjectReference Include="..\..\src\Atlas.Data.Abstractions\Atlas.Data.Abstractions.csproj" />
       <ProjectReference Include="..\..\src\Atlas.Data.EntityFramework\Atlas.Data.Common.csproj" />
+      <ProjectReference Include="..\..\src\Atlas.Infrastructure.Caching\Atlas.Infrastructure.Caching.csproj" />
     </ItemGroup>
 
     <ItemGroup>

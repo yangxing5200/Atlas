@@ -16,6 +16,11 @@
         string UserName { get; }
 
         /// <summary>
+        /// 当前门店ID
+        /// </summary>
+        long? StoreId { get; }
+
+        /// <summary>
         /// 当前租户ID
         /// </summary>
         long? TenantId { get; }

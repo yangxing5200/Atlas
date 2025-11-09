@@ -25,6 +25,7 @@ namespace Atlas.Data.Tenant
 
         // 实现IHasCurrentUser接口
         public long? CurrentUserId => _currentUserService.UserId;
+        public long? StoreId => _currentUserService.StoreId;
         public long? CurrentTenantId => _currentUserService.TenantId;
 
         // DbSet定义
