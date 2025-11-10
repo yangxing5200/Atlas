@@ -3,7 +3,7 @@ using Atlas.Infrastructure.Caching.Dependencies;
 namespace Atlas.Infrastructure.Caching.Keys;
 
 /// <summary>
-/// 缓存键实例，包含完整的键路径、过期时间和作用域标签
+/// 缓存键实例，封装完整的缓存键路径、过期策略和依赖标签
 /// </summary>
 public class CacheKeyInstance
 {
@@ -12,25 +12,31 @@ public class CacheKeyInstance
     private readonly object? _instanceValue;
 
     /// <summary>
-    /// 完整的缓存键，包含作用域前缀和实例标识
+    /// 完整的缓存键，格式：Atlas:{TenantId}:{StoreId}:{UserId}:{KeyName}:{InstanceValue}
     /// </summary>
     public string UniqueKey { get; }
 
     /// <summary>
-    /// 实际过期时间（含随机偏移）
+    /// 实际过期时间（基础TTL + 随机偏移）
     /// </summary>
     public TimeSpan ActualExpiration { get; }
 
     /// <summary>
-    /// 实例值，用于依赖解析
+    /// 缓存键的实例值（如商品ID、用户ID等）
     /// </summary>
     public object? InstanceValue => _instanceValue;
 
     /// <summary>
-    /// 标签集合，包含作用域信息用于失效协调
+    /// 依赖标签集合，用于失效时的精确匹配
     /// </summary>
     public IReadOnlyList<string> Tags { get; }
 
+    /// <summary>
+    /// 初始化缓存键实例
+    /// </summary>
+    /// <param name="definition">缓存键定义</param>
+    /// <param name="context">作用域上下文</param>
+    /// <param name="instanceValue">实例值（可选）</param>
     public CacheKeyInstance(
         CacheKeyDefinition definition,
         ScopeContext context,
@@ -46,40 +52,34 @@ public class CacheKeyInstance
     }
 
     /// <summary>
-    /// 构建完整的缓存键路径
+    /// 构建唯一缓存键
     /// </summary>
     /// <remarks>
-    /// 键格式：Atlas:{Scope前缀}:{KeyName}:{InstanceValue}
+    /// <para>键格式规则：Atlas:{Scope层级}:{KeyName}[:{InstanceValue}]</para>
     /// <para>层级结构：</para>
     /// <list type="bullet">
-    /// <item>Global: Atlas:KeyName</item>
-    /// <item>Tenant: Atlas:TenantId:KeyName</item>
-    /// <item>Store: Atlas:TenantId:StoreId:KeyName</item>
-    /// <item>User: Atlas:TenantId:StoreId:UserId:KeyName</item>
-    /// <item>带实例值: Atlas:...:KeyName:InstanceValue</item>
+    /// <item><description>Global: Atlas:KeyName</description></item>
+    /// <item><description>Tenant: Atlas:{TenantId}:KeyName</description></item>
+    /// <item><description>Store: Atlas:{TenantId}:{StoreId}:KeyName</description></item>
+    /// <item><description>User: Atlas:{TenantId}:{StoreId}:{UserId}:KeyName</description></item>
     /// </list>
     /// </remarks>
-    /// <returns>格式化的缓存键字符串</returns>
     private string BuildUniqueKey()
     {
-        // 预分配容量避免扩容（通常包含4-6个部分）
         var parts = new List<string>(6);
 
-        // 根据作用域按顺序添加层级前缀
+        // 按作用域添加层级前缀
         switch (_definition.Scope)
         {
             case CacheKeyScope.Global:
-                // 全局作用域：无前缀
                 break;
 
             case CacheKeyScope.Tenant:
-                // 租户级别：TenantId
                 if (_context.TenantId.HasValue)
                     parts.Add(_context.TenantId.Value.ToString());
                 break;
 
             case CacheKeyScope.Store:
-                // 店铺级别：TenantId:StoreId
                 if (_context.TenantId.HasValue)
                     parts.Add(_context.TenantId.Value.ToString());
                 if (_context.StoreId.HasValue)
@@ -87,7 +87,6 @@ public class CacheKeyInstance
                 break;
 
             case CacheKeyScope.User:
-                // 用户级别：TenantId:StoreId:UserId
                 if (_context.TenantId.HasValue)
                     parts.Add(_context.TenantId.Value.ToString());
                 if (_context.StoreId.HasValue)
@@ -106,13 +105,15 @@ public class CacheKeyInstance
             parts.Add(_instanceValue.ToString()!);
         }
 
-        // 拼接最终键：Atlas:{parts}
         return $"Atlas:{string.Join(":", parts)}";
     }
 
     /// <summary>
-    /// 计算过期时间，添加随机偏移防止缓存雪崩
+    /// 计算实际过期时间
     /// </summary>
+    /// <remarks>
+    /// 在基础TTL上添加随机偏移，防止大量缓存同时过期导致缓存雪崩
+    /// </remarks>
     private TimeSpan CalculateExpiration()
     {
         var expiration = _definition.DefaultExpiration;
@@ -128,16 +129,21 @@ public class CacheKeyInstance
     }
 
     /// <summary>
-    /// 生成包含作用域信息的依赖标签
+    /// 生成依赖标签
     /// </summary>
     /// <remarks>
-    /// 标签格式：Atlas:{Scope前缀}:dependency|entity:{EntityType}[:{InstanceKey}][:{Property}]
+    /// <para>标签格式：Atlas:{Scope层级}:{TagType}:{EntityType}[:{InstanceKey}][:{Property}]</para>
     /// <para>标签类型：</para>
     /// <list type="bullet">
-    /// <item>类型级别: Atlas:123:456:dependency:Product</item>
-    /// <item>类型属性: Atlas:123:456:dependency:Product:Price</item>
-    /// <item>实例级别: Atlas:123:456:entity:Order:100</item>
-    /// <item>实例属性: Atlas:123:456:entity:Order:100:Status</item>
+    /// <item><description>dependency - 类型级依赖（关注整个实体类型）</description></item>
+    /// <item><description>entity - 实例级依赖（关注特定实例）</description></item>
+    /// </list>
+    /// <para>标签示例：</para>
+    /// <list type="bullet">
+    /// <item><description>类型标签: Atlas:123:dependency:Product</description></item>
+    /// <item><description>类型属性标签: Atlas:123:dependency:Product:Price</description></item>
+    /// <item><description>实例标签: Atlas:123:entity:Product:100</description></item>
+    /// <item><description>实例属性标签: Atlas:123:entity:Product:100:Price</description></item>
     /// </list>
     /// </remarks>
     private IEnumerable<string> GenerateTags()
@@ -155,40 +161,11 @@ public class CacheKeyInstance
 
             if (dependency.Level == DependencyLevel.Type)
             {
-                // 类型级别依赖：dependency:EntityType
-                tags.Add(BuildScopedTag($"dependency:{entityTypeName}"));
-
-                // 属性级别：dependency:EntityType:PropertyName
-                if (dependency.TriggerProperties != null && dependency.TriggerProperties.Count > 0)
-                {
-                    foreach (var property in dependency.TriggerProperties)
-                    {
-                        tags.Add(BuildScopedTag($"dependency:{entityTypeName}:{property}"));
-                    }
-                }
+                GenerateTypeLevelTags(tags, entityTypeName, dependency);
             }
             else if (dependency.Level == DependencyLevel.Instance)
             {
-                // 实例级别依赖
-                if (TryExtractInstanceKey(dependency, out var instanceKey))
-                {
-                    // entity:EntityType:InstanceId
-                    tags.Add(BuildScopedTag($"entity:{entityTypeName}:{instanceKey}"));
-
-                    // entity:EntityType:InstanceId:PropertyName
-                    if (dependency.TriggerProperties != null && dependency.TriggerProperties.Count > 0)
-                    {
-                        foreach (var property in dependency.TriggerProperties)
-                        {
-                            tags.Add(BuildScopedTag($"entity:{entityTypeName}:{instanceKey}:{property}"));
-                        }
-                    }
-                }
-                else
-                {
-                    // 无法提取实例键时，降级为类型级别
-                    tags.Add(BuildScopedTag($"dependency:{entityTypeName}"));
-                }
+                GenerateInstanceLevelTags(tags, entityTypeName, dependency);
             }
         }
 
@@ -196,40 +173,110 @@ public class CacheKeyInstance
     }
 
     /// <summary>
-    /// 构建带作用域前缀的完整标签
+    /// 生成类型级依赖标签
     /// </summary>
+    /// <param name="tags">标签集合</param>
+    /// <param name="entityTypeName">实体类型名</param>
+    /// <param name="dependency">依赖定义</param>
+    private void GenerateTypeLevelTags(
+        HashSet<string> tags,
+        string entityTypeName,
+        CacheDependency dependency)
+    {
+        if (dependency.TriggerProperties != null && dependency.TriggerProperties.Count > 0)
+        {
+            // 精确失效策略：只生成指定属性的标签
+            foreach (var property in dependency.TriggerProperties)
+            {
+                tags.Add(BuildScopedTag($"dependency:{entityTypeName}:{property}"));
+            }
+        }
+        else
+        {
+            // 宽松失效策略：任何属性变化都触发失效
+            tags.Add(BuildScopedTag($"dependency:{entityTypeName}"));
+        }
+    }
+
+    /// <summary>
+    /// 生成实例级依赖标签
+    /// </summary>
+    /// <param name="tags">标签集合</param>
+    /// <param name="entityTypeName">实体类型名</param>
+    /// <param name="dependency">依赖定义</param>
     /// <remarks>
-    /// 标签格式与 UniqueKey 保持一致：Atlas:{Scope前缀}:{BasePart}
-    /// <para>示例：</para>
-    /// <list type="bullet">
-    /// <item>Global: Atlas:dependency:Product</item>
-    /// <item>Tenant: Atlas:123:dependency:Product</item>
-    /// <item>Store: Atlas:123:456:dependency:Product</item>
-    /// <item>User: Atlas:123:456:789:dependency:Product</item>
+    /// <para>处理逻辑：</para>
+    /// <list type="number">
+    /// <item><description>优先使用缓存键自身的实例值（_instanceValue）</description></item>
+    /// <item><description>如果缓存键无实例值，降级为类型级标签</description></item>
     /// </list>
     /// </remarks>
+    private void GenerateInstanceLevelTags(
+        HashSet<string> tags,
+        string entityTypeName,
+        CacheDependency dependency)
+    {
+        if (_instanceValue != null && !string.IsNullOrEmpty(_definition.InstanceKeyName))
+        {
+            // 缓存键有实例值：生成实例级标签
+            var instanceKey = _instanceValue.ToString()!;
+
+            if (dependency.TriggerProperties != null && dependency.TriggerProperties.Count > 0)
+            {
+                // 精确失效：只生成指定属性的实例标签
+                foreach (var property in dependency.TriggerProperties)
+                {
+                    tags.Add(BuildScopedTag($"entity:{entityTypeName}:{instanceKey}:{property}"));
+                }
+            }
+            else
+            {
+                // 宽松失效：生成实例基础标签
+                tags.Add(BuildScopedTag($"entity:{entityTypeName}:{instanceKey}"));
+            }
+        }
+        else
+        {
+            // 缓存键无实例值：降级为类型级标签
+            // 注意：这种情况通常表示配置不当（实例级依赖应配置在实例级缓存键上）
+            if (dependency.TriggerProperties != null && dependency.TriggerProperties.Count > 0)
+            {
+                foreach (var property in dependency.TriggerProperties)
+                {
+                    tags.Add(BuildScopedTag($"dependency:{entityTypeName}:{property}"));
+                }
+            }
+            else
+            {
+                tags.Add(BuildScopedTag($"dependency:{entityTypeName}"));
+            }
+        }
+    }
+
+    /// <summary>
+    /// 构建带作用域的完整标签
+    /// </summary>
     /// <param name="basePart">基础标签部分（如 dependency:Product:Price）</param>
-    /// <returns>完整的作用域标签</returns>
+    /// <returns>完整标签（如 Atlas:123:456:dependency:Product:Price）</returns>
+    /// <remarks>
+    /// 标签层级与缓存键层级保持一致，确保作用域隔离
+    /// </remarks>
     private string BuildScopedTag(string basePart)
     {
-        // 预分配容量避免扩容
         var parts = new List<string>(6);
 
-        // 按照作用域层级添加前缀（与 BuildUniqueKey 保持一致）
+        // 按作用域添加层级前缀（与 BuildUniqueKey 保持一致）
         switch (_definition.Scope)
         {
             case CacheKeyScope.Global:
-                // 全局作用域：无额外前缀
                 break;
 
             case CacheKeyScope.Tenant:
-                // 租户级别：TenantId
                 if (_context.TenantId.HasValue)
                     parts.Add(_context.TenantId.Value.ToString());
                 break;
 
             case CacheKeyScope.Store:
-                // 店铺级别：TenantId:StoreId
                 if (_context.TenantId.HasValue)
                     parts.Add(_context.TenantId.Value.ToString());
                 if (_context.StoreId.HasValue)
@@ -237,7 +284,6 @@ public class CacheKeyInstance
                 break;
 
             case CacheKeyScope.User:
-                // 用户级别：TenantId:StoreId:UserId
                 if (_context.TenantId.HasValue)
                     parts.Add(_context.TenantId.Value.ToString());
                 if (_context.StoreId.HasValue)
@@ -247,37 +293,8 @@ public class CacheKeyInstance
                 break;
         }
 
-        // 添加基础标签部分
         parts.Add(basePart);
 
-        // 拼接最终标签：Atlas:{parts}
         return $"Atlas:{string.Join(":", parts)}";
-    }
-
-    /// <summary>
-    /// 尝试通过选择器提取实例键
-    /// </summary>
-    private bool TryExtractInstanceKey(CacheDependency dependency, out string instanceKey)
-    {
-        instanceKey = string.Empty;
-
-        if (_instanceValue == null || dependency.InstanceKeySelector == null)
-            return false;
-
-        try
-        {
-            var key = dependency.InstanceKeySelector(_instanceValue);
-            if (key != null)
-            {
-                instanceKey = key.ToString() ?? string.Empty;
-                return !string.IsNullOrEmpty(instanceKey);
-            }
-        }
-        catch
-        {
-            // Selector execution failed
-        }
-
-        return false;
     }
 }

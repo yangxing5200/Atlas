@@ -32,4 +32,5 @@ public static class CacheServiceExtensions
         var definition = new CacheKeyDefinition(keyName, defaultExpiration: expiration);
         return cache.GetOrCreateAsync(definition, factory);
     }
+
 }
