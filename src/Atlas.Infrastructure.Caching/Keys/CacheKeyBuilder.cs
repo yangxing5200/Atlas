@@ -43,6 +43,11 @@ public class CacheKeyBuilder : ICacheKeyBuilder
         return instanceValues.Select(value => new CacheKeyInstance(definition, context, value));
     }
 
+    public ScopeContext GetCurrentScopeContext(CacheKeyDefinition definition)
+    {
+        return GetScopeContext(definition.Scope);
+    }
+
     private ScopeContext GetScopeContext(CacheKeyScope scope)
     {
         return scope switch

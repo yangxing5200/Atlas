@@ -67,4 +67,8 @@ public interface ICacheService
     /// 获取统计信息
     /// </summary>
     Task<CacheStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default);
+
+    //Task<long> InvalidateByEntityTypeAsync<TEntity>(
+    //    CancellationToken cancellationToken = default)
+    //    where TEntity : class;
 }

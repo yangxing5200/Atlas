@@ -6,7 +6,7 @@ namespace Atlas.Infrastructure.Caching.Invalidation;
 /// <summary>
 /// 失效协调器
 /// </summary>
-public class InvalidationCoordinator: IInvalidationCoordinator
+public class InvalidationCoordinator : IInvalidationCoordinator
 {
     private readonly IStorageAdapter _storage;
     private readonly IMessageBroker _messageBroker;
@@ -41,7 +41,8 @@ public class InvalidationCoordinator: IInvalidationCoordinator
             // 发布失效消息给其他服务器
             await _messageBroker.PublishAsync(new InvalidationMessage
             {
-                Keys = keyList
+                Keys = keyList,
+                InvalidationType = InvalidationType.ExactKeys
             }, cancellationToken);
 
             _logger.LogInformation("Invalidated {Count} cache keys", keyList.Count);
@@ -68,7 +69,8 @@ public class InvalidationCoordinator: IInvalidationCoordinator
             // 发布失效消息
             await _messageBroker.PublishAsync(new InvalidationMessage
             {
-                Keys = new List<string> { pattern }
+                Keys = new List<string> { pattern },
+                InvalidationType = InvalidationType.Pattern
             }, cancellationToken);
 
             _logger.LogInformation("Invalidated cache by pattern: {Pattern}", pattern);
@@ -80,25 +82,62 @@ public class InvalidationCoordinator: IInvalidationCoordinator
         }
     }
 
-    /// <summary>
-    /// 处理接收到的失效消息
-    /// </summary>
+    // 按标签失效
+    public async Task InvalidateByTagsAsync(
+        IEnumerable<string> tags,
+        CancellationToken cancellationToken = default)
+    {
+        var tagList = tags.ToList();
+        if (tagList.Count == 0)
+            return;
+
+        try
+        {
+            var deletedCount = await _storage.RemoveByTagsAsync(tagList, cancellationToken);
+
+            await _messageBroker.PublishAsync(new InvalidationMessage
+            {
+                Tags = tagList,
+                InvalidationType = InvalidationType.Tags
+            }, cancellationToken);
+
+            _logger.LogInformation("Invalidated {Count} cache entries by tags: {Tags}",
+                deletedCount, string.Join(", ", tagList));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to invalidate cache by tags: {Tags}",
+                string.Join(", ", tagList));
+            throw;
+        }
+    }
+
     public async Task HandleInvalidationMessageAsync(InvalidationMessage message)
     {
         try
         {
-            foreach (var key in message.Keys)
+            switch (message.InvalidationType)
             {
-                if (key.Contains('*'))
-                {
-                    // 模式匹配删除
-                    await _storage.RemoveByPatternAsync(key);
-                }
-                else
-                {
-                    // 精确删除
-                    await _storage.RemoveAsync(key);
-                }
+                case InvalidationType.ExactKeys:
+                    foreach (var key in message.Keys)
+                    {
+                        await _storage.RemoveAsync(key);
+                    }
+                    break;
+
+                case InvalidationType.Pattern:
+                    foreach (var pattern in message.Keys)
+                    {
+                        await _storage.RemoveByPatternAsync(pattern);
+                    }
+                    break;
+
+                case InvalidationType.Tags:
+                    if (message.Tags != null && message.Tags.Any())
+                    {
+                        await _storage.RemoveByTagsAsync(message.Tags);
+                    }
+                    break;
             }
 
             _logger.LogDebug("Handled invalidation message from {SenderId}", message.SenderId);

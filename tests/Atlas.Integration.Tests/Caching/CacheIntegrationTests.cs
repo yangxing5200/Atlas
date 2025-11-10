@@ -89,19 +89,18 @@ public class CacheIntegrationTests : IAsyncLifetime
     #endregion
 
     #region Cache Key Definitions
-
     private static class CacheKeys
     {
-        // 产品列表 - 依赖 Product 类型变化
+        // 产品列表 - 监听整个产品类型变化
         public static readonly CacheKeyDefinition ProductList = new CacheKeyDefinition(
             "ProductList",
             CacheKeyScope.Tenant,
             defaultExpiration: TimeSpan.FromMinutes(5))
         {
             Dependencies =
-            {
-                CacheDependencyBuilder.OnType<Product>()
-            }
+        {
+            CacheDependencyBuilder.OnType<Product>()
+        }
         };
 
         // 产品详情 - 依赖特定产品实例的特定属性
@@ -112,10 +111,10 @@ public class CacheIntegrationTests : IAsyncLifetime
             defaultExpiration: TimeSpan.FromMinutes(30))
         {
             Dependencies =
-            {
-                CacheDependencyBuilder.OnInstance<Product>(p => p.Id)
-                    .OnPropertiesChange(p => p.Name, p => p.Price, p => p.Stock)
-            }
+        {
+            CacheDependencyBuilder.OnInstance<Product>(p => p.Id)
+                .OnPropertiesChange(p => p.Name, p => p.Price, p => p.Stock)
+        }
         };
 
         // 分类产品列表 - 依赖分类和产品
@@ -126,12 +125,12 @@ public class CacheIntegrationTests : IAsyncLifetime
             defaultExpiration: TimeSpan.FromMinutes(10))
         {
             Dependencies =
-            {
-                CacheDependencyBuilder.OnType<Product>()
-                    .OnPropertiesChange(p => p.Price, p => p.Stock, p => p.IsActive),
-                CacheDependencyBuilder.OnInstance<Category>(c => c.Id)
-                    .OnPropertyChange(c => c.Name)
-            }
+        {
+            CacheDependencyBuilder.OnType<Product>()
+                .OnPropertiesChange(p => p.Price, p => p.Stock, p => p.IsActive),
+            CacheDependencyBuilder.OnInstance<Category>(c => c.Id)
+                .OnPropertyChange(c => c.Name)
+        }
         };
 
         // 产品搜索 - 只依赖产品名称和激活状态
@@ -141,10 +140,10 @@ public class CacheIntegrationTests : IAsyncLifetime
             defaultExpiration: TimeSpan.FromMinutes(15))
         {
             Dependencies =
-            {
-                CacheDependencyBuilder.OnType<Product>()
-                    .OnPropertiesChange(p => p.Name, p => p.IsActive)
-            }
+        {
+            CacheDependencyBuilder.OnType<Product>()
+                .OnPropertiesChange(p => p.Name, p => p.IsActive)
+        }
         };
 
         // 订单摘要 - 依赖订单和产品
@@ -155,12 +154,12 @@ public class CacheIntegrationTests : IAsyncLifetime
             defaultExpiration: TimeSpan.FromMinutes(5))
         {
             Dependencies =
-            {
-                CacheDependencyBuilder.OnInstance<Order>(o => o.Id)
-                    .OnPropertyChange(o => o.Status),
-                CacheDependencyBuilder.OnInstance<Product>(p => p.Id)
-                    .OnPropertyChange(p => p.Price)
-            }
+        {
+            CacheDependencyBuilder.OnInstance<Order>(o => o.Id)
+                .OnPropertyChange(o => o.Status),
+            CacheDependencyBuilder.OnInstance<Product>(p => p.Id)
+                .OnPropertyChange(p => p.Price)
+        }
         };
     }
 

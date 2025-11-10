@@ -36,11 +36,13 @@ public class CacheKeyDefinition
     /// 是否启用L1缓存
     /// </summary>
     public bool EnableL1Cache { get; }
-
-    /// <summary>
-    /// 最大随机偏移秒数（防止缓存雪崩）
-    /// </summary>
     public int MaxRandomOffsetSeconds { get; }
+
+    // 标签生成器
+    /// <summary>
+    /// 标签生成器：根据上下文和实例值生成标签
+    /// </summary>
+    public Func<ScopeContext, object?, IEnumerable<string>>? TagGenerator { get; set; }
 
     public CacheKeyDefinition(
         string name,
@@ -81,7 +83,6 @@ public class CacheKeyDefinition
 
         // 使用内部方法添加属性名
         dependency.AddTriggerProperties(triggerProperties);
-
         Dependencies.Add(dependency);
         return this;
     }

@@ -11,6 +11,16 @@ public class InvalidationMessage
     public List<string> Keys { get; set; } = new();
 
     /// <summary>
+    /// 失效的标签列表
+    /// </summary>
+    public List<string> Tags { get; set; } = new();
+
+    /// <summary>
+    /// 失效类型
+    /// </summary>
+    public InvalidationType InvalidationType { get; set; } = InvalidationType.ExactKeys;
+
+    /// <summary>
     /// 发送者标识
     /// </summary>
     public string SenderId { get; set; } = string.Empty;
@@ -24,4 +34,25 @@ public class InvalidationMessage
     /// 失效原因（可选）
     /// </summary>
     public string? Reason { get; set; }
+}
+
+/// <summary>
+/// 失效类型枚举
+/// </summary>
+public enum InvalidationType
+{
+    /// <summary>
+    /// 精确键失效
+    /// </summary>
+    ExactKeys,
+
+    /// <summary>
+    /// 模式匹配失效
+    /// </summary>
+    Pattern,
+
+    /// <summary>
+    /// 标签失效
+    /// </summary>
+    Tags
 }

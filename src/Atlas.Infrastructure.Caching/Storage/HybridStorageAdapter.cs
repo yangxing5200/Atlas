@@ -9,46 +9,45 @@ namespace Atlas.Infrastructure.Caching.Storage;
 /// </summary>
 public class HybridStorageAdapter : StorageAdapterBase
 {
-    private readonly MemoryStorageAdapter _l1;
-    private readonly RedisStorageAdapter _l2;
+    private readonly IStorageAdapter _l1Cache;  // Memory
+    private readonly IStorageAdapter _l2Cache;  // Redis
     private readonly ILogger<HybridStorageAdapter> _logger;
     private readonly CacheOptions _options;
 
     public HybridStorageAdapter(
-        MemoryStorageAdapter l1,
-        RedisStorageAdapter l2,
+        MemoryStorageAdapter l1Cache,
+        RedisStorageAdapter l2Cache,
         IOptions<CacheOptions> options,
         ILogger<HybridStorageAdapter> logger)
     {
-        _l1 = l1;
-        _l2 = l2;
+        _l1Cache = l1Cache;
+        _l2Cache = l2Cache;
         _options = options.Value;
         _logger = logger;
     }
 
     public override async Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default) where T : class
     {
-        key = NormalizeKey(key);
-
-        // Try L1 first
-        var l1Value = await _l1.GetAsync<T>(key, cancellationToken);
+        // 先查 L1
+        var l1Value = await _l1Cache.GetAsync<T>(key, cancellationToken);
         if (l1Value != null)
         {
             _logger.LogTrace("L1 cache hit: {Key}", key);
             return l1Value;
         }
 
-        // Try L2
-        var l2Value = await _l2.GetAsync<T>(key, cancellationToken);
+        // 再查 L2
+        var l2Value = await _l2Cache.GetAsync<T>(key, cancellationToken);
         if (l2Value != null)
         {
             _logger.LogTrace("L2 cache hit: {Key}", key);
 
-            // Backfill L1
-            await _l1.SetAsync(key, l2Value, TimeSpan.FromMinutes(5), cancellationToken);
+            // 回写 L1（不带标签，因为从 L2 读取时无法获取原始标签）
+            await _l1Cache.SetAsync(key, l2Value, TimeSpan.FromSeconds(_options.DefaultExpirationSeconds), cancellationToken);
             return l2Value;
         }
 
+        _logger.LogTrace("Cache miss: {Key}", key);
         return null;
     }
 
@@ -56,47 +55,62 @@ public class HybridStorageAdapter : StorageAdapterBase
         IEnumerable<string> keys,
         CancellationToken cancellationToken = default) where T : class
     {
-        var keyList = keys.Select(NormalizeKey).ToList();
+        var keyList = keys.ToList();
         var result = new Dictionary<string, T>();
 
-        // Try L1 first
-        var l1Results = await _l1.GetManyAsync<T>(keyList, cancellationToken);
-        foreach (var item in l1Results)
+        // 从 L1 批量获取
+        var l1Results = await _l1Cache.GetManyAsync<T>(keyList, cancellationToken);
+        foreach (var kvp in l1Results)
         {
-            result[item.Key] = item.Value;
+            result[kvp.Key] = kvp.Value;
         }
 
-        // Find missing keys
+        // 找出 L1 未命中的键
         var missingKeys = keyList.Except(result.Keys).ToList();
         if (missingKeys.Count == 0)
             return result;
 
-        // Try L2 for missing keys
-        var l2Results = await _l2.GetManyAsync<T>(missingKeys, cancellationToken);
-        foreach (var item in l2Results)
+        // 从 L2 获取缺失的键
+        var l2Results = await _l2Cache.GetManyAsync<T>(missingKeys, cancellationToken);
+        foreach (var kvp in l2Results)
         {
-            result[item.Key] = item.Value;
+            result[kvp.Key] = kvp.Value;
 
-            // Backfill L1
-            await _l1.SetAsync(item.Key, item.Value, TimeSpan.FromMinutes(5), cancellationToken);
+            // 回写 L1
+            await _l1Cache.SetAsync(kvp.Key, kvp.Value, TimeSpan.FromSeconds(_options.DefaultExpirationSeconds), cancellationToken);
         }
 
         return result;
     }
 
-    public override async Task SetAsync<T>(
+    public override Task SetAsync<T>(
         string key,
         T value,
         TimeSpan expiration,
         CancellationToken cancellationToken = default) where T : class
     {
-        key = NormalizeKey(key);
+        // 无标签版本：调用带标签版本
+        return SetAsync(key, value, expiration, Array.Empty<string>(), cancellationToken);
+    }
 
-        // Write to both layers
-        var l1Task = _l1.SetAsync(key, value, expiration, cancellationToken);
-        var l2Task = _l2.SetAsync(key, value, expiration, cancellationToken);
+    // 实现带标签的设置
+    public override async Task SetAsync<T>(
+        string key,
+        T value,
+        TimeSpan expiration,
+        IEnumerable<string> tags,
+        CancellationToken cancellationToken = default) where T : class
+    {
+        var tagList = tags.ToList();
 
-        await Task.WhenAll(l1Task, l2Task);
+        // 并行写入 L1 和 L2
+        await Task.WhenAll(
+            _l1Cache.SetAsync(key, value, expiration, tagList, cancellationToken),
+            _l2Cache.SetAsync(key, value, expiration, tagList, cancellationToken)
+        );
+
+        _logger.LogTrace("Set cache with tags: {Key}, Tags: {Tags}",
+            key, string.Join(", ", tagList));
     }
 
     public override async Task SetManyAsync<T>(
@@ -104,20 +118,19 @@ public class HybridStorageAdapter : StorageAdapterBase
         TimeSpan expiration,
         CancellationToken cancellationToken = default) where T : class
     {
-        var l1Task = _l1.SetManyAsync(items, expiration, cancellationToken);
-        var l2Task = _l2.SetManyAsync(items, expiration, cancellationToken);
-
-        await Task.WhenAll(l1Task, l2Task);
+        await Task.WhenAll(
+            _l1Cache.SetManyAsync(items, expiration, cancellationToken),
+            _l2Cache.SetManyAsync(items, expiration, cancellationToken)
+        );
     }
 
     public override async Task<bool> RemoveAsync(string key, CancellationToken cancellationToken = default)
     {
-        key = NormalizeKey(key);
+        await Task.WhenAll(
+            _l1Cache.RemoveAsync(key, cancellationToken),
+            _l2Cache.RemoveAsync(key, cancellationToken)
+        );
 
-        var l1Task = _l1.RemoveAsync(key, cancellationToken);
-        var l2Task = _l2.RemoveAsync(key, cancellationToken);
-
-        await Task.WhenAll(l1Task, l2Task);
         return true;
     }
 
@@ -125,39 +138,65 @@ public class HybridStorageAdapter : StorageAdapterBase
         IEnumerable<string> keys,
         CancellationToken cancellationToken = default)
     {
-        var keyList = keys.Select(NormalizeKey).ToList();
+        var results = await Task.WhenAll(
+            _l1Cache.RemoveManyAsync(keys, cancellationToken),
+            _l2Cache.RemoveManyAsync(keys, cancellationToken)
+        );
 
-        var l1Task = _l1.RemoveManyAsync(keyList, cancellationToken);
-        var l2Task = _l2.RemoveManyAsync(keyList, cancellationToken);
-
-        await Task.WhenAll(l1Task, l2Task);
-        return keyList.Count;
+        // 返回 L2 的删除数量（更准确）
+        return results[1];
     }
 
-    public override async Task<long> RemoveByPatternAsync(string pattern, CancellationToken cancellationToken = default)
+    public override async Task<long> RemoveByPatternAsync(
+        string pattern,
+        CancellationToken cancellationToken = default)
     {
-        var l1Task = _l1.RemoveByPatternAsync(pattern, cancellationToken);
-        var l2Task = _l2.RemoveByPatternAsync(pattern, cancellationToken);
+        var results = await Task.WhenAll(
+            _l1Cache.RemoveByPatternAsync(pattern, cancellationToken),
+            _l2Cache.RemoveByPatternAsync(pattern, cancellationToken)
+        );
 
-        var results = await Task.WhenAll(l1Task, l2Task);
-        return results[1]; // Return L2 count
+        _logger.LogInformation("Removed by pattern: {Pattern}, L1: {L1Count}, L2: {L2Count}",
+            pattern, results[0], results[1]);
+
+        return results[1];
+    }
+
+    // 实现按标签失效
+    public override async Task<long> RemoveByTagsAsync(
+        IEnumerable<string> tags,
+        CancellationToken cancellationToken = default)
+    {
+        var tagList = tags.ToList();
+
+        var results = await Task.WhenAll(
+            _l1Cache.RemoveByTagsAsync(tagList, cancellationToken),
+            _l2Cache.RemoveByTagsAsync(tagList, cancellationToken)
+        );
+
+        _logger.LogInformation("Removed by tags: {Tags}, L1: {L1Count}, L2: {L2Count}",
+            string.Join(", ", tagList), results[0], results[1]);
+
+        return results[1];
     }
 
     public override async Task ClearAsync(CancellationToken cancellationToken = default)
     {
         await Task.WhenAll(
-            _l1.ClearAsync(cancellationToken),
-            _l2.ClearAsync(cancellationToken));
+            _l1Cache.ClearAsync(cancellationToken),
+            _l2Cache.ClearAsync(cancellationToken)
+        );
+
+        _logger.LogWarning("Cleared all cache layers");
     }
 
     public override async Task<bool> ExistsAsync(string key, CancellationToken cancellationToken = default)
     {
-        key = NormalizeKey(key);
-
-        // Check L1 first (faster)
-        if (await _l1.ExistsAsync(key, cancellationToken))
+        // 优先查 L1
+        if (await _l1Cache.ExistsAsync(key, cancellationToken))
             return true;
 
-        return await _l2.ExistsAsync(key, cancellationToken);
+        // 再查 L2
+        return await _l2Cache.ExistsAsync(key, cancellationToken);
     }
 }

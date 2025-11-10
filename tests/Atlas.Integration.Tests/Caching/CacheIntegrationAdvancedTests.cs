@@ -4,12 +4,17 @@ using Atlas.Data.Abstractions.Caching;
 using Atlas.Infrastructure.Caching.Core;
 using Atlas.Infrastructure.Caching.Dependencies;
 using Atlas.Infrastructure.Caching.Extensions;
+using Atlas.Infrastructure.Caching.Invalidation;
 using Atlas.Infrastructure.Caching.Keys;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using StackExchange.Redis;
 using Xunit;
+using Xunit.Abstractions;
+using Xunit.Sdk;
 
 namespace Atlas.Integration.Tests.Caching;
 
@@ -19,6 +24,14 @@ namespace Atlas.Integration.Tests.Caching;
 [Collection("Redis")]
 public class CacheIntegrationAdvancedTests : IAsyncLifetime
 {
+    private DependencyRegistry _sharedRegistry;
+    private IConnectionMultiplexer _sharedRedis;
+    private IMemoryCache _sharedMemoryCache;
+    private readonly ITestOutputHelper _testOutput;
+    public CacheIntegrationAdvancedTests(ITestOutputHelper testOutput)
+    {
+        _testOutput = testOutput;
+    }
     #region Test Entities
 
     public class Product
@@ -185,10 +198,10 @@ public class CacheIntegrationAdvancedTests : IAsyncLifetime
         {
             options.DefaultExpirationSeconds = 300;
             options.L1CacheSizeLimitMB = 50;
-            options.RedisConnectionString = "localhost:6379";
+            options.RedisConnectionString = "localhost:6379,allowAdmin=true";
             options.KeyPrefix = _testPrefix;
         });
-
+        services.AddSingleton<CacheSaveChangesInterceptor>();
         services.AddDbContext<TestDbContext>((sp, options) =>
         {
             options.UseInMemoryDatabase($"AdvancedTestDb_{Guid.NewGuid()}")
@@ -211,7 +224,9 @@ public class CacheIntegrationAdvancedTests : IAsyncLifetime
 
         _dbContext = _serviceProvider.GetRequiredService<TestDbContext>();
         _cacheService = _serviceProvider.GetRequiredService<ICacheService>();
-
+        _sharedRegistry = _serviceProvider.GetRequiredService<DependencyRegistry>();
+        _sharedMemoryCache = _serviceProvider.GetRequiredService<IMemoryCache>();
+        _sharedRedis = _serviceProvider.GetRequiredService<IConnectionMultiplexer>();
         await _cacheService.ClearAsync();
         await SeedTestDataAsync();
     }
@@ -350,7 +365,7 @@ public class CacheIntegrationAdvancedTests : IAsyncLifetime
             instanceValue: productId);
 
         factoryCalled.Should().BeTrue("高频更新应该触发缓存失效");
-        count.Should().Be(20);
+        count.Value.Should().Be(20);
     }
 
     #endregion
@@ -453,48 +468,62 @@ public class CacheIntegrationAdvancedTests : IAsyncLifetime
             var user2Cache = user2Sp.GetRequiredService<ICacheService>();
             var user3Cache = user3Sp.GetRequiredService<ICacheService>();
 
+            _testOutput.WriteLine("=== 第一步：设置每个用户的缓存 ===");
+
             // 每个用户设置自己的浏览历史
             await user1Cache.SetAsync(
                 CacheKeys.UserRecentViews,
                 new List<int> { 1, 2, 3 });
+            _testOutput.WriteLine("User 1001: 设置缓存 [1, 2, 3]");
 
             await user2Cache.SetAsync(
                 CacheKeys.UserRecentViews,
                 new List<int> { 4, 5, 6 });
+            _testOutput.WriteLine("User 1002: 设置缓存 [4, 5, 6]");
 
             await user3Cache.SetAsync(
                 CacheKeys.UserRecentViews,
                 new List<int> { 7, 8, 9 });
+            _testOutput.WriteLine("User 1003: 设置缓存 [7, 8, 9]");
+
+            _testOutput.WriteLine("\n=== 第二步：验证缓存隔离 ===");
 
             // 验证每个用户只能看到自己的数据
             var user1Views = await user1Cache.GetOrCreateAsync(
                 CacheKeys.UserRecentViews,
                 () => Task.FromResult<List<int>>(null!));
+            _testOutput.WriteLine($"User 1001: 读取缓存 [{string.Join(", ", user1Views)}]");
 
             var user2Views = await user2Cache.GetOrCreateAsync(
                 CacheKeys.UserRecentViews,
                 () => Task.FromResult<List<int>>(null!));
+            _testOutput.WriteLine($"User 1002: 读取缓存 [{string.Join(", ", user2Views)}]");
 
             var user3Views = await user3Cache.GetOrCreateAsync(
                 CacheKeys.UserRecentViews,
                 () => Task.FromResult<List<int>>(null!));
+            _testOutput.WriteLine($"User 1003: 读取缓存 [{string.Join(", ", user3Views)}]");
 
             user1Views.Should().BeEquivalentTo(new[] { 1, 2, 3 });
             user2Views.Should().BeEquivalentTo(new[] { 4, 5, 6 });
             user3Views.Should().BeEquivalentTo(new[] { 7, 8, 9 });
 
-            // 添加新浏览记录，所有用户缓存都应该失效
-            var ctx = user1Sp.GetRequiredService<TestDbContext>();
-            ctx.ProductViews.Add(new ProductView
+            _testOutput.WriteLine("\n=== 第三步：添加新记录，触发失效 ===");
+
+            // 添加新浏览记录
+            _dbContext.ProductViews.Add(new ProductView
             {
                 Id = 100,
                 ProductId = 10,
                 UserId = 1001,
                 ViewedAt = DateTime.UtcNow
             });
-            await ctx.SaveChangesAsync();
+            await _dbContext.SaveChangesAsync();
+            _testOutput.WriteLine("已添加 ProductView 记录");
 
             await Task.Delay(150);
+
+            _testOutput.WriteLine("\n=== 第四步：验证所有用户缓存失效 ===");
 
             // 所有用户的缓存都应该失效（因为依赖 ProductView 类型）
             var user1FactoryCalled = false;
@@ -503,9 +532,37 @@ public class CacheIntegrationAdvancedTests : IAsyncLifetime
                 () =>
                 {
                     user1FactoryCalled = true;
+                    _testOutput.WriteLine("User 1001: Factory 被调用（缓存已失效）");
                     return Task.FromResult(new List<int> { 1, 2, 3 });
                 });
-            user1FactoryCalled.Should().BeTrue();
+
+            user1FactoryCalled.Should().BeTrue("User 1001 的缓存应该失效");
+
+            var user2FactoryCalled = false;
+            await user2Cache.GetOrCreateAsync(
+                CacheKeys.UserRecentViews,
+                () =>
+                {
+                    user2FactoryCalled = true;
+                    _testOutput.WriteLine("User 1002: Factory 被调用（缓存已失效）");
+                    return Task.FromResult(new List<int> { 4, 5, 6 });
+                });
+
+            user2FactoryCalled.Should().BeTrue("User 1002 的缓存应该失效");
+
+            var user3FactoryCalled = false;
+            await user3Cache.GetOrCreateAsync(
+                CacheKeys.UserRecentViews,
+                () =>
+                {
+                    user3FactoryCalled = true;
+                    _testOutput.WriteLine("User 1003: Factory 被调用（缓存已失效）");
+                    return Task.FromResult(new List<int> { 7, 8, 9 });
+                });
+
+            user3FactoryCalled.Should().BeTrue("User 1003 的缓存应该失效");
+
+            _testOutput.WriteLine("\n✅ 测试通过：所有用户缓存都正确失效");
         }
         finally
         {
@@ -515,24 +572,47 @@ public class CacheIntegrationAdvancedTests : IAsyncLifetime
         }
     }
 
+
     private ServiceProvider CreateUserServiceProvider(int userId)
     {
         var services = new ServiceCollection();
-        services.AddLogging();
+
+        services.AddLogging(builder =>
+        {
+            builder.AddDebug();
+            builder.SetMinimumLevel(LogLevel.Debug);
+        });
+
+        // ✅ 1. 共享 Redis 连接
+        services.AddSingleton(_sharedRedis);
+
+        // ✅ 2. 共享 DbContext（重要！已配置拦截器）
+        services.AddSingleton(_dbContext);
+
+        // ✅ 3. 共享 InvalidationCoordinator 和 MessageBroker
+        services.AddSingleton(_serviceProvider.GetRequiredService<IInvalidationCoordinator>());
+        services.AddSingleton(_serviceProvider.GetRequiredService<IMessageBroker>());
+
+        // 4. 设置当前用户
         services.AddSingleton<ICurrentUserService>(
             TestCurrentUserService.CreateTenant1User(userId: userId, storeId: 100));
 
+        // 5. 添加缓存服务
         services.AddAtlasCache(options =>
         {
-            options.RedisConnectionString = "localhost:6379";
+            options.RedisConnectionString = "localhost:6379,allowAdmin=true";
             options.KeyPrefix = _testPrefix;
         });
 
-        var registry = new DependencyRegistry(
-            services.BuildServiceProvider().GetRequiredService<ILogger<DependencyRegistry>>());
-        registry.BuildIndex(new[] { CacheKeys.UserRecentViews });
-        services.AddSingleton(registry);
+        // ✅ 共享全局单例
+        if (_sharedRegistry != null)
+            services.AddSingleton(_sharedRegistry);
+        if (_sharedRedis != null)
+            services.AddSingleton(_sharedRedis);
 
+        // ✅ 新增：共享 IMemoryCache
+        if (_sharedMemoryCache != null)
+            services.AddSingleton(_sharedMemoryCache);
         return services.BuildServiceProvider();
     }
 

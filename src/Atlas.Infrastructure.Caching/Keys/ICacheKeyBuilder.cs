@@ -14,4 +14,9 @@ public interface ICacheKeyBuilder
     /// 批量构建键实例
     /// </summary>
     IEnumerable<CacheKeyInstance> BuildMany(CacheKeyDefinition definition, IEnumerable<object> instanceValues);
+
+    /// <summary>
+    /// 获取当前作用域上下文
+    /// </summary>
+    ScopeContext GetCurrentScopeContext(CacheKeyDefinition definition);
 }

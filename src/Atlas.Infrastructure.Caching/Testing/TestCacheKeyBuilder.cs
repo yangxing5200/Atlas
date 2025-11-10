@@ -31,4 +31,9 @@ public class TestCacheKeyBuilder : ICacheKeyBuilder
     {
         return instanceValues.Select(value => Build(definition, value));
     }
+
+    public ScopeContext GetCurrentScopeContext(CacheKeyDefinition definition)
+    {
+        return _context;
+    }
 }

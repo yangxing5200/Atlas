@@ -79,18 +79,56 @@ public class RedisStorageAdapter : StorageAdapterBase
         return result;
     }
 
-    public override async Task SetAsync<T>(
+    public override Task SetAsync<T>(
         string key,
         T value,
         TimeSpan expiration,
         CancellationToken cancellationToken = default) where T : class
     {
+        return SetAsync(key, value, expiration, Array.Empty<string>(), cancellationToken);
+    }
+
+    // 带标签的设置 (使用 Redis Sets)
+    public override async Task SetAsync<T>(
+        string key,
+        T value,
+        TimeSpan expiration,
+        IEnumerable<string> tags,
+        CancellationToken cancellationToken = default) where T : class
+    {
         key = NormalizeKey(key);
+        var tagList = tags.ToList();
 
         try
         {
             var serialized = _serializer.Serialize(value);
-            await Database.StringSetAsync(key, serialized, expiration);
+
+            // 使用 Redis Transaction 确保原子性
+            var transaction = Database.CreateTransaction();
+
+            // 1. 设置缓存值
+            _ = transaction.StringSetAsync(key, serialized, expiration);
+
+            // 2. 为每个标签添加键到对应的 Set
+            if (tagList.Any())
+            {
+                // 标签索引键：tag:tagName
+                foreach (var tag in tagList)
+                {
+                    var tagKey = $"tag:{tag}";
+                    _ = transaction.SetAddAsync(tagKey, key);
+
+                    // 标签也设置过期时间（比缓存长一些，防止孤儿标签）
+                    _ = transaction.KeyExpireAsync(tagKey, expiration.Add(TimeSpan.FromMinutes(5)));
+                }
+
+                // 存储键的标签列表（用于清理）
+                var keyTagsKey = $"keytags:{key}";
+                _ = transaction.SetAddAsync(keyTagsKey, tagList.Select(t => (RedisValue)t).ToArray());
+                _ = transaction.KeyExpireAsync(keyTagsKey, expiration);
+            }
+
+            await transaction.ExecuteAsync();
         }
         catch (Exception ex)
         {
@@ -132,6 +170,9 @@ public class RedisStorageAdapter : StorageAdapterBase
 
         try
         {
+            // 清理标签索引
+            await CleanupTagIndexes(key);
+
             return await Database.KeyDeleteAsync(key);
         }
         catch (Exception ex)
@@ -149,6 +190,12 @@ public class RedisStorageAdapter : StorageAdapterBase
 
         try
         {
+            // 批量清理标签索引
+            foreach (var key in redisKeys)
+            {
+                await CleanupTagIndexes(key.ToString());
+            }
+
             return await Database.KeyDeleteAsync(redisKeys);
         }
         catch (Exception ex)
@@ -172,6 +219,12 @@ public class RedisStorageAdapter : StorageAdapterBase
 
                 if (keys.Length > 0)
                 {
+                    // 清理标签索引
+                    foreach (var key in keys)
+                    {
+                        await CleanupTagIndexes(key.ToString());
+                    }
+
                     totalDeleted += await Database.KeyDeleteAsync(keys);
                 }
             }
@@ -181,6 +234,58 @@ public class RedisStorageAdapter : StorageAdapterBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to remove by pattern from Redis: {Pattern}", pattern);
+            return 0;
+        }
+    }
+
+    // 按标签失效
+    public override async Task<long> RemoveByTagsAsync(IEnumerable<string> tags, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var keysToDelete = new HashSet<RedisKey>();
+
+            // 从每个标签的 Set 中获取键
+            foreach (var tag in tags)
+            {
+                var tagKey = $"tag:{tag}";
+                var keys = await Database.SetMembersAsync(tagKey);
+
+                foreach (var key in keys)
+                {
+                    if (!key.IsNullOrEmpty)
+                    {
+                        keysToDelete.Add(key.ToString()!);
+                    }
+                }
+
+                // 删除标签 Set 本身
+                await Database.KeyDeleteAsync(tagKey);
+            }
+
+            if (keysToDelete.Count == 0)
+            {
+                _logger.LogDebug("No keys found for tags: {Tags}", string.Join(", ", tags));
+                return 0;
+            }
+
+            // 批量删除缓存键
+            long deleted = await Database.KeyDeleteAsync(keysToDelete.ToArray());
+
+            // 清理标签索引
+            foreach (var key in keysToDelete)
+            {
+                await CleanupTagIndexes(key.ToString()!);
+            }
+
+            _logger.LogInformation("Removed {Count} keys by tags: {Tags}",
+                deleted, string.Join(", ", tags));
+
+            return deleted;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to remove by tags from Redis");
             return 0;
         }
     }
@@ -216,6 +321,40 @@ public class RedisStorageAdapter : StorageAdapterBase
         {
             _logger.LogError(ex, "Failed to check existence in Redis: {Key}", key);
             return false;
+        }
+    }
+
+    // 清理标签索引
+    private async Task CleanupTagIndexes(string key)
+    {
+        try
+        {
+            var keyTagsKey = $"keytags:{key}";
+            var tags = await Database.SetMembersAsync(keyTagsKey);
+
+            if (tags.Length > 0)
+            {
+                var transaction = Database.CreateTransaction();
+
+                // 从每个标签的 Set 中移除这个键
+                foreach (var tag in tags)
+                {
+                    if (!tag.IsNullOrEmpty)
+                    {
+                        var tagKey = $"tag:{tag}";
+                        _ = transaction.SetRemoveAsync(tagKey, key);
+                    }
+                }
+
+                // 删除键的标签列表
+                _ = transaction.KeyDeleteAsync(keyTagsKey);
+
+                await transaction.ExecuteAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to cleanup tag indexes for key: {Key}", key);
         }
     }
 }

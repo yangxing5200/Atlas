@@ -34,6 +34,21 @@ public class EntityChangeInfo
     /// 新值
     /// </summary>
     public Dictionary<string, object?> NewValues { get; set; } = new();
+
+    /// <summary>
+    /// 租户 ID（用于作用域标签）
+    /// </summary>
+    public long TenantId { get; init; }
+
+    /// <summary>
+    /// 门店 ID（用于作用域标签）
+    /// </summary>
+    public long? StoreId { get; init; }
+
+    /// <summary>
+    /// 用户 ID（用于作用域标签）
+    /// </summary>
+    public long? UserId { get; init; }
 }
 
 public enum EntityChangeState

@@ -19,6 +19,8 @@ public interface IInvalidationCoordinator
     /// <param name="cancellationToken">取消令牌</param>
     Task InvalidateByPatternAsync(string pattern, CancellationToken cancellationToken = default);
 
+    Task InvalidateByTagsAsync(IEnumerable<string> tags, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// 处理接收到的失效消息
     /// </summary>

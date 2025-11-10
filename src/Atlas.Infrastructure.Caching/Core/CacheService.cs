@@ -118,7 +118,7 @@ public class CacheService : ICacheService, IAsyncCacheService, ISyncCacheService
 
         try
         {
-            await _storage.SetAsync(keyInstance.UniqueKey, value, definition.DefaultExpiration, cancellationToken);
+            await _storage.SetAsync(keyInstance.UniqueKey, value, definition.DefaultExpiration, keyInstance.Tags, cancellationToken);
             
             stopwatch.Stop();
             _metricsCollector.RecordSet(keyInstance.UniqueKey, stopwatch.ElapsedMilliseconds);
@@ -177,5 +177,18 @@ public class CacheService : ICacheService, IAsyncCacheService, ISyncCacheService
     public async Task<CacheStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
     {
         return await _metricsCollector.GetStatisticsAsync(cancellationToken);
+    }
+
+    public async Task<long> InvalidateByEntityTypeAsync<TEntity>(
+    CancellationToken cancellationToken = default)
+    where TEntity : class
+    {
+        var entityTypeName = typeof(TEntity).Name;
+        var tag = $"dependency:{entityTypeName}";
+
+        await _invalidationCoordinator.InvalidateByTagsAsync(
+            new[] { tag },
+            cancellationToken);
+        return -1;
     }
 }
