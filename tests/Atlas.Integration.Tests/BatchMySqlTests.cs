@@ -37,7 +37,7 @@ namespace Atlas.Integration.Tests
                 .Build();
 
             var connectionString = configuration.GetConnectionString("MySqlTest")
-                ?? "Server=localhost;Database=atlas_test;User=root;Password=123456;";
+                ?? "Server=localhost;Database=atlas_test;User=root;Password=root;";
 
             _output.WriteLine($"📝 使用连接字符串: {MaskPassword(connectionString)}");
 

@@ -1,135 +1,138 @@
-using Atlas.Infrastructure.Caching.Adapters;
-using Atlas.Infrastructure.Caching.Core;
-using Atlas.Infrastructure.Caching.Dependencies;
-using Atlas.Infrastructure.Caching.Invalidation;
-using Atlas.Infrastructure.Caching.Keys;
-using Atlas.Infrastructure.Caching.Loading;
-using Atlas.Infrastructure.Caching.Metrics;
-using Atlas.Infrastructure.Caching.Serialization;
-using Atlas.Infrastructure.Caching.Storage;
+// Extensions/ServiceCollectionExtensions.cs
+using System;
+using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using StackExchange.Redis;
+using Atlas.Infrastructure.Caching.Abstractions;
+using Atlas.Infrastructure.Caching.Core;
+using Atlas.Infrastructure.Caching.EntityFramework.Abstractions;
+using Atlas.Infrastructure.Caching.EntityFramework.ChangeTracking;
+using Atlas.Infrastructure.Caching.EntityFramework.Interceptors;
+using Atlas.Infrastructure.Caching.EntityFramework.Invalidation;
+using Atlas.Infrastructure.Caching.Invalidation;
+using Atlas.Infrastructure.Caching.Keys.Generators;
+using Atlas.Infrastructure.Caching.Keys.Parsers;
+using Atlas.Infrastructure.Caching.Providers.Memory;
+using Atlas.Infrastructure.Caching.Providers.Redis;
+using Atlas.Infrastructure.Caching.Providers.Hybrid;
+using Atlas.Infrastructure.Caching.Scoping;
+using Atlas.Infrastructure.Caching.Scoping.Abstractions;
+using Atlas.Infrastructure.Caching.Serialization;
+using Atlas.Infrastructure.Caching.Tags;
 
-namespace Atlas.Infrastructure.Caching.Extensions;
-
-public static class ServiceCollectionExtensions
+namespace Atlas.Infrastructure.Caching.Extensions
 {
-    /// <summary>
-    /// 注册Atlas缓存系统及其相关服务
-    /// </summary>
-    /// <param name="services">服务集合</param>
-    /// <param name="configure">缓存配置委托</param>
-    /// <returns>服务集合</returns>
-    public static IServiceCollection AddAtlasCache(
-        this IServiceCollection services,
-        Action<CacheOptions> configure)
+    public static class ServiceCollectionExtensions
     {
-        // 应用缓存配置
-        services.Configure(configure);
-        var options = new CacheOptions();
-        configure(options);
-
-        // 注册身份标识适配器
-        services.AddScoped<ICurrentIdentity, CurrentIdentityAdapter>();
-
-        // 注册内存缓存提供程序
-        services.AddMemoryCache(memOptions =>
+        public static IServiceCollection AddAtlasCaching(
+            this IServiceCollection services,
+            Action<CachingOptionsBuilder>? configure = null)
         {
-            memOptions.SizeLimit = options.L1CacheSizeLimitMB * 1024 * 1024;
-        });
+            var builder = new CachingOptionsBuilder(services);
+            configure?.Invoke(builder);
 
-        // 注册内存存储适配器
-        services.AddSingleton<MemoryStorageAdapter>();
+            // Core services - 使用具体类型注册
+            services.TryAddSingleton<ICacheSerializer>(sp => new JsonCacheSerializer());
+            services.TryAddSingleton<ICacheKeyGenerator>(sp => new CacheKeyGenerator());
+            services.TryAddSingleton<ICacheKeyParser>(sp => new CacheKeyParser());
+            services.TryAddSingleton<IScopeContextAccessor, ScopeContextAccessor>();
 
-        // 根据Redis配置状态决定存储策略
-        var hasRedis = !string.IsNullOrEmpty(options.RedisConnectionString);
+            // Tag management
+            services.TryAddSingleton<ITagVersionStore, TagVersionStore>();
+            services.TryAddSingleton<ITagManager, TagManager>();
 
-        if (hasRedis)
-        {
-            // Redis分布式缓存模式
+            // Invalidation
+            services.TryAddSingleton<ICacheInvalidator, CacheInvalidator>();
 
-            // 注册Redis连接复用器
-            services.AddSingleton<IConnectionMultiplexer>(sp =>
-                ConnectionMultiplexer.Connect(options.RedisConnectionString!));
+            // Main cache service
+            services.TryAddSingleton<ICacheService, CacheService>();
 
-            // 注册序列化器
-            if (options.SerializerType == "MessagePack")
-            {
-                services.AddSingleton<ICacheSerializer, MessagePackCacheSerializer>();
-            }
-            else
-            {
-                services.AddSingleton<ICacheSerializer, JsonCacheSerializer>();
-            }
-
-            // 注册Redis存储适配器
-            services.AddSingleton<RedisStorageAdapter>();
-
-            // 注册混合存储适配器（L1内存 + L2Redis）
-            services.AddSingleton<HybridStorageAdapter>();
-            services.AddSingleton<IStorageAdapter>(sp => sp.GetRequiredService<HybridStorageAdapter>());
-
-            // 注册Redis消息代理
-            services.AddSingleton<IMessageBroker, RedisMessageBroker>();
-        }
-        else
-        {
-            // 本地内存缓存模式
-
-            // 使用内存存储适配器
-            services.AddSingleton<IStorageAdapter>(sp => sp.GetRequiredService<MemoryStorageAdapter>());
-
-            // 注册空消息代理
-            services.AddSingleton<IMessageBroker, NullMessageBroker>();
+            return services;
         }
 
-        // 注册核心组件
+        public static IServiceCollection AddMemoryCaching(this IServiceCollection services)
+        {
+            services.AddMemoryCache();
+            services.TryAddSingleton<ICacheProvider, MemoryCacheProvider>();
+            return services;
+        }
 
-        // 缓存键管理
-        services.AddSingleton<CacheKeyRegistry>();
-        services.AddSingleton<ICacheKeyBuilder, CacheKeyBuilder>();
+        public static IServiceCollection AddRedisCaching(
+            this IServiceCollection services,
+            string connectionString,
+            string? instanceName = null)
+        {
+            var redis = ConnectionMultiplexer.Connect(connectionString);
+            services.AddSingleton<IConnectionMultiplexer>(redis);
+            services.TryAddSingleton<ICacheProvider>(sp =>
+                new RedisCacheProvider(redis, instanceName ?? "atlas"));
+            services.TryAddSingleton<ITagVersionStore>(sp =>
+                new RedisTagVersionStore(redis));
+            return services;
+        }
 
-        // 依赖关系管理
-        services.AddSingleton<DependencyRegistry>();
-        services.AddSingleton<IDependencyResolver, DependencyResolver>();
+        public static IServiceCollection AddHybridCaching(
+            this IServiceCollection services,
+            string redisConnectionString,
+            Action<HybridCacheOptions>? configureOptions = null)
+        {
+            services.AddMemoryCache();
+            var redis = ConnectionMultiplexer.Connect(redisConnectionString);
+            services.AddSingleton<IConnectionMultiplexer>(redis);
 
-        // 缓存失效协调器
-        services.AddSingleton<InvalidationCoordinator>();
-        services.AddSingleton<IInvalidationCoordinator>(sp => sp.GetRequiredService<InvalidationCoordinator>());
+            var options = new HybridCacheOptions();
+            configureOptions?.Invoke(options);
 
-        // 缓存加载协调器
-        services.AddSingleton<LoadingCoordinator>();
+            services.TryAddSingleton<ICacheProvider>(sp =>
+            {
+                var memoryCache = sp.GetRequiredService<IMemoryCache>();
+                var l1 = new MemoryCacheProvider(memoryCache);
+                var l2 = new RedisCacheProvider(redis, "atlas");
+                return new HybridCacheProvider(l1, l2, options);
+            });
 
-        // 性能指标收集器
-        services.AddSingleton<MetricsCollector>();
+            services.TryAddSingleton<ITagVersionStore>(sp => new RedisTagVersionStore(redis));
 
-        // 缓存服务（多接口注册）
-        services.AddSingleton<CacheService>();
-        services.AddSingleton<ICacheService>(sp => sp.GetRequiredService<CacheService>());
-        services.AddSingleton<IAsyncCacheService>(sp => sp.GetRequiredService<CacheService>());
-        services.AddSingleton<ISyncCacheService>(sp => sp.GetRequiredService<CacheService>());
+            return services;
+        }
 
-        return services;
+        public static IServiceCollection AddMultiTenantCaching(this IServiceCollection services)
+        {
+            // 添加 HttpContextAccessor
+            services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
+            services.TryAddScoped<IScopeContextAccessor, HttpScopeContextAccessor>();
+            services.TryAddScoped<ITenantResolver, TenantResolver>();
+            return services;
+        }
+
+        public static IServiceCollection AddEntityFrameworkCaching(this IServiceCollection services)
+        {
+            services.TryAddSingleton<IEntityChangeDetector, EntityChangeDetector>();
+            services.TryAddSingleton<EntityTagResolver>();
+            services.TryAddSingleton<IEntityCacheInvalidator, EntityCacheInvalidator>();
+            services.TryAddSingleton<CacheInvalidationInterceptor>();
+            return services;
+        }
+
+        public static DbContextOptionsBuilder UseAtlasCaching(
+            this DbContextOptionsBuilder optionsBuilder,
+            IServiceProvider serviceProvider)
+        {
+            var interceptor = serviceProvider.GetRequiredService<CacheInvalidationInterceptor>();
+            return optionsBuilder.AddInterceptors(interceptor);
+        }
     }
 
-    /// <summary>
-    /// 注册缓存键定义到注册表
-    /// </summary>
-    /// <param name="services">服务集合</param>
-    /// <param name="configure">缓存键注册委托</param>
-    /// <returns>服务集合</returns>
-    public static IServiceCollection RegisterCacheKeys(
-        this IServiceCollection services,
-        Action<CacheKeyRegistry> configure)
+    public class CachingOptionsBuilder
     {
-        services.AddSingleton(sp =>
-        {
-            var registry = sp.GetRequiredService<CacheKeyRegistry>();
-            configure(registry);
-            return registry;
-        });
+        public IServiceCollection Services { get; }
 
-        return services;
+        public CachingOptionsBuilder(IServiceCollection services)
+        {
+            Services = services;
+        }
     }
 }
