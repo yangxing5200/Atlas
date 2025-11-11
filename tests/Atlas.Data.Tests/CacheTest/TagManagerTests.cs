@@ -1,113 +1,222 @@
-﻿// Tags/TagManagerTests.cs
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Tags;
 using FluentAssertions;
 using Moq;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Xunit;
 
-namespace Atlas.Data.Tests.CacheTest
+namespace Atlas.Infrastructure.Caching.Tests.Tags
 {
     public class TagManagerTests
     {
-        private readonly Mock<ITagVersionStore> _versionStoreMock;
-        private readonly TagManager _sut;
+        private readonly Mock<ITagVersionStore> _mockStore;
+        private readonly TagManager _tagManager;
 
         public TagManagerTests()
         {
-            _versionStoreMock = new Mock<ITagVersionStore>();
-            _sut = new TagManager(_versionStoreMock.Object);
+            _mockStore = new Mock<ITagVersionStore>();
+            _tagManager = new TagManager(_mockStore.Object);
         }
 
+        #region GetTagVersionAsync Tests
+
         [Fact]
-        public async Task GetTagVersionAsync_ReturnsVersionFromStore()
+        public async Task GetTagVersionAsync_WithValidTag_ReturnsVersion()
         {
             // Arrange
-            var tag = "test-tag";
-            var expectedVersion = 42L;
+            var tag = "product";
+            var expectedVersion = 5L;
 
-            _versionStoreMock
-                .Setup(x => x.GetVersionAsync(tag, default))
+            _mockStore.Setup(x => x.GetVersionAsync(tag, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(expectedVersion);
 
             // Act
-            var result = await _sut.GetTagVersionAsync(tag);
+            var version = await _tagManager.GetTagVersionAsync(tag);
 
             // Assert
-            result.Should().Be(expectedVersion);
+            version.Should().Be(expectedVersion);
+            _mockStore.Verify(x => x.GetVersionAsync(tag, It.IsAny<CancellationToken>()), Times.Once);
         }
 
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("   ")]
+        public async Task GetTagVersionAsync_WithInvalidTag_ThrowsArgumentException(string? tag)
+        {
+            // Act & Assert
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                _tagManager.GetTagVersionAsync(tag!));
+        }
+
+        #endregion
+
+        #region GetTagVersionsAsync Tests
+
         [Fact]
-        public async Task GetTagVersionsAsync_ReturnsMultipleVersions()
+        public async Task GetTagVersionsAsync_WithMultipleTags_ReturnsAllVersions()
         {
             // Arrange
-            var tags = new[] { "tag1", "tag2", "tag3" };
+            var tags = new[] { "product", "category", "brand" };
             var expectedVersions = new Dictionary<string, long>
             {
-                ["tag1"] = 1,
-                ["tag2"] = 2,
-                ["tag3"] = 3
+                { "product", 1L },
+                { "category", 2L },
+                { "brand", 3L }
             };
 
-            _versionStoreMock
-                .Setup(x => x.GetVersionsAsync(tags, default))
+            _mockStore.Setup(x => x.GetVersionsAsync(tags, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(expectedVersions);
 
             // Act
-            var result = await _sut.GetTagVersionsAsync(tags);
+            var versions = await _tagManager.GetTagVersionsAsync(tags);
 
             // Assert
-            result.Should().BeEquivalentTo(expectedVersions);
+            versions.Should().NotBeNull();
+            versions.Should().HaveCount(3);
+            versions["product"].Should().Be(1L);
+            versions["category"].Should().Be(2L);
+            versions["brand"].Should().Be(3L);
         }
 
         [Fact]
-        public async Task InvalidateTagAsync_IncrementsVersion()
+        public async Task GetTagVersionsAsync_WithEmptyList_ReturnsEmptyDictionary()
         {
             // Arrange
-            var tag = "test-tag";
+            var tags = Enumerable.Empty<string>();
+            _mockStore.Setup(x => x.GetVersionsAsync(tags, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new Dictionary<string, long>());
 
             // Act
-            await _sut.InvalidateTagAsync(tag);
+            var versions = await _tagManager.GetTagVersionsAsync(tags);
 
             // Assert
-            _versionStoreMock.Verify(
-                x => x.IncrementVersionAsync(tag, default),
-                Times.Once
-            );
+            versions.Should().NotBeNull();
+            versions.Should().BeEmpty();
         }
 
         [Fact]
-        public async Task InvalidateTagsAsync_IncrementsMultipleVersions()
+        public async Task GetTagVersionsAsync_WithInvalidTag_ThrowsArgumentException()
         {
             // Arrange
-            var tags = new[] { "tag1", "tag2" };
+            var tags = new[] { "product", "", "category" };
+
+            // Act & Assert
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                _tagManager.GetTagVersionsAsync(tags));
+        }
+
+        #endregion
+
+        #region InvalidateTagAsync Tests
+
+        [Fact]
+        public async Task InvalidateTagAsync_WithValidTag_IncrementsVersion()
+        {
+            // Arrange
+            var tag = "product";
+            _mockStore.Setup(x => x.IncrementVersionAsync(tag, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(2L);
 
             // Act
-            await _sut.InvalidateTagsAsync(tags);
+            await _tagManager.InvalidateTagAsync(tag);
 
             // Assert
-            _versionStoreMock.Verify(
-                x => x.IncrementVersionsAsync(tags, default),
-                Times.Once
-            );
+            _mockStore.Verify(x => x.IncrementVersionAsync(tag, It.IsAny<CancellationToken>()), Times.Once);
         }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("   ")]
+        public async Task InvalidateTagAsync_WithInvalidTag_ThrowsArgumentException(string? tag)
+        {
+            // Act & Assert
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                _tagManager.InvalidateTagAsync(tag!));
+        }
+
+        #endregion
+
+        #region InvalidateTagsAsync Tests
+
+        [Fact]
+        public async Task InvalidateTagsAsync_WithMultipleTags_IncrementsAllVersions()
+        {
+            // Arrange
+            var tags = new[] { "product", "category", "brand" };
+
+            _mockStore.Setup(x => x.IncrementVersionsAsync(tags, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+            // Act
+            await _tagManager.InvalidateTagsAsync(tags);
+
+            // Assert
+            _mockStore.Verify(x => x.IncrementVersionsAsync(tags, It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task InvalidateTagsAsync_WithInvalidTag_ThrowsArgumentException()
+        {
+            // Arrange
+            var tags = new[] { "product", null, "category" };
+
+            // Act & Assert
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                _tagManager.InvalidateTagsAsync(tags!));
+        }
+
+        #endregion
+
+        #region GetAllTagsAsync Tests
 
         [Fact]
         public async Task GetAllTagsAsync_ReturnsAllTags()
         {
             // Arrange
-            var expectedTags = new[] { "tag1", "tag2", "tag3" };
-
-            _versionStoreMock
-                .Setup(x => x.GetAllTagsAsync(default))
+            var expectedTags = new[] { "product", "category", "brand" };
+            _mockStore.Setup(x => x.GetAllTagsAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(expectedTags);
 
             // Act
-            var result = await _sut.GetAllTagsAsync();
+            var tags = await _tagManager.GetAllTagsAsync();
 
             // Assert
-            result.Should().BeEquivalentTo(expectedTags);
+            tags.Should().NotBeNull();
+            tags.Should().BeEquivalentTo(expectedTags);
         }
+
+        [Fact]
+        public async Task GetAllTagsAsync_WithNoTags_ReturnsEmptyList()
+        {
+            // Arrange
+            _mockStore.Setup(x => x.GetAllTagsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Enumerable.Empty<string>());
+
+            // Act
+            var tags = await _tagManager.GetAllTagsAsync();
+
+            // Assert
+            tags.Should().NotBeNull();
+            tags.Should().BeEmpty();
+        }
+
+        #endregion
+
+        #region Constructor Tests
+
+        [Fact]
+        public void Constructor_WithNullStore_ThrowsArgumentNullException()
+        {
+            // Act & Assert
+            Assert.Throws<ArgumentNullException>(() => new TagManager(null!));
+        }
+
+        #endregion
     }
 }

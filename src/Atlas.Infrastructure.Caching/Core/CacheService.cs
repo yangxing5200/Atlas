@@ -11,7 +11,7 @@ using Atlas.Infrastructure.Caching.Core.Models;
 namespace Atlas.Infrastructure.Caching.Core
 {
     /// <summary>
-    /// 缓存服务核心实现
+    /// 缓存服务实现（强制使用 CacheKeyDefinition）
     /// </summary>
     public class CacheService : ICacheService
     {
@@ -21,6 +21,7 @@ namespace Atlas.Infrastructure.Caching.Core
         private readonly ICacheKeyGenerator _keyGenerator;
         private readonly IScopeContextAccessor _scopeAccessor;
         private readonly ICacheInvalidator _invalidator;
+
         private long _totalGets;
         private long _totalSets;
         private long _totalHits;
@@ -43,11 +44,18 @@ namespace Atlas.Infrastructure.Caching.Core
             _invalidator = invalidator ?? throw new ArgumentNullException(nameof(invalidator));
         }
 
-        public async Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default)
+        public async Task<T?> GetAsync<T>(
+            CacheKeyDefinition definition,
+            object? instanceValue = null,
+            CancellationToken cancellationToken = default)
         {
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+
             Interlocked.Increment(ref _totalGets);
 
-            var fullKey = GenerateScopedKey(key);
+            var baseKey = definition.BuildKey(instanceValue);
+            var fullKey = GenerateScopedKey(baseKey, definition.Scope);
             var data = await _provider.GetAsync(fullKey, cancellationToken);
 
             if (data == null)
@@ -69,10 +77,8 @@ namespace Atlas.Infrastructure.Caching.Core
             {
                 var currentVersions = await _tagManager.GetTagVersionsAsync(
                     cachedValue.TagVersions.Keys,
-                    cancellationToken
-                );
+                    cancellationToken);
 
-                // 如果任何 Tag 版本不匹配，认为缓存失效
                 foreach (var kvp in cachedValue.TagVersions)
                 {
                     if (!currentVersions.TryGetValue(kvp.Key, out var currentVersion) ||
@@ -80,10 +86,7 @@ namespace Atlas.Infrastructure.Caching.Core
                     {
                         // Tag 版本已改变，缓存失效
                         Interlocked.Increment(ref _totalMisses);
-
-                        // 可选：删除过期的缓存
                         await _provider.RemoveAsync(fullKey, cancellationToken);
-
                         return default;
                     }
                 }
@@ -94,15 +97,26 @@ namespace Atlas.Infrastructure.Caching.Core
         }
 
         public async Task SetAsync<T>(
-            string key,
+            CacheKeyDefinition definition,
             T value,
-            CacheOptions? options = null,
+            object? instanceValue = null,
+            CacheOptions? optionsOverride = null,
             CancellationToken cancellationToken = default)
         {
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+
+            // 如果不允许 null 且值为 null，则不缓存
+            if (!definition.AllowNull && value == null)
+                return;
+
             Interlocked.Increment(ref _totalSets);
 
-            options ??= CacheOptions.Default;
-            var fullKey = GenerateScopedKey(key, options.Scope);
+            var baseKey = definition.BuildKey(instanceValue);
+            var fullKey = GenerateScopedKey(baseKey, definition.Scope);
+
+            // 使用定义的选项，或使用覆盖的选项
+            var options = optionsOverride ?? definition.CreateOptions(_scopeAccessor.Current, instanceValue);
 
             // 获取当前 Tag 版本
             Dictionary<string, long> tagVersions = new();
@@ -115,7 +129,7 @@ namespace Atlas.Infrastructure.Caching.Core
             // 包装值和 Tag 版本
             var cachedValue = new CachedValue<T>
             {
-                Value = value,
+                Value = value!,
                 TagVersions = tagVersions,
                 CachedAt = DateTime.UtcNow
             };
@@ -125,74 +139,86 @@ namespace Atlas.Infrastructure.Caching.Core
         }
 
         public async Task<CacheResult<T>> GetOrSetAsync<T>(
-            string key,
+            CacheKeyDefinition definition,
             Func<Task<T>> factory,
-            CacheOptions? options = null,
+            object? instanceValue = null,
+            CacheOptions? optionsOverride = null,
             CancellationToken cancellationToken = default)
         {
-            var sw = Stopwatch.StartNew();
-            var value = await GetAsync<T>(key, cancellationToken);
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+            if (factory == null)
+                throw new ArgumentNullException(nameof(factory));
 
-            if (value != null)
+            var sw = Stopwatch.StartNew();
+            var value = await GetAsync<T>(definition, instanceValue, cancellationToken);
+
+            if (value != null || (definition.AllowNull && await ExistsAsync(definition, instanceValue, cancellationToken)))
             {
                 return CacheResult<T>.Hit(value, CacheSource.Cache, sw.ElapsedMilliseconds);
             }
 
-            // 处理值类型的默认值情况
-            if (!typeof(T).IsValueType || Nullable.GetUnderlyingType(typeof(T)) != null)
-            {
-                // 引用类型或可空值类型，null 表示缓存未命中
-                value = await factory();
+            value = await factory();
 
-                if (value != null)
-                {
-                    await SetAsync(key, value, options, cancellationToken);
-                }
-
-                return CacheResult<T>.Miss(value, CacheSource.Factory, sw.ElapsedMilliseconds);
-            }
-            else
+            if (value != null || definition.AllowNull)
             {
-                // 值类型的特殊处理
-                value = await factory();
-                await SetAsync(key, value, options, cancellationToken);
-                return CacheResult<T>.Miss(value, CacheSource.Factory, sw.ElapsedMilliseconds);
+                await SetAsync(definition, value!, instanceValue, optionsOverride, cancellationToken);
             }
+
+            return CacheResult<T>.Miss(value, CacheSource.Factory, sw.ElapsedMilliseconds);
         }
 
-        public async Task<bool> RemoveAsync(string key, CancellationToken cancellationToken = default)
+        public async Task<bool> RemoveAsync(
+            CacheKeyDefinition definition,
+            object? instanceValue = null,
+            CancellationToken cancellationToken = default)
         {
-            var fullKey = GenerateScopedKey(key);
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+
+            var baseKey = definition.BuildKey(instanceValue);
+            var fullKey = GenerateScopedKey(baseKey, definition.Scope);
             return await _provider.RemoveAsync(fullKey, cancellationToken);
         }
 
-        public async Task<bool> ExistsAsync(string key, CancellationToken cancellationToken = default)
+        public async Task<bool> ExistsAsync(
+            CacheKeyDefinition definition,
+            object? instanceValue = null,
+            CancellationToken cancellationToken = default)
         {
-            var fullKey = GenerateScopedKey(key);
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+
+            var baseKey = definition.BuildKey(instanceValue);
+            var fullKey = GenerateScopedKey(baseKey, definition.Scope);
             return await _provider.ExistsAsync(fullKey, cancellationToken);
         }
 
-        public async Task<IDictionary<string, T?>> GetManyAsync<T>(
-        IEnumerable<string> keys,
-        CancellationToken cancellationToken = default)
+        public async Task<IDictionary<object, T?>> GetManyAsync<T>(
+            CacheKeyDefinition definition,
+            IEnumerable<object> instanceValues,
+            CancellationToken cancellationToken = default)
         {
-            var keyList = keys.ToList();
-            var fullKeys = new List<string>();
-            foreach (var key in keyList)
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+
+            var valueList = instanceValues.ToList();
+            var keyMapping = new Dictionary<string, object>();
+
+            foreach (var value in valueList)
             {
-                fullKeys.Add(GenerateScopedKey(key));
+                var baseKey = definition.BuildKey(value);
+                var fullKey = GenerateScopedKey(baseKey, definition.Scope);
+                keyMapping[fullKey] = value;
             }
 
-            var results = await _provider.GetManyAsync(fullKeys, cancellationToken);
+            var results = await _provider.GetManyAsync(keyMapping.Keys, cancellationToken);
+            var output = new Dictionary<object, T?>();
 
-            var output = new Dictionary<string, T?>();
-            var keyArray = keyList.ToArray();
-            var fullKeyArray = fullKeys.ToArray();
-
-            for (int i = 0; i < keyArray.Length; i++)
+            foreach (var kvp in keyMapping)
             {
-                var originalKey = keyArray[i];
-                var fullKey = fullKeyArray[i];
+                var fullKey = kvp.Key;
+                var instanceValue = kvp.Value;
 
                 if (results.TryGetValue(fullKey, out var data) && data != null)
                 {
@@ -205,13 +231,12 @@ namespace Atlas.Infrastructure.Caching.Core
                         {
                             var currentVersions = await _tagManager.GetTagVersionsAsync(
                                 cachedValue.TagVersions.Keys,
-                                cancellationToken
-                            );
+                                cancellationToken);
 
-                            foreach (var kvp in cachedValue.TagVersions)
+                            foreach (var tagKvp in cachedValue.TagVersions)
                             {
-                                if (!currentVersions.TryGetValue(kvp.Key, out var currentVersion) ||
-                                    currentVersion != kvp.Value)
+                                if (!currentVersions.TryGetValue(tagKvp.Key, out var currentVersion) ||
+                                    currentVersion != tagKvp.Value)
                                 {
                                     isValid = false;
                                     break;
@@ -219,29 +244,32 @@ namespace Atlas.Infrastructure.Caching.Core
                             }
                         }
 
-                        output[originalKey] = isValid ? cachedValue.Value : default;
+                        output[instanceValue] = isValid ? cachedValue.Value : default;
                     }
                     else
                     {
-                        output[originalKey] = default;
+                        output[instanceValue] = default;
                     }
                 }
                 else
                 {
-                    output[originalKey] = default;
+                    output[instanceValue] = default;
                 }
             }
 
             return output;
         }
 
-        // SetManyAsync 也需要修改
         public async Task SetManyAsync<T>(
-            IDictionary<string, T> items,
-            CacheOptions? options = null,
+            CacheKeyDefinition definition,
+            IDictionary<object, T> items,
+            CacheOptions? optionsOverride = null,
             CancellationToken cancellationToken = default)
         {
-            options ??= CacheOptions.Default;
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+
+            var options = optionsOverride ?? definition.CreateOptions(_scopeAccessor.Current);
 
             // 获取 Tag 版本
             Dictionary<string, long> tagVersions = new();
@@ -254,7 +282,8 @@ namespace Atlas.Infrastructure.Caching.Core
             var serializedItems = new Dictionary<string, byte[]>();
             foreach (var kvp in items)
             {
-                var fullKey = GenerateScopedKey(kvp.Key, options.Scope);
+                var baseKey = definition.BuildKey(kvp.Key);
+                var fullKey = GenerateScopedKey(baseKey, definition.Scope);
 
                 var cachedValue = new CachedValue<T>
                 {
@@ -271,14 +300,21 @@ namespace Atlas.Infrastructure.Caching.Core
         }
 
         public async Task<int> RemoveManyAsync(
-            IEnumerable<string> keys,
+            CacheKeyDefinition definition,
+            IEnumerable<object> instanceValues,
             CancellationToken cancellationToken = default)
         {
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+
             var fullKeys = new List<string>();
-            foreach (var key in keys)
+            foreach (var value in instanceValues)
             {
-                fullKeys.Add(GenerateScopedKey(key));
+                var baseKey = definition.BuildKey(value);
+                var fullKey = GenerateScopedKey(baseKey, definition.Scope);
+                fullKeys.Add(fullKey);
             }
+
             return await _provider.RemoveManyAsync(fullKeys, cancellationToken);
         }
 
@@ -288,9 +324,7 @@ namespace Atlas.Infrastructure.Caching.Core
             Interlocked.Increment(ref _totalInvalidations);
         }
 
-        public async Task InvalidateByTagsAsync(
-            IEnumerable<string> tags,
-            CancellationToken cancellationToken = default)
+        public async Task InvalidateByTagsAsync(IEnumerable<string> tags, CancellationToken cancellationToken = default)
         {
             await _invalidator.InvalidateByTagsAsync(tags, cancellationToken);
             var count = tags.Count();
@@ -308,19 +342,13 @@ namespace Atlas.Infrastructure.Caching.Core
             await _invalidator.InvalidateByPatternAsync(pattern, cancellationToken);
         }
 
-        public async Task InvalidateStoreAsync(
-            string tenantId,
-            string storeId,
-            CancellationToken cancellationToken = default)
+        public async Task InvalidateStoreAsync(string tenantId, string storeId, CancellationToken cancellationToken = default)
         {
             var pattern = $"S:{tenantId}:{storeId}:*";
             await _invalidator.InvalidateByPatternAsync(pattern, cancellationToken);
         }
 
-        public async Task InvalidateUserAsync(
-            string tenantId,
-            string userId,
-            CancellationToken cancellationToken = default)
+        public async Task InvalidateUserAsync(string tenantId, string userId, CancellationToken cancellationToken = default)
         {
             var pattern = $"U:{tenantId}:{userId}:*";
             await _invalidator.InvalidateByPatternAsync(pattern, cancellationToken);
@@ -345,39 +373,34 @@ namespace Atlas.Infrastructure.Caching.Core
             await _provider.ClearAsync(cancellationToken);
         }
 
-        private string GenerateScopedKey(string baseKey, CacheScope? scope = null)
+        private string GenerateScopedKey(string baseKey, CacheScope scope)
         {
-            var currentScope = scope ?? CacheScope.Global;
             var context = _scopeAccessor.Current;
-
             var scopeValues = new Dictionary<string, string>();
 
-            if (currentScope >= CacheScope.Tenant && context?.TenantId != null)
+            switch (scope)
             {
-                scopeValues["TenantId"] = context.TenantId;
+                case CacheScope.Tenant:
+                    if (context?.TenantId != null)
+                        scopeValues["TenantId"] = context.TenantId;
+                    break;
+
+                case CacheScope.Store:
+                    if (context?.TenantId != null)
+                        scopeValues["TenantId"] = context.TenantId;
+                    if (context?.StoreId != null)
+                        scopeValues["StoreId"] = context.StoreId;
+                    break;
+
+                case CacheScope.User:
+                    if (context?.TenantId != null)
+                        scopeValues["TenantId"] = context.TenantId;
+                    if (context?.UserId != null)
+                        scopeValues["UserId"] = context.UserId;
+                    break;
             }
 
-            if (currentScope >= CacheScope.Store && context?.StoreId != null)
-            {
-                scopeValues["StoreId"] = context.StoreId;
-            }
-
-            if (currentScope == CacheScope.User && context?.UserId != null)
-            {
-                scopeValues["UserId"] = context.UserId;
-            }
-
-            return _keyGenerator.GenerateKey(baseKey, currentScope, scopeValues);
-        }
-
-        private async Task<string> AppendTagVersionsToKey(
-            string key,
-            ISet<string> tags,
-            CancellationToken cancellationToken)
-        {
-            var versions = await _tagManager.GetTagVersionsAsync(tags, cancellationToken);
-            var versionString = string.Join("_", versions.Values.OrderBy(v => v));
-            return $"{key}:v{versionString}";
+            return _keyGenerator.GenerateKey(baseKey, scope, scopeValues);
         }
     }
 }

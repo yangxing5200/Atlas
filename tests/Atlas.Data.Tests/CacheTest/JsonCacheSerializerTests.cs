@@ -1,98 +1,283 @@
-﻿// Serialization/JsonCacheSerializerTests.cs
-using System.Text.Json;
 using Atlas.Infrastructure.Caching.Serialization;
+using Atlas.Infrastructure.Caching.Tests.Helpers;
 using FluentAssertions;
+using System;
+using System.Collections.Generic;
+using System.Text.Json;
 using Xunit;
 
-namespace Atlas.Data.Tests.Serialization
+namespace Atlas.Infrastructure.Caching.Tests.Serialization
 {
     public class JsonCacheSerializerTests
     {
-        private readonly JsonCacheSerializer _sut;
+        private readonly JsonCacheSerializer _serializer;
 
         public JsonCacheSerializerTests()
         {
-            _sut = new JsonCacheSerializer();
+            _serializer = new JsonCacheSerializer();
         }
 
+        #region Serialize Tests
+
         [Fact]
-        public void Serialize_ValidObject_ReturnsBytes()
+        public void Serialize_WithSimpleObject_SerializesCorrectly()
         {
             // Arrange
-            var data = new TestData { Id = 1, Name = "Test" };
+            var product = TestDataGenerator.CreateProduct(1, "Test Product");
 
             // Act
-            var result = _sut.Serialize(data);
+            var data = _serializer.Serialize(product);
 
             // Assert
-            result.Should().NotBeNull();
-            result.Should().NotBeEmpty();
+            data.Should().NotBeNull();
+            data.Length.Should().BeGreaterThan(0);
         }
 
         [Fact]
-        public void Deserialize_ValidBytes_ReturnsObject()
+        public void Serialize_WithComplexObject_SerializesCorrectly()
         {
             // Arrange
-            var original = new TestData { Id = 1, Name = "Test" };
-            var bytes = _sut.Serialize(original);
-
-            // Act
-            var result = _sut.Deserialize<TestData>(bytes);
-
-            // Assert
-            result.Should().NotBeNull();
-            result.Should().BeEquivalentTo(original);
-        }
-
-        [Fact]
-        public void Serialize_Then_Deserialize_PreservesData()
-        {
-            // Arrange
-            var original = new ComplexTestData
+            var complexObject = new ComplexTestObject
             {
-                Id = 123,
-                Name = "Complex",
-                Items = new List<string> { "item1", "item2" },
-                Properties = new Dictionary<string, string>
+                Id = 1,
+                Name = "Test",
+                Tags = new List<string> { "tag1", "tag2" },
+                Metadata = new Dictionary<string, string>
                 {
-                    ["key1"] = "value1",
-                    ["key2"] = "value2"
+                    { "key1", "value1" },
+                    { "key2", "value2" }
                 },
-                CreatedAt = DateTime.UtcNow
+                Nested = new NestedObject
+                {
+                    Value = "nested-value",
+                    Count = 42
+                }
             };
 
             // Act
-            var bytes = _sut.Serialize(original);
-            var result = _sut.Deserialize<ComplexTestData>(bytes);
+            var data = _serializer.Serialize(complexObject);
 
             // Assert
-            result.Should().NotBeNull();
-            result!.Id.Should().Be(original.Id);
-            result.Name.Should().Be(original.Name);
-            result.Items.Should().BeEquivalentTo(original.Items);
-            result.Properties.Should().BeEquivalentTo(original.Properties);
+            data.Should().NotBeNull();
+            data.Length.Should().BeGreaterThan(0);
         }
+
+        [Fact]
+        public void Serialize_WithNull_ThrowsArgumentNullException()
+        {
+            // Act & Assert
+            Assert.Throws<ArgumentNullException>(() =>
+                _serializer.Serialize<TestProduct>(null!));
+        }
+
+        [Fact]
+        public void Serialize_WithCircularReference_Handles()
+        {
+            // Arrange
+            var parent = new CircularReferenceTest { Id = 1, Name = "Parent" };
+            var child = new CircularReferenceTest { Id = 2, Name = "Child", Parent = parent };
+            parent.Child = child;
+
+            // Act
+            var data = _serializer.Serialize(parent);
+
+            // Assert
+            data.Should().NotBeNull();
+            // JsonSerializer with ReferenceHandler.Preserve should handle this
+        }
+
+        #endregion
+
+        #region Deserialize Tests
+
+        [Fact]
+        public void Deserialize_WithValidData_ReturnsCorrectObject()
+        {
+            // Arrange
+            var original = TestDataGenerator.CreateProduct(1, "Test Product");
+            var serializedData = _serializer.Serialize(original);
+
+            // Act
+            var deserialized = _serializer.Deserialize<TestProduct>(serializedData);
+
+            // Assert
+            deserialized.Should().NotBeNull();
+            deserialized!.Id.Should().Be(original.Id);
+            deserialized.Name.Should().Be(original.Name);
+            deserialized.Price.Should().Be(original.Price);
+        }
+
+        [Fact]
+        public void Deserialize_WithComplexObject_ReturnsCorrectObject()
+        {
+            // Arrange
+            var original = new ComplexTestObject
+            {
+                Id = 1,
+                Name = "Test",
+                Tags = new List<string> { "tag1", "tag2" },
+                Metadata = new Dictionary<string, string>
+                {
+                    { "key1", "value1" },
+                    { "key2", "value2" }
+                },
+                Nested = new NestedObject
+                {
+                    Value = "nested-value",
+                    Count = 42
+                }
+            };
+            var serializedData = _serializer.Serialize(original);
+
+            // Act
+            var deserialized = _serializer.Deserialize<ComplexTestObject>(serializedData);
+
+            // Assert
+            deserialized.Should().NotBeNull();
+            deserialized!.Id.Should().Be(original.Id);
+            deserialized.Name.Should().Be(original.Name);
+            deserialized.Tags.Should().BeEquivalentTo(original.Tags);
+            deserialized.Metadata.Should().BeEquivalentTo(original.Metadata);
+            deserialized.Nested.Should().NotBeNull();
+            deserialized.Nested!.Value.Should().Be(original.Nested.Value);
+            deserialized.Nested.Count.Should().Be(original.Nested.Count);
+        }
+
+        [Fact]
+        public void Deserialize_WithNullData_ReturnsDefault()
+        {
+            // Act
+            var result = _serializer.Deserialize<TestProduct>(null!);
+
+            // Assert
+            result.Should().BeNull();
+        }
+
+        [Fact]
+        public void Deserialize_WithEmptyData_ReturnsDefault()
+        {
+            // Arrange
+            var emptyData = Array.Empty<byte>();
+
+            // Act
+            var result = _serializer.Deserialize<TestProduct>(emptyData);
+
+            // Assert
+            result.Should().BeNull();
+        }
+
+        [Fact]
+        public void Deserialize_WithInvalidData_ThrowsException()
+        {
+            // Arrange
+            var invalidData = new byte[] { 1, 2, 3, 4, 5 };
+
+            // Act & Assert
+            Assert.Throws<InvalidOperationException>(() =>
+                _serializer.Deserialize<TestProduct>(invalidData));
+        }
+
+        #endregion
+
+        #region Roundtrip Tests
+
+        [Fact]
+        public void Roundtrip_SimpleObject_PreservesData()
+        {
+            // Arrange
+            var original = TestDataGenerator.CreateProduct(123, "Roundtrip Product");
+
+            // Act
+            var serialized = _serializer.Serialize(original);
+            var deserialized = _serializer.Deserialize<TestProduct>(serialized);
+
+            // Assert
+            deserialized.Should().NotBeNull();
+            deserialized!.Id.Should().Be(original.Id);
+            deserialized.Name.Should().Be(original.Name);
+            deserialized.Price.Should().Be(original.Price);
+        }
+
+        [Fact]
+        public void Roundtrip_WithListOfObjects_PreservesData()
+        {
+            // Arrange
+            var original = TestDataGenerator.CreateProducts(5);
+
+            // Act
+            var serialized = _serializer.Serialize(original);
+            var deserialized = _serializer.Deserialize<List<TestProduct>>(serialized);
+
+            // Assert
+            deserialized.Should().NotBeNull();
+            deserialized.Should().HaveCount(5);
+            deserialized.Should().BeEquivalentTo(original);
+        }
+
+        [Fact]
+        public void Roundtrip_WithDictionary_PreservesData()
+        {
+            // Arrange
+            var original = new Dictionary<string, TestProduct>
+            {
+                { "product1", TestDataGenerator.CreateProduct(1) },
+                { "product2", TestDataGenerator.CreateProduct(2) },
+                { "product3", TestDataGenerator.CreateProduct(3) }
+            };
+
+            // Act
+            var serialized = _serializer.Serialize(original);
+            var deserialized = _serializer.Deserialize<Dictionary<string, TestProduct>>(serialized);
+
+            // Assert
+            deserialized.Should().NotBeNull();
+            deserialized.Should().HaveCount(3);
+            deserialized.Should().ContainKey("product1");
+            deserialized.Should().ContainKey("product2");
+            deserialized.Should().ContainKey("product3");
+        }
+
+        #endregion
+
+        #region SerializerName Tests
 
         [Fact]
         public void SerializerName_ReturnsJson()
         {
-            // Act & Assert
-            _sut.SerializerName.Should().Be("Json");
+            // Act
+            var name = _serializer.SerializerName;
+
+            // Assert
+            name.Should().Be("Json");
         }
 
-        private class TestData
+        #endregion
+
+        #region Test Helper Classes
+
+        private class ComplexTestObject
         {
             public int Id { get; set; }
             public string Name { get; set; } = string.Empty;
+            public List<string> Tags { get; set; } = new();
+            public Dictionary<string, string> Metadata { get; set; } = new();
+            public NestedObject? Nested { get; set; }
         }
 
-        private class ComplexTestData
+        private class NestedObject
+        {
+            public string Value { get; set; } = string.Empty;
+            public int Count { get; set; }
+        }
+
+        private class CircularReferenceTest
         {
             public int Id { get; set; }
             public string Name { get; set; } = string.Empty;
-            public List<string> Items { get; set; } = new();
-            public Dictionary<string, string> Properties { get; set; } = new();
-            public DateTime CreatedAt { get; set; }
+            public CircularReferenceTest? Parent { get; set; }
+            public CircularReferenceTest? Child { get; set; }
         }
+
+        #endregion
     }
 }
