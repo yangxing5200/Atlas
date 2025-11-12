@@ -1,5 +1,4 @@
-﻿// Core/Models/CacheScope.cs
-namespace Atlas.Infrastructure.Caching.Core.Models
+﻿namespace Atlas.Infrastructure.Caching.Core.Models
 {
     /// <summary>
     /// 缓存作用域枚举

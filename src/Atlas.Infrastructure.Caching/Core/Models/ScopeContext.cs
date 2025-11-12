@@ -1,5 +1,4 @@
-﻿// Core/Models/ScopeContext.cs
-namespace Atlas.Infrastructure.Caching.Core.Models
+﻿namespace Atlas.Infrastructure.Caching.Core.Models
 {
     /// <summary>
     /// 作用域上下文

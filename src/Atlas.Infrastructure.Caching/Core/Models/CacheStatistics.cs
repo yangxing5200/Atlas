@@ -1,7 +1,4 @@
-﻿// Core/Models/CacheStatistics.cs
-using System;
-
-namespace Atlas.Infrastructure.Caching.Core.Models
+﻿namespace Atlas.Infrastructure.Caching.Core.Models
 {
     /// <summary>
     /// 缓存统计信息

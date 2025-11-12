@@ -1,7 +1,4 @@
-﻿using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
-using Atlas.Infrastructure.Caching.Core.Models;
+﻿using Atlas.Infrastructure.Caching.Core.Models;
 
 namespace Atlas.Infrastructure.Caching.Abstractions
 {

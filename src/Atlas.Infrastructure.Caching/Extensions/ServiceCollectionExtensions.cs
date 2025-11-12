@@ -1,6 +1,4 @@
 // Extensions/ServiceCollectionExtensions.cs
-using System;
-using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,10 +6,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using StackExchange.Redis;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Core;
-using Atlas.Infrastructure.Caching.EntityFramework.Abstractions;
-using Atlas.Infrastructure.Caching.EntityFramework.ChangeTracking;
-using Atlas.Infrastructure.Caching.EntityFramework.Interceptors;
-using Atlas.Infrastructure.Caching.EntityFramework.Invalidation;
 using Atlas.Infrastructure.Caching.Invalidation;
 using Atlas.Infrastructure.Caching.Keys.Generators;
 using Atlas.Infrastructure.Caching.Keys.Parsers;
@@ -19,7 +13,6 @@ using Atlas.Infrastructure.Caching.Providers.Memory;
 using Atlas.Infrastructure.Caching.Providers.Redis;
 using Atlas.Infrastructure.Caching.Providers.Hybrid;
 using Atlas.Infrastructure.Caching.Scoping;
-using Atlas.Infrastructure.Caching.Scoping.Abstractions;
 using Atlas.Infrastructure.Caching.Serialization;
 using Atlas.Infrastructure.Caching.Tags;
 
@@ -49,7 +42,6 @@ namespace Atlas.Infrastructure.Caching.Extensions
 
             // Main cache service
             services.TryAddSingleton<ICacheService, CacheService>();
-
             return services;
         }
 
@@ -97,32 +89,6 @@ namespace Atlas.Infrastructure.Caching.Extensions
             services.TryAddSingleton<ITagVersionStore>(sp => new RedisTagVersionStore(redis));
 
             return services;
-        }
-
-        public static IServiceCollection AddMultiTenantCaching(this IServiceCollection services)
-        {
-            // 添加 HttpContextAccessor
-            services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
-            services.TryAddScoped<IScopeContextAccessor, HttpScopeContextAccessor>();
-            services.TryAddScoped<ITenantResolver, TenantResolver>();
-            return services;
-        }
-
-        public static IServiceCollection AddEntityFrameworkCaching(this IServiceCollection services)
-        {
-            services.TryAddSingleton<IEntityChangeDetector, EntityChangeDetector>();
-            services.TryAddSingleton<EntityTagResolver>();
-            services.TryAddSingleton<IEntityCacheInvalidator, EntityCacheInvalidator>();
-            services.TryAddSingleton<CacheInvalidationInterceptor>();
-            return services;
-        }
-
-        public static DbContextOptionsBuilder UseAtlasCaching(
-            this DbContextOptionsBuilder optionsBuilder,
-            IServiceProvider serviceProvider)
-        {
-            var interceptor = serviceProvider.GetRequiredService<CacheInvalidationInterceptor>();
-            return optionsBuilder.AddInterceptors(interceptor);
         }
     }
 

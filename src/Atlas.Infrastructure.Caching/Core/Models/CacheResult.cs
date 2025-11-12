@@ -1,5 +1,4 @@
-﻿// Core/Models/CacheResult.cs
-namespace Atlas.Infrastructure.Caching.Core.Models
+﻿namespace Atlas.Infrastructure.Caching.Core.Models
 {
     /// <summary>
     /// 缓存操作结果

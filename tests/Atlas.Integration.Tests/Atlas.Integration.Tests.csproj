@@ -22,6 +22,11 @@
 		
 		<PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.0" />
 		<PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="8.0.0" />
+
+		<!-- Cache Infrastructure -->
+		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.0" />
+		<PackageReference Include="StackExchange.Redis" Version="2.7.10" />
+		
 		<!-- Testcontainers -->
 		<PackageReference Include="Testcontainers" Version="3.6.0" />
 		<PackageReference Include="Testcontainers.MySql" Version="3.6.0" />
@@ -37,11 +42,10 @@
       <ProjectReference Include="..\Atlas.Data.Tests\Atlas.Data.Tests.csproj" />
     </ItemGroup>
 
-    <ItemGroup>
-        <!-- 复制配置文件 -->
-        <None Update="appsettings.Test.json">
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        </None>
-    </ItemGroup>
+	<ItemGroup>
+		<None Update="appsettings*.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
 
 </Project>

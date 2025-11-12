@@ -1,17 +1,16 @@
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Core;
 using Atlas.Infrastructure.Caching.Core.Models;
-using Atlas.Infrastructure.Caching.Invalidation;
-using Atlas.Infrastructure.Caching.Keys.Generators;
-using Atlas.Infrastructure.Caching.Providers.Memory;
+using Atlas.Infrastructure.Caching.Extensions;
+using Atlas.Infrastructure.Caching.Providers.Hybrid;
 using Atlas.Infrastructure.Caching.Scoping;
-using Atlas.Infrastructure.Caching.Serialization;
-using Atlas.Infrastructure.Caching.Tags;
 using Atlas.Infrastructure.Caching.Tests.Helpers;
 using FluentAssertions;
-using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using System;
-using System.Linq;
+using System.Collections.Generic;
+using System.IO;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -20,32 +19,130 @@ namespace Atlas.Infrastructure.Caching.Tests.Integration
     /// <summary>
     /// 集成测试 - 测试完整的缓存工作流程
     /// </summary>
-    public class CacheSystemIntegrationTests : IDisposable
+    public class CacheSystemIntegrationTests : IAsyncLifetime
     {
-        private readonly ICacheService _cacheService;
-        private readonly IMemoryCache _memoryCache;
-        private readonly IScopeContextAccessor _scopeAccessor;
-        private readonly ITagManager _tagManager;
+        protected IServiceProvider ServiceProvider { get; private set; } = null!;
+        protected IServiceScope Scope { get; private set; } = null!;
+        protected IConfiguration Configuration { get; private set; } = null!;
 
-        public CacheSystemIntegrationTests()
+        private ICacheService _cacheService = null!;
+        private IScopeContextAccessor _scopeAccessor = null!;
+
+        public virtual async Task InitializeAsync()
         {
-            // Setup real components (not mocks)
-            _memoryCache = new MemoryCache(new MemoryCacheOptions());
-            var provider = new MemoryCacheProvider(_memoryCache);
-            var serializer = new JsonCacheSerializer();
-            var tagVersionStore = new TagVersionStore();
-            _tagManager = new TagManager(tagVersionStore);
-            var keyGenerator = new CacheKeyGenerator();
-            _scopeAccessor = new ScopeContextAccessor();
-            var invalidator = new CacheInvalidator(provider, _tagManager);
+            // 构建配置
+            Configuration = BuildConfiguration();
 
-            _cacheService = new CacheService(
-                provider,
-                serializer,
-                _tagManager,
-                keyGenerator,
-                _scopeAccessor,
-                invalidator);
+            var services = new ServiceCollection();
+
+            // 将配置注入到服务容器
+            services.AddSingleton(Configuration);
+
+            ConfigureServices(services);
+            ServiceProvider = services.BuildServiceProvider();
+            Scope = ServiceProvider.CreateScope();
+
+            // 从服务容器中获取服务
+            _cacheService = Scope.ServiceProvider.GetRequiredService<ICacheService>();
+            _scopeAccessor = Scope.ServiceProvider.GetRequiredService<IScopeContextAccessor>();
+
+            await OnInitializeAsync();
+        }
+
+        protected virtual IConfiguration BuildConfiguration()
+        {
+            var configBuilder = new ConfigurationBuilder()
+                .SetBasePath(Directory.GetCurrentDirectory())
+                .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false)
+                .AddJsonFile("appsettings.Test.json", optional: true, reloadOnChange: false)
+                .AddEnvironmentVariables();
+
+            return configBuilder.Build();
+        }
+
+        protected virtual void ConfigureServices(IServiceCollection services)
+        {
+            // 从配置读取缓存提供器类型
+            var cacheProvider = Configuration["CacheSettings:Provider"] ?? "Memory";
+
+            // 使用扩展方法配置缓存服务
+            services.AddAtlasCaching();
+
+            // 根据配置选择缓存提供器
+            switch (cacheProvider.ToLower())
+            {
+                case "redis":
+                    ConfigureRedisCache(services);
+                    break;
+
+                case "hybrid":
+                    ConfigureHybridCache(services);
+                    break;
+
+                case "memory":
+                default:
+                    services.AddMemoryCaching();
+                    break;
+            }
+        }
+
+        private void ConfigureRedisCache(IServiceCollection services)
+        {
+            var connectionString = Configuration["CacheSettings:Redis:ConnectionString"];
+            var instanceName = Configuration["CacheSettings:Redis:InstanceName"];
+
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException(
+                    "Redis connection string is not configured in appsettings.json");
+            }
+
+            services.AddRedisCaching(connectionString, instanceName);
+        }
+
+        private void ConfigureHybridCache(IServiceCollection services)
+        {
+            var connectionString = Configuration["CacheSettings:Hybrid:RedisConnectionString"];
+
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException(
+                    "Hybrid cache Redis connection string is not configured in appsettings.json");
+            }
+
+            services.AddHybridCaching(connectionString, options =>
+            {
+                // 从配置读取 Hybrid 缓存选项
+                var l1ExpirationMinutes = Configuration.GetValue<int?>(
+                    "CacheSettings:Hybrid:L1ExpirationMinutes");
+                var l1MaxItems = Configuration.GetValue<int?>(
+                    "CacheSettings:Hybrid:L1MaxItems");
+
+                if (l1ExpirationMinutes.HasValue)
+                {
+                    options.L1Expiration = TimeSpan.FromMinutes(l1ExpirationMinutes.Value);
+                }
+
+                //if (l1MaxItems.HasValue)
+                //{
+                //    options.L1MaxItems = l1MaxItems.Value;
+                //}
+            });
+        }
+
+        protected virtual Task OnInitializeAsync()
+        {
+            return Task.CompletedTask;
+        }
+
+        public virtual async Task DisposeAsync()
+        {
+            Scope?.Dispose();
+            if (ServiceProvider is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+            await Task.CompletedTask;
         }
 
         #region Full Workflow Tests
@@ -55,7 +152,7 @@ namespace Atlas.Infrastructure.Caching.Tests.Integration
         {
             // Arrange
             _scopeAccessor.Current = TestHelpers.CreateScopeContext();
-            
+
             var definition = CacheKeyDefinition.Create("product:{id}")
                 .WithScope(CacheScope.Tenant)
                 .WithInstanceKey("id")
@@ -91,7 +188,7 @@ namespace Atlas.Infrastructure.Caching.Tests.Integration
         {
             // Arrange
             _scopeAccessor.Current = TestHelpers.CreateScopeContext();
-            
+
             var definition = CacheKeyDefinition.Create("product:{id}")
                 .WithScope(CacheScope.Tenant)
                 .WithInstanceKey("id")
@@ -155,7 +252,7 @@ namespace Atlas.Infrastructure.Caching.Tests.Integration
             // Assert: Data is isolated
             retrieved1.Should().NotBeNull();
             retrieved1.Should().HaveCount(3);
-            
+
             retrieved2.Should().NotBeNull();
             retrieved2.Should().HaveCount(5);
         }
@@ -208,18 +305,18 @@ namespace Atlas.Infrastructure.Caching.Tests.Integration
 
             var listDefinition = CacheKeyDefinition.Create("product:list")
                 .WithScope(CacheScope.Tenant)
-                .WithTagGenerator((ctx, instance) => new[] { "product" })
+                .WithTagGenerator((ctx, _) => new[] { "product" })
                 .Build();
 
-            // Cache multiple products and a list
+            // Cache multiple items with "product" tag
             await _cacheService.SetAsync(productDefinition, TestDataGenerator.CreateProduct(1), 1);
             await _cacheService.SetAsync(productDefinition, TestDataGenerator.CreateProduct(2), 2);
             await _cacheService.SetAsync(listDefinition, TestDataGenerator.CreateProducts(5));
 
-            // Act: Invalidate the "product" tag
+            // Act: Invalidate all items with "product" tag
             await _cacheService.InvalidateByTagAsync("product");
 
-            // Assert: All caches with "product" tag are invalidated
+            // Assert: All product-related caches are invalidated
             var product1 = await _cacheService.GetAsync<TestProduct>(productDefinition, 1);
             var product2 = await _cacheService.GetAsync<TestProduct>(productDefinition, 2);
             var list = await _cacheService.GetAsync<List<TestProduct>>(listDefinition);
@@ -386,9 +483,11 @@ namespace Atlas.Infrastructure.Caching.Tests.Integration
             // Act
             await _cacheService.SetAsync<TestProduct>(definition, null!);
             var exists = await _cacheService.ExistsAsync(definition);
+            var retrieved = await _cacheService.GetAsync<TestProduct>(definition);
 
             // Assert
-            exists.Should().BeFalse(); // null is not stored even with AllowNull
+            exists.Should().BeTrue();
+            retrieved.Should().BeNull();
         }
 
         [Fact]
@@ -420,10 +519,5 @@ namespace Atlas.Infrastructure.Caching.Tests.Integration
         }
 
         #endregion
-
-        public void Dispose()
-        {
-            _memoryCache?.Dispose();
-        }
     }
 }

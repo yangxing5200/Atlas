@@ -162,9 +162,10 @@ namespace Atlas.Infrastructure.Caching.Tests.Models
         public void CreateOptions_WithDefaultSettings_ReturnsOptions()
         {
             // Arrange
+            var baseExpiration = TimeSpan.FromMinutes(30);
             var definition = CacheKeyDefinition.Create("product:{id}")
-                .WithExpiration(TimeSpan.FromMinutes(30))
-                .Build();
+                .WithExpiration(baseExpiration)
+                .Build();  // 使用默认的 maxRandomOffsetSeconds = 300
             var context = TestHelpers.CreateScopeContext();
 
             // Act
@@ -173,7 +174,15 @@ namespace Atlas.Infrastructure.Caching.Tests.Models
             // Assert
             options.Should().NotBeNull();
             options.AbsoluteExpiration.Should().NotBeNull();
-            options.AbsoluteExpiration!.Value.TotalMinutes.Should().BeApproximately(30, 0.1);
+
+            // 验证时间在 [baseExpiration, baseExpiration + 300秒] 范围内
+            var minExpiration = baseExpiration;
+            var maxExpiration = baseExpiration.Add(TimeSpan.FromSeconds(300));
+
+            options.AbsoluteExpiration!.Value.Should().BeGreaterOrEqualTo(minExpiration,
+                "because the expiration should not be less than the base expiration");
+            options.AbsoluteExpiration!.Value.Should().BeLessThanOrEqualTo(maxExpiration,
+                "because the random offset is at most 300 seconds (5 minutes)");
         }
 
         [Fact]

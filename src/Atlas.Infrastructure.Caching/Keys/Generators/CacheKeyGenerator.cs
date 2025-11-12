@@ -66,7 +66,7 @@ namespace Atlas.Infrastructure.Caching.Keys.Generators
             if (string.IsNullOrWhiteSpace(baseKey))
                 throw new ArgumentException("Base key cannot be null or empty", nameof(baseKey));
 
-            // ✅ 移除冒号验证 - 允许 baseKey 包含冒号
+            // 允许 baseKey 包含冒号
             // baseKey 可以是任意格式，例如 "product:123" 或 "user:settings:theme"
         }
 

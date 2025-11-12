@@ -1,8 +1,4 @@
-﻿// Core/Models/CacheOptions.cs
-using System;
-using System.Collections.Generic;
-
-namespace Atlas.Infrastructure.Caching.Core.Models
+﻿namespace Atlas.Infrastructure.Caching.Core.Models
 {
     /// <summary>
     /// 缓存选项
