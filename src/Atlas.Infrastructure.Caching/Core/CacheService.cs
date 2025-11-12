@@ -1,12 +1,14 @@
 // Core/CacheService.cs
+using Atlas.Infrastructure.Caching.Abstractions;
+using Atlas.Infrastructure.Caching.Core.Models;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Atlas.Infrastructure.Caching.Abstractions;
-using Atlas.Infrastructure.Caching.Core.Models;
 
 namespace Atlas.Infrastructure.Caching.Core
 {
@@ -21,6 +23,7 @@ namespace Atlas.Infrastructure.Caching.Core
         private readonly ICacheKeyGenerator _keyGenerator;
         private readonly IScopeContextAccessor _scopeAccessor;
         private readonly ICacheInvalidator _invalidator;
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
 
         private long _totalGets;
         private long _totalSets;
@@ -151,21 +154,49 @@ namespace Atlas.Infrastructure.Caching.Core
                 throw new ArgumentNullException(nameof(factory));
 
             var sw = Stopwatch.StartNew();
-            var value = await GetAsync<T>(definition, instanceValue, cancellationToken);
 
+            // 先尝试读取缓存
+            var value = await GetAsync<T>(definition, instanceValue, cancellationToken);
             if (value != null || (definition.AllowNull && await ExistsAsync(definition, instanceValue, cancellationToken)))
             {
                 return CacheResult<T>.Hit(value, CacheSource.Cache, sw.ElapsedMilliseconds);
             }
 
-            value = await factory();
+            // 生成锁的键
+            var baseKey = definition.BuildKey(instanceValue);
+            var lockKey = GenerateScopedKey(baseKey, definition.Scope);
+            var semaphore = _locks.GetOrAdd(lockKey, _ => new SemaphoreSlim(1, 1));
 
-            if (value != null || definition.AllowNull)
+            await semaphore.WaitAsync(cancellationToken);
+            try
             {
-                await SetAsync(definition, value!, instanceValue, optionsOverride, cancellationToken);
-            }
+                // 双重检查：再次尝试读取缓存（可能已被其他线程写入）
+                value = await GetAsync<T>(definition, instanceValue, cancellationToken);
+                if (value != null || (definition.AllowNull && await ExistsAsync(definition, instanceValue, cancellationToken)))
+                {
+                    return CacheResult<T>.Hit(value, CacheSource.Cache, sw.ElapsedMilliseconds);
+                }
 
-            return CacheResult<T>.Miss(value, CacheSource.Factory, sw.ElapsedMilliseconds);
+                // 调用 factory 获取数据
+                value = await factory();
+
+                if (value != null || definition.AllowNull)
+                {
+                    await SetAsync(definition, value!, instanceValue, optionsOverride, cancellationToken);
+                }
+
+                return CacheResult<T>.Miss(value, CacheSource.Factory, sw.ElapsedMilliseconds);
+            }
+            finally
+            {
+                semaphore.Release();
+
+                // 清理锁
+                if (semaphore.CurrentCount == 1)
+                {
+                    _locks.TryRemove(lockKey, out _);
+                }
+            }
         }
 
         public async Task<bool> RemoveAsync(
