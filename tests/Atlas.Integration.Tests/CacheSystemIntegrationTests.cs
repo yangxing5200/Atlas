@@ -5,6 +5,7 @@ using Atlas.Infrastructure.Caching.Extensions;
 using Atlas.Infrastructure.Caching.Providers.Hybrid;
 using Atlas.Infrastructure.Caching.Scoping;
 using Atlas.Infrastructure.Caching.Tests.Helpers;
+using Atlas.Integration.Tests;
 using Bogus;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
@@ -30,12 +31,7 @@ namespace Atlas.Infrastructure.Caching.Tests.Integration
             // Arrange
             _scopeAccessor.Current = TestHelpers.CreateScopeContext();
 
-            var definition = CacheKeyDefinition.Create("product:{id}")
-                .WithScope(CacheScope.Tenant)
-                .WithInstanceKey("id")
-                .WithExpiration(TimeSpan.FromMinutes(30))
-                .WithTagGenerator((ctx, instance) => new[] { "product", $"product:{instance}" })
-                .Build();
+            var definition = TestCacheKeys.Product_Base;
 
             var product = TestDataGenerator.CreateProduct(1, "Integration Test Product");
 

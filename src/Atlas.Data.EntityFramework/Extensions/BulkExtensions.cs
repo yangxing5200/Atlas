@@ -1,69 +1,32 @@
 ﻿using Atlas.Core.Entities;
 using Atlas.Data.Abstractions;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
-using System;
-using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
-using System.Linq;
 using System.Linq.Expressions;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Atlas.Data.Common.Extensions
 {
-    /// <summary>
-    /// EF批量操作配置选项
-    /// </summary>
     public class EFBulkOptions
     {
-        /// <summary>
-        /// 批次大小，默认1000
-        /// </summary>
         public int BatchSize { get; set; } = 1000;
-
-        /// <summary>
-        /// 是否返回插入后的ID，默认true
-        /// </summary>
         public bool ReturnGeneratedIds { get; set; } = true;
-
-        /// <summary>
-        /// 空值处理策略，默认插入NULL
-        /// </summary>
         public NullValueHandling NullValueHandling { get; set; } = NullValueHandling.InsertNull;
     }
 
-    /// <summary>
-    /// 空值处理策略
-    /// </summary>
     public enum NullValueHandling
     {
-        /// <summary>
-        /// 插入NULL值
-        /// </summary>
         InsertNull,
-
-        /// <summary>
-        /// 忽略空值字段（不插入该列）
-        /// </summary>
         Ignore
     }
 
-    /// <summary>
-    /// 批量操作扩展方法
-    /// 提供高性能的批量插入和更新功能，支持自动审计、乐观锁和事务管理
-    /// </summary>
     public static class BulkExtensions
     {
         #region 批量插入
 
-        /// <summary>
-        /// 批量插入实体
-        /// </summary>
         public static async Task<int> BulkInsertAsync<TEntity>(
             this DbContext context,
             IEnumerable<TEntity> entities,
@@ -74,9 +37,6 @@ namespace Atlas.Data.Common.Extensions
             return await BulkInsertAsync(context, entities, new EFBulkOptions { BatchSize = batchSize }, cancellationToken);
         }
 
-        /// <summary>
-        /// 批量插入实体（带配置）
-        /// </summary>
         public static async Task<int> BulkInsertAsync<TEntity>(
             this DbContext context,
             IEnumerable<TEntity> entities,
@@ -89,12 +49,12 @@ namespace Atlas.Data.Common.Extensions
             if (options == null) throw new ArgumentNullException(nameof(options));
 
             var currentUserId = GetCurrentUserId(context);
-            return await BulkInsertAsync(context, entities, currentUserId, options, cancellationToken);
+            var tenantId = GetCurrentTenantId(context);
+            var storeId = GetCurrentStoreId(context);
+
+            return await BulkInsertAsync(context, entities, currentUserId, tenantId, storeId, options, cancellationToken);
         }
 
-        /// <summary>
-        /// 批量插入实体（指定用户ID）
-        /// </summary>
         public static async Task<int> BulkInsertAsync<TEntity>(
             this DbContext context,
             IEnumerable<TEntity> entities,
@@ -103,17 +63,16 @@ namespace Atlas.Data.Common.Extensions
             CancellationToken cancellationToken = default)
             where TEntity : class
         {
-            return await BulkInsertAsync(context, entities, currentUserId,
+            return await BulkInsertAsync(context, entities, currentUserId, null, null,
                 new EFBulkOptions { BatchSize = batchSize }, cancellationToken);
         }
 
-        /// <summary>
-        /// 批量插入实体（指定用户ID和配置）
-        /// </summary>
         public static async Task<int> BulkInsertAsync<TEntity>(
             this DbContext context,
             IEnumerable<TEntity> entities,
             long? currentUserId,
+            long? tenantId,
+            long? storeId,
             EFBulkOptions options,
             CancellationToken cancellationToken = default)
             where TEntity : class
@@ -125,16 +84,13 @@ namespace Atlas.Data.Common.Extensions
             var entityList = entities.ToList();
             if (entityList.Count == 0) return 0;
 
-            return await BulkInsertDirectAsync(context, entityList, currentUserId, options, cancellationToken);
+            return await BulkInsertDirectAsync(context, entityList, currentUserId, tenantId, storeId, options, cancellationToken);
         }
 
         #endregion
 
         #region 批量更新
 
-        /// <summary>
-        /// 批量更新实体
-        /// </summary>
         public static async Task<int> BulkUpdateAsync<TEntity>(
             this DbContext context,
             IEnumerable<TEntity> entities,
@@ -149,9 +105,6 @@ namespace Atlas.Data.Common.Extensions
             return await BulkUpdateAsync(context, entities, updateFields, currentUserId, cancellationToken);
         }
 
-        /// <summary>
-        /// 批量更新实体（指定用户ID）
-        /// </summary>
         public static async Task<int> BulkUpdateAsync<TEntity>(
             this DbContext context,
             IEnumerable<TEntity> entities,
@@ -170,9 +123,6 @@ namespace Atlas.Data.Common.Extensions
                 new EFBulkOptions(), cancellationToken);
         }
 
-        /// <summary>
-        /// 批量更新实体（带配置）
-        /// </summary>
         public static async Task<int> BulkUpdateAsync<TEntity>(
             this DbContext context,
             IEnumerable<TEntity> entities,
@@ -192,9 +142,6 @@ namespace Atlas.Data.Common.Extensions
             return await BulkUpdateDirectAsync(context, entityList, updateFields, currentUserId, options, cancellationToken);
         }
 
-        /// <summary>
-        /// 批量更新实体（完整参数）
-        /// </summary>
         public static async Task<int> BulkUpdateAsync<TEntity>(
             this DbContext context,
             IEnumerable<TEntity> entities,
@@ -218,13 +165,12 @@ namespace Atlas.Data.Common.Extensions
 
         #region 内部实现：直接批量插入
 
-        /// <summary>
-        /// 直接批量插入（不依赖ChangeTracker）
-        /// </summary>
         private static async Task<int> BulkInsertDirectAsync<TEntity>(
             DbContext context,
             List<TEntity> entities,
             long? currentUserId,
+            long? tenantId,
+            long? storeId,
             EFBulkOptions options,
             CancellationToken cancellationToken)
             where TEntity : class
@@ -238,12 +184,11 @@ namespace Atlas.Data.Common.Extensions
             var idProperty = primaryKey?.Properties.FirstOrDefault();
             var isDbGeneratedId = idProperty?.ValueGenerated == ValueGenerated.OnAdd;
 
-            // 验证非数据库生成ID的实体必须提供ID值
             if (!isDbGeneratedId && idProperty != null)
             {
                 foreach (var entity in entities)
                 {
-                    if (entity is BaseEntity baseEntity && baseEntity.Id == 0)
+                    if (entity is IBaseEntity baseEntity && baseEntity.Id == 0)
                     {
                         throw new InvalidOperationException(
                             $"实体 {typeof(TEntity).Name} 的主键不是数据库自动生成类型，必须在插入前设置ID值。");
@@ -281,7 +226,7 @@ namespace Atlas.Data.Common.Extensions
 
                     foreach (var entity in batch)
                     {
-                        SetAuditFieldsForInsert(entity, currentUserId, now);
+                        SetAuditFieldsForInsert(entity, currentUserId, tenantId, storeId, now);
                     }
 
                     var sql = new StringBuilder();
@@ -388,9 +333,6 @@ namespace Atlas.Data.Common.Extensions
 
         #region 内部实现：直接批量更新
 
-        /// <summary>
-        /// 直接批量更新（不依赖ChangeTracker）
-        /// </summary>
         private static async Task<int> BulkUpdateDirectAsync<TEntity>(
             DbContext context,
             List<TEntity> entities,
@@ -409,7 +351,7 @@ namespace Atlas.Data.Common.Extensions
             var idProperty = primaryKey!.Properties.First();
             var idColumnName = idProperty.GetColumnName();
 
-            var hasVersion = typeof(TEntity).IsAssignableTo(typeof(VersionedEntity));
+            var hasVersion = typeof(IVersioned).IsAssignableFrom(typeof(TEntity));
             var versionProperty = hasVersion
                 ? entityType.GetProperties().FirstOrDefault(p => p.Name == "Version")
                 : null;
@@ -509,7 +451,7 @@ namespace Atlas.Data.Common.Extensions
                     using var command = connection.CreateCommand();
                     command.Transaction = transaction.GetDbTransaction();
                     command.CommandText = sqlBatch.ToString();
-                    foreach (var  param in parameters)
+                    foreach (var param in parameters)
                     {
                         command.Parameters.Add(param);
                     }
@@ -542,9 +484,6 @@ namespace Atlas.Data.Common.Extensions
 
         #region 辅助方法
 
-        /// <summary>
-        /// 从表达式树中提取属性名称
-        /// </summary>
         private static List<string> ExtractPropertyNames<TEntity>(Expression<Func<TEntity, object>> selector)
         {
             var propertyNames = new List<string>();
@@ -574,56 +513,59 @@ namespace Atlas.Data.Common.Extensions
             return propertyNames;
         }
 
-        /// <summary>
-        /// 设置插入时的审计字段
-        /// </summary>
-        private static void SetAuditFieldsForInsert(object entity, long? userId, DateTime now)
+        private static void SetAuditFieldsForInsert(object entity, long? userId, long? tenantId, long? storeId, DateTime now)
         {
-            if (entity is BaseEntity baseEntity)
-            {
-                baseEntity.CreatedAt = now;
-            }
+            if (entity is IBaseEntity be)
+                be.CreatedAt = now;
 
-            if (entity is AuditableEntity auditable)
-            {
-                auditable.CreatedBy = userId;
-            }
+            if (entity is IAuditable au)
+                au.CreatedBy = userId;
 
-            if (entity is VersionedEntity versioned)
-            {
-                versioned.Version = 0;
-            }
+            if (entity is IVersioned ve)
+                ve.Version = 0;
+
+            if (tenantId.HasValue && entity is ITenantEntity te && te.TenantId == 0)
+                te.TenantId = tenantId.Value;
+
+            if (storeId.HasValue && entity is IStoreEntity se && se.StoreId == 0)
+                se.StoreId = storeId.Value;
         }
 
-        /// <summary>
-        /// 设置更新时的审计字段
-        /// </summary>
         private static void SetAuditFieldsForUpdate(object entity, long? userId, DateTime now)
         {
-            if (entity is BaseEntity baseEntity)
-            {
-                baseEntity.UpdatedAt = now;
-            }
+            if (entity is IBaseEntity be)
+                be.UpdatedAt = now;
 
-            if (entity is AuditableEntity auditable)
-            {
-                auditable.UpdatedBy = userId;
-            }
+            if (entity is IAuditable au)
+                au.UpdatedBy = userId;
 
-            if (entity is VersionedEntity versioned)
-            {
-                versioned.Version++;
-            }
+            if (entity is IVersioned ve)
+                ve.Version++;
         }
 
-        /// <summary>
-        /// 从DbContext获取当前用户ID
-        /// </summary>
         private static long? GetCurrentUserId(DbContext context)
         {
             if (context is IHasCurrentUser hasCurrentUser)
             {
                 return hasCurrentUser.CurrentUserId;
+            }
+            return null;
+        }
+
+        private static long? GetCurrentTenantId(DbContext context)
+        {
+            if (context is IHasCurrentUser hasCurrentTenant)
+            {
+                return hasCurrentTenant.CurrentTenantId;
+            }
+            return null;
+        }
+
+        private static long? GetCurrentStoreId(DbContext context)
+        {
+            if (context is IHasCurrentUser hasCurrentStore)
+            {
+                return hasCurrentStore.StoreId;
             }
             return null;
         }

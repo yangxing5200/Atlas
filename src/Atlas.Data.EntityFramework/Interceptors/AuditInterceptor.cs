@@ -2,13 +2,10 @@
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Atlas.Core.Services;
+using Atlas.Core.Entities;
 
 namespace Atlas.Data.Common.Interceptors
 {
-    /// <summary>
-    /// 审计拦截器（自动设置CreatedBy, UpdatedBy等字段）
-    /// 微软官方推荐方式，用于SaveChanges场景
-    /// </summary>
     public class AuditInterceptor : SaveChangesInterceptor
     {
         private readonly ICurrentUserService _currentUserService;
@@ -35,70 +32,52 @@ namespace Atlas.Data.Common.Interceptors
             return base.SavingChangesAsync(eventData, result, cancellationToken);
         }
 
-        private void UpdateAuditFields(DbContext context)
+        private void UpdateAuditFields(DbContext? context)
         {
             if (context == null) return;
 
-            var userId = _currentUserService.UserId;
+            var userId = _currentUserService?.UserId;
+            var tenantId = _currentUserService?.TenantId;
+            var storeId = _currentUserService?.StoreId;
             var now = DateTime.UtcNow;
+
+            var hasTenant = tenantId.HasValue;
+            var hasStore = storeId.HasValue;
 
             foreach (var entry in context.ChangeTracker.Entries())
             {
                 if (entry.State == EntityState.Added)
                 {
-                    // 新增时设置创建信息
-                    TrySetProperty(entry, "CreatedAt", now);
-                    TrySetProperty(entry, "CreatedBy", userId);
-                    TrySetProperty(entry, "Version", 0);
+                    var entity = entry.Entity;
+
+                    if (entity is IBaseEntity be)
+                        be.CreatedAt = now;
+
+                    if (entity is IAuditable au)
+                        au.CreatedBy = userId;
+
+                    if (entity is IVersioned ve)
+                        ve.Version = 0;
+
+                    if (hasTenant && entity is ITenantEntity te && te.TenantId == 0)
+                        te.TenantId = tenantId!.Value;
+
+                    if (hasStore && entity is IStoreEntity se && se.StoreId == 0)
+                        se.StoreId = storeId!.Value;
                 }
                 else if (entry.State == EntityState.Modified)
                 {
-                    // 修改时设置更新信息
-                    TrySetProperty(entry, "UpdatedAt", now);
-                    TrySetProperty(entry, "UpdatedBy", userId);
+                    var entity = entry.Entity;
 
-                    // 版本号递增（乐观锁）
-                    IncrementVersion(entry);
-                }
-            }
-        }
+                    if (entity is IBaseEntity be)
+                        be.UpdatedAt = now;
 
-        /// <summary>
-        /// 尝试设置属性值
-        /// </summary>
-        private static void TrySetProperty(EntityEntry entry, string propertyName, object value)
-        {
-            try
-            {
-                var property = entry.Property(propertyName);
-                if (property?.Metadata != null)
-                {
-                    property.CurrentValue = value;
-                }
-            }
-            catch
-            {
-                // 属性不存在，忽略（不是所有实体都有审计字段）
-            }
-        }
+                    if (entity is IAuditable au)
+                        au.UpdatedBy = userId;
 
-        /// <summary>
-        /// 递增版本号
-        /// </summary>
-        private static void IncrementVersion(EntityEntry entry)
-        {
-            try
-            {
-                var versionProperty = entry.Property("Version");
-                if (versionProperty?.Metadata != null)
-                {
-                    var currentVersion = versionProperty.CurrentValue as int? ?? 0;
-                    versionProperty.CurrentValue = currentVersion + 1;
+                    if (entity is IVersioned ve)
+                        ve.Version++;
                 }
-            }
-            catch
-            {
-                // 属性不存在，忽略
             }
         }
     }
