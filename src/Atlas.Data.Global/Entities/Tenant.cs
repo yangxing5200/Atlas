@@ -1,14 +1,14 @@
 ﻿using Atlas.Core.Entities;
 using Atlas.Core.Enums;
 
-namespace Atlas.Models.Global;
+namespace Atlas.Data.Global.Entities;
 
-public class Tenant: AuditableEntity
+public class Tenant : AuditableEntity
 {
     /// <summary>
     /// 公司名称
     /// </summary>
-    public required string Name { get; set; }
+    public string Name { get; set; }
 
     /// <summary>
     /// 品牌名称
@@ -23,17 +23,17 @@ public class Tenant: AuditableEntity
     /// <summary>
     /// 电话
     /// </summary>
-    public required string PhoneNumber { get; set; }
+    public string PhoneNumber { get; set; }
 
     /// <summary>
     /// 联系人姓名
     /// </summary>
-    public required string ContactName { get; set; }
+    public string ContactName { get; set; }
 
     /// <summary>
     /// 联系人手机号
     /// </summary>
-    public required string ContactPhoneNumber { get; set; }
+    public string ContactPhoneNumber { get; set; }
 
     /// <summary>
     /// 联系人邮箱
@@ -41,24 +41,14 @@ public class Tenant: AuditableEntity
     public string? ContactEmail { get; set; }
 
     /// <summary>
-    /// 待确定
-    /// </summary>
-    public int? MaxNum { get; set; }
-
-    /// <summary>
     /// 公司代码
     /// </summary>
-    public required string Domain { get; set; }
+    public string Domain { get; set; }
 
     /// <summary>
     /// 租户类型
     /// </summary>
     public TenantType TenantType { get; set; }
-
-    /// <summary>
-    /// 区域
-    /// </summary>
-    public required string Region { get; set; }
 
     /// <summary>
     /// 省份
@@ -74,6 +64,11 @@ public class Tenant: AuditableEntity
     /// 类别
     /// </summary>
     public string? Category { get; set; }
+
+    /// <summary>
+    /// 租户状态
+    /// </summary>
+    public TenantStatus Status { get; set; }
 
     /// <summary>
     /// 连锁类型
@@ -93,7 +88,7 @@ public class Tenant: AuditableEntity
     /// <summary>
     /// 关联的数据库实例
     /// </summary>
-    //public DatabaseInstance DatabaseInstance { get; set; }
+    public DatabaseInstance DatabaseInstance { get; set; }
 
     /// <summary>
     /// 租户类别字典

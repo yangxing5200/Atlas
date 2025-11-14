@@ -16,16 +16,6 @@ namespace Atlas.Core.Entities
         public DateTime GetIdTimestamp() => SnowflakeIdGenerator.ParseTimestamp(Id);
     }
 
-    public abstract class TenantEntity : BaseEntity, ITenantEntity
-    {
-        public long TenantId { get; set; }
-    }
-
-    public abstract class StoreEntity : BaseEntity, IStoreEntity
-    {
-        public long StoreId { get; set; }
-    }
-
     public abstract class AuditableEntity : BaseEntity, IAuditable, ISoftDelete
     {
         public long? CreatedBy { get; set; }
@@ -40,12 +30,39 @@ namespace Atlas.Core.Entities
         public int Version { get; set; }
     }
 
-    public abstract class TenantVersionedEntity : VersionedEntity, ITenantEntity
+    /// <summary>
+    /// 共享数据实体基类
+    /// 适用场景：商品、会员、促销、优惠券等需要在门店间共享的数据
+    /// </summary>
+    public abstract class SharedEntity : AuditableEntity, ISharedEntity
     {
         public long TenantId { get; set; }
+        public long StoreId { get; set; }
     }
 
-    public abstract class TenantStoreVersionedEntity : VersionedEntity, ITenantEntity, IStoreEntity
+    /// <summary>
+    /// 共享数据实体基类（带版本控制）
+    /// </summary>
+    public abstract class SharedVersionedEntity : VersionedEntity, ISharedEntity
+    {
+        public long TenantId { get; set; }
+        public long StoreId { get; set; }
+    }
+
+    /// <summary>
+    /// 门店独享数据实体基类
+    /// 适用场景：订单、库存、收银记录等门店独立经营数据
+    /// </summary>
+    public abstract class StoreOnlyEntity : AuditableEntity, IStoreOnlyEntity
+    {
+        public long TenantId { get; set; }
+        public long StoreId { get; set; }
+    }
+
+    /// <summary>
+    /// 门店独享数据实体基类（带版本控制）
+    /// </summary>
+    public abstract class StoreOnlyVersionedEntity : VersionedEntity, IStoreOnlyEntity
     {
         public long TenantId { get; set; }
         public long StoreId { get; set; }

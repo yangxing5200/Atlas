@@ -66,3 +66,38 @@ public enum BusinessType : byte
     [Description("直营")]
     RegularChain
 }
+public enum StoreType
+{
+    /// <summary>
+    /// 平台总部
+    /// </summary>
+    Headquarters = 0,
+
+    /// <summary>
+    /// 加盟商总部
+    /// </summary>
+    FranchiseHeadquarters = 1,
+
+    /// <summary>
+    /// 直营门店
+    /// </summary>
+    DirectOperated = 2,
+
+    /// <summary>
+    /// 加盟门店
+    /// </summary>
+    Franchised = 3
+}
+
+public enum OrderStatus
+{
+    Pending = 0,
+    Comfirm = 1,
+    Shipped = 2,
+}
+public enum PaymentMethod
+{
+    Cash = 0,
+    CreditCard = 1,
+    MobilePayment = 2,
+}

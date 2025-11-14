@@ -1,8 +1,9 @@
-﻿using Atlas.Core.Entities;
+﻿using Atlas.Core.Context;
+using Atlas.Core.Entities;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Common.Extensions;
-using Atlas.Models.Tenant;
+using Atlas.Data.Tenant.Entities;
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
 
@@ -14,6 +15,16 @@ namespace Atlas.Data.Tenant
     public class AtlasTenantDbContext : DbContext, IHasCurrentUser
     {
         private readonly ICurrentUserService _currentUserService;
+        private readonly ITenantContext _tenantContext;
+        private readonly string? _connectionString;
+        public AtlasTenantDbContext(
+            DbContextOptions<AtlasTenantDbContext> options,
+            ITenantContext tenantContext)
+            : base(options)
+        {
+            _tenantContext = tenantContext;
+            _connectionString = tenantContext.TenantConnectionString;
+        }
 
         public AtlasTenantDbContext(
             DbContextOptions<AtlasTenantDbContext> options,
@@ -32,7 +43,33 @@ namespace Atlas.Data.Tenant
         public DbSet<Store> Stores { get; set; }
         // public DbSet<Order> Orders { get; set; }
         // public DbSet<Product> Products { get; set; }
+        // AtlasTenantDbContext.cs
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        {
+            if (!string.IsNullOrEmpty(_connectionString))
+            {
+                optionsBuilder.UseMySql(
+                    _connectionString,
+                    ServerVersion.AutoDetect(_connectionString),
+                    mysqlOptions =>
+                    {
+                        // 启用重试机制
+                        mysqlOptions.EnableRetryOnFailure(
+                            maxRetryCount: 3,
+                            maxRetryDelay: TimeSpan.FromSeconds(5),
+                            errorNumbersToAdd: null);
 
+                        // 命令超时
+                        mysqlOptions.CommandTimeout(30);
+                    });
+
+                // 开发环境启用敏感数据记录
+                if (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development")
+                {
+                    optionsBuilder.EnableSensitiveDataLogging();
+                }
+            }
+        }
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -49,30 +86,6 @@ namespace Atlas.Data.Tenant
 
             // 4. 应用软删除过滤器
             modelBuilder.ApplySoftDeleteFilter();
-
-            // 5. 租户过滤器（关键修复：通过实例方法构建，访问实例的_currentUserService）
-            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
-            {
-                if (typeof(ITenantEntity).IsAssignableFrom(entityType.ClrType))
-                {
-                    // 调用实例方法，而非静态方法
-                    var method = GetType().GetMethod(nameof(SetTenantFilter),
-                        BindingFlags.NonPublic | BindingFlags.Instance)!
-                        .MakeGenericMethod(entityType.ClrType);
-                    method.Invoke(this, new object[] { modelBuilder });
-                }
-            }
-        }
-
-        /// <summary>
-        /// 实例方法：设置租户查询过滤器
-        /// </summary>
-        private void SetTenantFilter<TEntity>(ModelBuilder modelBuilder)
-            where TEntity : class, ITenantEntity
-        {
-            modelBuilder.Entity<TEntity>().HasQueryFilter(e =>
-                // 注意：如果CurrentTenantId可能为null，需处理空值（避免查询过滤器失效）
-                _currentUserService.TenantId == null || e.TenantId == _currentUserService.TenantId);
         }
     }
 }

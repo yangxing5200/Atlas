@@ -31,7 +31,7 @@ namespace Atlas.Data.Tests.TestEntities
     /// <summary>
     /// 测试用用户实体（使用Snowflake ID）
     /// </summary>
-    public class TestUser: TenantVersionedEntity
+    public class TestUser: SharedVersionedEntity
     {
 
         /// <summary>
