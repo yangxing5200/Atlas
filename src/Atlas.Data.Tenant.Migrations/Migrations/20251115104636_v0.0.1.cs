@@ -45,11 +45,6 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_Stores", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_Stores_Stores_ParentStoreId",
-                        column: x => x.ParentStoreId,
-                        principalTable: "Stores",
-                        principalColumn: "Id");
                 })
                 .Annotation("MySql:CharSet", "utf8mb4");
 

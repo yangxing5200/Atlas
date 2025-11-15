@@ -254,7 +254,6 @@ namespace Atlas.Data.Global.Migrations.Migrations
                 {
                     b.HasOne("Atlas.Models.Global.Entities.DatabaseInstance", "DatabaseInstance")
                         .WithMany("Tenants")
-                        .HasForeignKey("DatabaseInstanceId1")
                         .IsRequired();
 
                     b.Navigation("DatabaseInstance");

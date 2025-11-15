@@ -42,7 +42,7 @@ namespace Atlas.Data.Global
                 typeof(AtlasGlobalDbContext).Assembly);
 
             // 2. 移除所有外键约束 
-            modelBuilder.RemoveAllForeignKeyConstraints();
+            //modelBuilder.RemoveAllForeignKeyConstraints(); // 主动去迁移文件中删除外键语句，避免EF Core自动重新创建外键约束
 
             // 3. 确保外键字段有索引
             modelBuilder.EnsureForeignKeyIndexes();

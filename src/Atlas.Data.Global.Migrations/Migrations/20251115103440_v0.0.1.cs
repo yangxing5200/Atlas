@@ -154,11 +154,6 @@ namespace Atlas.Data.Global.Migrations.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_Tenants", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_Tenants_DatabaseInstances_DatabaseInstanceId1",
-                        column: x => x.DatabaseInstanceId1,
-                        principalTable: "DatabaseInstances",
-                        principalColumn: "Id");
                 })
                 .Annotation("MySql:CharSet", "utf8mb4");
 

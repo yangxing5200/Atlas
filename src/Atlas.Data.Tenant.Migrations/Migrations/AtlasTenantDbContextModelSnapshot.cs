@@ -108,8 +108,7 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
             modelBuilder.Entity("Atlas.Models.Tenant.Entities.Store", b =>
                 {
                     b.HasOne("Atlas.Models.Tenant.Entities.Store", "ParentStore")
-                        .WithMany("ChildStores")
-                        .HasForeignKey("ParentStoreId");
+                        .WithMany("ChildStores");
 
                     b.Navigation("ParentStore");
                 });
