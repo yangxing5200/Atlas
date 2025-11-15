@@ -8,11 +8,11 @@ namespace Atlas.Data.Common.Interceptors
 {
     public class AuditInterceptor : SaveChangesInterceptor
     {
-        private readonly ICurrentUserService _currentUserService;
+        private readonly ICurrentIdentity _currentIdentity;
 
-        public AuditInterceptor(ICurrentUserService currentUserService)
+        public AuditInterceptor(ICurrentIdentity currentIdentity)
         {
-            _currentUserService = currentUserService;
+            _currentIdentity = currentIdentity;
         }
 
         public override InterceptionResult<int> SavingChanges(
@@ -36,9 +36,9 @@ namespace Atlas.Data.Common.Interceptors
         {
             if (context == null) return;
 
-            var userId = _currentUserService?.UserId;
-            var tenantId = _currentUserService?.TenantId;
-            var storeId = _currentUserService?.StoreId;
+            var userId = _currentIdentity?.UserId;
+            var tenantId = _currentIdentity?.TenantId;
+            var storeId = _currentIdentity?.StoreId;
             var now = DateTime.UtcNow;
 
             var hasTenant = tenantId.HasValue;

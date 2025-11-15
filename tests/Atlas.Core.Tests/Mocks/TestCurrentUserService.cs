@@ -11,7 +11,7 @@ namespace Atlas.Core.Tests.Mocks
     /// 测试用的当前用户服务
     /// 可以灵活设置不同的租户、门店、用户
     /// </summary>
-    public class TestCurrentUserService : ICurrentUserService
+    public class TestCurrentUserService : ICurrentIdentity
     {
         public long? UserId { get; set; }
         public long? StoreId { get; set; }
@@ -63,6 +63,11 @@ namespace Atlas.Core.Tests.Mocks
         public static TestCurrentUserService CreateGlobalUser()
         {
             return new TestCurrentUserService(null, null, null);
+        }
+
+        public Task<List<long>> GetAccessibleStoreIdsAsync(CancellationToken ct = default)
+        {
+            throw new NotImplementedException();
         }
     }
 }

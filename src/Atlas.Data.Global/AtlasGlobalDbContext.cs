@@ -1,8 +1,7 @@
 ﻿using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Common.Extensions;
-using Atlas.Data.Global.Entities;
-
+using Atlas.Models.Global.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace Atlas.Data.Global
@@ -12,11 +11,11 @@ namespace Atlas.Data.Global
     /// </summary>
     public class AtlasGlobalDbContext : DbContext, IHasCurrentUser
     {
-        private readonly ICurrentUserService _currentUserService;
+        private readonly ICurrentIdentity _currentUserService;
 
         public AtlasGlobalDbContext(
             DbContextOptions<AtlasGlobalDbContext> options,
-            ICurrentUserService currentUserService)
+            ICurrentIdentity currentUserService)
             : base(options)
         {
             _currentUserService = currentUserService;
@@ -29,8 +28,10 @@ namespace Atlas.Data.Global
 
         // DbSet定义
         public DbSet<Tenant> Tenants { get; set; }
-        // public DbSet<User> Users { get; set; }
-        // public DbSet<Setting> Settings { get; set; }
+        public DbSet<DatabaseInstance> DatabaseInstances { get; set; }
+        public DbSet<DatabaseMasterServer> DatabaseMasterServers { get; set; }
+        public DbSet<DatabaseReadonlyServer> DatabaseReadonlyServers { get; set; }
+        public DbSet<DatabaseServerConfig> DatabaseServerConfigs { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

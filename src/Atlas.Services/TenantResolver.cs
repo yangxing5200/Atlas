@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Atlas.Core.Enums;
 using Atlas.Data.Abstractions;
-using Atlas.Data.Global.Entities;
+using Atlas.Models.Global.Entities;
 using Atlas.Services.Abstractions;
 using Microsoft.Extensions.Caching.Memory;
 

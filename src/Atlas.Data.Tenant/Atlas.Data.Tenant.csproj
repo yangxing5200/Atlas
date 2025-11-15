@@ -1,21 +1,23 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <ItemGroup>
-    <ProjectReference Include="..\Atlas.Core\Atlas.Core.csproj" />
-    <ProjectReference Include="..\Atlas.Data.Abstractions\Atlas.Data.Abstractions.csproj" />
-    <ProjectReference Include="..\Atlas.Data.EntityFramework\Atlas.Data.Common.csproj" />
-    <ProjectReference Include="..\Atlas.Models.Tenant\Atlas.Models.Tenant.csproj" />
-  </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Atlas.Core\Atlas.Core.csproj" />
+        <ProjectReference Include="..\Atlas.Data.Abstractions\Atlas.Data.Abstractions.csproj" />
+        <ProjectReference Include="..\Atlas.Data.EntityFramework\Atlas.Data.Common.csproj" />
+        <ProjectReference Include="..\Atlas.Data.Global\Atlas.Data.Global.csproj" />
+        <ProjectReference Include="..\Atlas.Models.Tenant\Atlas.Models.Tenant.csproj" />
+    </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.0" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.0" />
-  </ItemGroup>
+    <ItemGroup>
+        <PackageReference Include="Microsoft.AspNetCore.Http.Abstractions" Version="2.3.0" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.0" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.0"/>
+    </ItemGroup>
 
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
 
 </Project>

@@ -13,11 +13,11 @@ namespace Atlas.Data.Tests
     /// </summary>
     public class TestDbContext : DbContext, IHasCurrentUser
     {
-        private readonly ICurrentUserService _currentUserService;
+        private readonly ICurrentIdentity _currentUserService;
 
         public TestDbContext(
             DbContextOptions<TestDbContext> options,
-            ICurrentUserService currentUserService)
+            ICurrentIdentity currentUserService)
             : base(options)
         {
             _currentUserService = currentUserService;

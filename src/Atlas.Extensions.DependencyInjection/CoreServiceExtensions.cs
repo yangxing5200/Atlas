@@ -1,9 +1,16 @@
-﻿using System.Reflection.Emit;
-using Atlas.Core.Configuration;
+﻿using Atlas.Core.Configuration;
 using Atlas.Core.IdGenerators;
+using Atlas.Core.Services;
+using Atlas.Data.Global;
+using Atlas.Data.Tenant;
+using Atlas.Data.Tenant.Repositories;
+using Atlas.Infrastructure.Caching.Abstractions;
+using Atlas.Infrastructure.Caching.Extensions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using System.Reflection.Emit;
 
 namespace Atlas.Extensions.DependencyInjection;
 
@@ -25,9 +32,21 @@ public static class CoreServiceExtensions
         // 添加 Snowflake ID 生成器
         services.AddSnowflakeIdGenerator(configuration);
 
-        // 未来可以在这里添加其他 Core 服务
-        // services.AddOtherCoreServices();
+        // 注册数据库相关服务
+        services.AddScoped<AtlasGlobalDbContext>();
+        services.AddScoped<ICurrentIdentity>(sp =>
+        {
+            var httpContextAccessor = sp.GetRequiredService<IHttpContextAccessor>();
+            var cache = sp.GetRequiredService<ICacheService>();
+            var lazyStoreRepository = new Lazy<IStoreRepository>(() =>
+                sp.GetRequiredService<IStoreRepository>());
 
+            return new CurrentIdentity(httpContextAccessor, lazyStoreRepository, cache);
+        });
+        services.AddScoped<ITenantDbConnProvider, TenantDbConnProvider>();
+        services.AddScoped<ITenantDbContextFactory, TenantDbContextFactory>();
+
+        ConfigureCacheServices(services,configuration);
         return services;
     }
 
@@ -191,6 +210,70 @@ public static class CoreServiceExtensions
         var machineName = Environment.MachineName;
         var hash = machineName.GetHashCode();
         return Math.Abs(hash) % 32;
+    }
+
+
+    private static void ConfigureCacheServices(IServiceCollection services, IConfiguration Configuration)
+    {
+        // 从配置读取缓存提供器类型
+        var cacheProvider = Configuration["CacheSettings:Provider"] ?? "Memory";
+
+        // 使用扩展方法配置缓存服务
+        services.AddAtlasCaching();
+
+        // 根据配置选择缓存提供器
+        switch (cacheProvider.ToLower())
+        {
+            case "redis":
+                ConfigureRedisCache(services, Configuration);
+                break;
+
+            case "hybrid":
+                ConfigureHybridCache(services, Configuration);
+                break;
+
+            case "memory":
+            default:
+                services.AddMemoryCaching();
+                break;
+        }
+    }
+
+    private static void ConfigureRedisCache(IServiceCollection services, IConfiguration configuration)
+    {
+        var connectionString = configuration["CacheSettings:Redis:ConnectionString"];
+        var instanceName = configuration["CacheSettings:Redis:InstanceName"];
+
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException(
+                "Redis connection string is not configured in appsettings.json");
+        }
+
+        services.AddRedisCaching(connectionString, instanceName);
+    }
+
+    private static void ConfigureHybridCache(IServiceCollection services, IConfiguration configuration)
+    {
+        var connectionString = configuration["CacheSettings:Hybrid:RedisConnectionString"];
+
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException(
+                "Hybrid cache Redis connection string is not configured in appsettings.json");
+        }
+
+        services.AddHybridCaching(connectionString, options =>
+        {
+            // 从配置读取 Hybrid 缓存选项
+            var l1ExpirationMinutes = configuration.GetValue<int?>(
+                "CacheSettings:Hybrid:L1ExpirationMinutes");
+
+            if (l1ExpirationMinutes.HasValue)
+            {
+                options.L1Expiration = TimeSpan.FromMinutes(l1ExpirationMinutes.Value);
+            }
+        });
     }
 
     #endregion

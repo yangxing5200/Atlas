@@ -5,7 +5,7 @@ namespace Atlas.Data.Tests.Mocks
     /// <summary>
     /// Mock的当前用户服务（用于测试）
     /// </summary>
-    public class MockCurrentUserService : ICurrentUserService
+    public class MockCurrentUserService : ICurrentIdentity
     {
         public long? UserId { get; set; }
         public string UserName { get; set; }
@@ -47,6 +47,11 @@ namespace Atlas.Data.Tests.Mocks
                 TenantId = null,
                 IsAuthenticated = false
             };
+        }
+
+        public Task<List<long>> GetAccessibleStoreIdsAsync(CancellationToken ct = default)
+        {
+            throw new NotImplementedException();
         }
     }
 }

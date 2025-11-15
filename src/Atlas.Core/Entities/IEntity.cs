@@ -1,10 +1,14 @@
 ﻿namespace Atlas.Core.Entities
 {
-    public interface IBaseEntity
+
+    public interface IBaseEntity<T>
     {
-        long Id { get; set; }
+        T Id { get; set; }
         DateTime CreatedAt { get; set; }
         DateTime? UpdatedAt { get; set; }
+    }
+    public interface IBaseEntity : IBaseEntity<long>
+    {
     }
 
     public interface IAuditable

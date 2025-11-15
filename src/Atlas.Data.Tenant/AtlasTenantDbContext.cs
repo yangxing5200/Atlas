@@ -3,7 +3,7 @@ using Atlas.Core.Entities;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Common.Extensions;
-using Atlas.Data.Tenant.Entities;
+using Atlas.Models.Tenant.Entities;
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
 
@@ -14,7 +14,7 @@ namespace Atlas.Data.Tenant
     /// </summary>
     public class AtlasTenantDbContext : DbContext, IHasCurrentUser
     {
-        private readonly ICurrentUserService _currentUserService;
+        private readonly ICurrentIdentity _currentUserService;
         private readonly ITenantContext _tenantContext;
         private readonly string? _connectionString;
         public AtlasTenantDbContext(
@@ -28,7 +28,7 @@ namespace Atlas.Data.Tenant
 
         public AtlasTenantDbContext(
             DbContextOptions<AtlasTenantDbContext> options,
-            ICurrentUserService currentUserService)
+            ICurrentIdentity currentUserService)
             : base(options)
         {
             _currentUserService = currentUserService;

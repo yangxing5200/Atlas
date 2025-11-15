@@ -10,10 +10,14 @@
 	  <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.0" />
 	  <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.0" />
 	  <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.0" />
+      <PackageReference Include="Microsoft.AspNetCore.Authentication" Version="2.2.0" />
+      <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Atlas.Core\Atlas.Core.csproj" />
+    <ProjectReference Include="..\Atlas.Data.Global\Atlas.Data.Global.csproj" />
+    <ProjectReference Include="..\Atlas.Data.Tenant\Atlas.Data.Tenant.csproj" />
   </ItemGroup>
 
 </Project>

@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Atlas.Infrastructure.Caching\Atlas.Infrastructure.Caching.csproj" />
+    <ProjectReference Include="..\Atlas.Models.Tenant\Atlas.Models.Tenant.csproj" />
   </ItemGroup>
 
 </Project>

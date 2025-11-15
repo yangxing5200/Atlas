@@ -26,9 +26,9 @@ namespace Atlas.Infrastructure.Caching.Scoping
 
     public class CurrentUserScopeContextAccessor : IScopeContextAccessor
     {
-        private readonly ICurrentUserService _currentUserService;
+        private readonly ICurrentIdentity _currentUserService;
 
-        public CurrentUserScopeContextAccessor(ICurrentUserService currentUserService)
+        public CurrentUserScopeContextAccessor(ICurrentIdentity currentUserService)
         {
             _currentUserService = currentUserService ?? throw new ArgumentNullException(nameof(currentUserService));
         }
