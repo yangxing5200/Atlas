@@ -39,14 +39,14 @@ public enum TenantStatus
 public enum TenantType : byte
 {
     /// <summary>
-    /// 公司
+    /// 企业版
     /// </summary>
-    Company = 0,
+    Enterprise = 1,
 
     /// <summary>
-    /// 个人
+    /// 个人版（Mobile版）
     /// </summary>
-    Person
+    Individual = 2
 }
 
 /// <summary>
@@ -55,16 +55,19 @@ public enum TenantType : byte
 public enum BusinessType : byte
 {
     /// <summary>
-    /// 加盟连锁
+    /// 单店
     /// </summary>
-    [Description("加盟")]
-    FranchiseChain = 0,
+    Single = 1,
 
     /// <summary>
-    /// 直营连锁
+    /// 连锁直营
     /// </summary>
-    [Description("直营")]
-    RegularChain
+    Chain = 2,
+
+    /// <summary>
+    /// 连锁加盟
+    /// </summary>
+    Franchise = 3
 }
 public enum StoreType
 {
@@ -89,6 +92,38 @@ public enum StoreType
     Franchised = 3
 }
 
+
+
+/// <summary>
+/// 门店状态
+/// </summary>
+public enum StoreStatus
+{
+    /// <summary>
+    /// 激活/营业中
+    /// </summary>
+    Active = 1,
+
+    /// <summary>
+    /// 停用/关闭
+    /// </summary>
+    Inactive = 2,
+
+    /// <summary>
+    /// 暂停营业
+    /// </summary>
+    Suspended = 3,
+
+    /// <summary>
+    /// 装修中
+    /// </summary>
+    UnderRenovation = 4,
+
+    /// <summary>
+    /// 筹备中
+    /// </summary>
+    Preparing = 5
+}
 public enum OrderStatus
 {
     Pending = 0,

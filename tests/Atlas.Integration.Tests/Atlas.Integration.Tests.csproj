@@ -37,6 +37,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
+      <ProjectReference Include="..\..\src\Atlas.Extensions.DependencyInjection\Atlas.Extensions.DependencyInjection.csproj" />
       <ProjectReference Include="..\..\src\Atlas.Infrastructure.Caching\Atlas.Infrastructure.Caching.csproj" />
       <ProjectReference Include="..\Atlas.Core.Tests\Atlas.Core.Tests.csproj" />
       <ProjectReference Include="..\Atlas.Data.Tests\Atlas.Data.Tests.csproj" />
@@ -46,6 +47,12 @@
 		<None Update="appsettings*.json">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
+	</ItemGroup>
+
+	<ItemGroup>
+	  <None Update="appsettings.json">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </None>
 	</ItemGroup>
 
 </Project>

@@ -6,9 +6,10 @@ namespace Atlas.Models.Tenant.Entities
     public class Store : VersionedEntity, ITenantEntity
     {
         public long TenantId { get; set; }
+        public string Code { get; set; }
         public string Name { get; set; }
         public StoreType Type { get; set; }
-
+        
         /// <summary>
         /// 上级门店ID
         /// NULL: 根节点（平台总部）
@@ -21,7 +22,21 @@ namespace Atlas.Models.Tenant.Entities
         public string Address { get; set; }
         public string ContactPhone { get; set; }
         public string ContactPerson { get; set; }
+        /// <summary>
+        /// 省份
+        /// </summary>
+        public string Province { get; set; }
 
+        /// <summary>
+        /// 城市
+        /// </summary>
+        public string City { get; set; }
+
+        /// <summary>
+        /// 区县
+        /// </summary>
+        public string District { get; set; }
+        public StoreStatus Status { get; set; }
         // 导航属性
         public virtual Store ParentStore { get; set; }
         public virtual ICollection<Store> ChildStores { get; set; }

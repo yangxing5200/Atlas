@@ -7,6 +7,7 @@ using Atlas.Data.Tenant.Repositories;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Extensions;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -29,11 +30,15 @@ public static class CoreServiceExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
+        services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
         // 添加 Snowflake ID 生成器
         services.AddSnowflakeIdGenerator(configuration);
 
         // 注册数据库相关服务
-        services.AddScoped<AtlasGlobalDbContext>();
+        services.AddDbContext<AtlasGlobalDbContext>(options =>
+             options.UseMySql(
+                 configuration.GetConnectionString("AtlasGlobal"),
+                 ServerVersion.AutoDetect(configuration.GetConnectionString("AtlasGlobal"))));
         services.AddScoped<ICurrentIdentity>(sp =>
         {
             var httpContextAccessor = sp.GetRequiredService<IHttpContextAccessor>();
