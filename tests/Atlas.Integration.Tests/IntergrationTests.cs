@@ -39,6 +39,7 @@ public class IntergrationTests : IntegrationTestBase
     [Fact]
     public async Task SimpleTest()
     {
+
         // 1. 获取种子生成器
         var seeder = GetService<TenantDataSeeder>();
 

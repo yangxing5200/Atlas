@@ -127,19 +127,10 @@ namespace Atlas.Data.Abstractions
         IQueryable<TEntity> AsReadonlyQueryable();
 
         /// <summary>
-        /// 可跟踪查询（自动应用门店过滤）
-        /// </summary>
-        IQueryable<TEntity> AsQueryable();
-
-        /// <summary>
         /// 只读查询（忽略门店过滤，系统级查询）
         /// </summary>
         IQueryable<TEntity> AsReadonlyQueryableUnfiltered();
 
-        /// <summary>
-        /// 可跟踪查询（忽略门店过滤，系统级查询）
-        /// </summary>
-        IQueryable<TEntity> AsQueryableUnfiltered();
 
         // ========== 保存 ==========
 

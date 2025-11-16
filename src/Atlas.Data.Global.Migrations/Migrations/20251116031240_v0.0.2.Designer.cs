@@ -3,6 +3,7 @@ using System;
 using Atlas.Data.Global;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Atlas.Data.Global.Migrations.Migrations
 {
     [DbContext(typeof(AtlasGlobalDbContext))]
-    partial class AtlasGlobalDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251116031240_v0.0.2")]
+    partial class v002
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

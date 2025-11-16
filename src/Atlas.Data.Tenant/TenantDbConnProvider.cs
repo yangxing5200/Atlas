@@ -120,7 +120,6 @@ namespace Atlas.Data.Tenant
                 .AsNoTracking()
                 .Include(t => t.DatabaseInstance)
                 .FirstOrDefaultAsync(t => t.Id == tenantId, cancellationToken);
-
             if (tenant == null)
             {
                 throw new InvalidOperationException($"租户 {tenantId} 不存在");

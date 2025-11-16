@@ -6,6 +6,7 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using Xunit;
+using Atlas.Extensions.DependencyInjection;
 
 namespace Atlas.Integration.Tests.Infrastructure
 {
@@ -19,6 +20,8 @@ namespace Atlas.Integration.Tests.Infrastructure
         {
             var services = new ServiceCollection();
             Configuration = BuildConfiguration();
+            services.AddSingleton(Configuration);
+            services.AddAtlasCore(Configuration);
             ConfigureServices(services, Configuration);
             ServiceProvider = services.BuildServiceProvider();
             Scope = ServiceProvider.CreateScope();

@@ -78,7 +78,7 @@ public class Tenant : AuditableEntity
     /// <summary>
     /// 关联的数据库实例Id
     /// </summary>
-    public int DatabaseInstanceId { get; set; }
+    public long DatabaseInstanceId { get; set; }
 
     /// <summary>
     /// 诊所数量

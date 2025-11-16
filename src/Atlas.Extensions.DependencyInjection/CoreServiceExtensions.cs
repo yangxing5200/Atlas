@@ -3,6 +3,7 @@ using Atlas.Core.IdGenerators;
 using Atlas.Core.Services;
 using Atlas.Data.Global;
 using Atlas.Data.Tenant;
+using Atlas.Data.Tenant.Impl;
 using Atlas.Data.Tenant.Repositories;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Extensions;
@@ -11,34 +12,80 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using System.Reflection.Emit;
 
 namespace Atlas.Extensions.DependencyInjection;
 
 /// <summary>
-/// Atlas Core 服务注册扩展
+/// Atlas 核心服务注册扩展
 /// </summary>
-public static class CoreServiceExtensions
+public static class AtlasCoreServiceExtensions
 {
     /// <summary>
-    /// 添加 Atlas Core 所有服务
+    /// 注册 Atlas 核心服务（包含基础设施和业务服务）
     /// </summary>
-    /// <param name="services">服务集合</param>
-    /// <param name="configuration">配置</param>
-    /// <returns>服务集合</returns>
     public static IServiceCollection AddAtlasCore(
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
-        // 添加 Snowflake ID 生成器
-        services.AddSnowflakeIdGenerator(configuration);
+        // 基础设施服务
+        services.AddHttpContextAccessor();
+        services.AddAtlasSnowflakeId(configuration);
+        services.AddAtlasDatabase(configuration);
+        services.AddAtlasIdentity();
+        services.AddAtlasCache(configuration);
 
-        // 注册数据库相关服务
+        // 业务服务
+        services.AddAtlasBusinessServices();
+
+        return services;
+    }
+
+    #region Infrastructure - HTTP Context
+
+    /// <summary>
+    /// 注册 HTTP 上下文访问器
+    /// </summary>
+    private static IServiceCollection AddHttpContextAccessor(this IServiceCollection services)
+    {
+        services.TryAddSingleton<IHttpContextAccessor, HttpContextAccessor>();
+        return services;
+    }
+
+    #endregion
+
+    #region Infrastructure - Database
+
+    /// <summary>
+    /// 注册 Atlas 数据库服务（全局库和租户库）
+    /// </summary>
+    private static IServiceCollection AddAtlasDatabase(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        // 全局数据库
+        var globalConnStr = configuration.GetConnectionString("AtlasGlobal")
+            ?? throw new InvalidOperationException("AtlasGlobal connection string is required");
+
         services.AddDbContext<AtlasGlobalDbContext>(options =>
-             options.UseMySql(
-                 configuration.GetConnectionString("AtlasGlobal"),
-                 ServerVersion.AutoDetect(configuration.GetConnectionString("AtlasGlobal"))));
+            options.UseMySql(globalConnStr, ServerVersion.AutoDetect(globalConnStr)));
+
+        // 租户数据库
+        services.AddScoped<ITenantDbConnProvider, TenantDbConnProvider>();
+        services.AddScoped<ITenantDbContextFactory, TenantDbContextFactory>();
+
+        return services;
+    }
+
+    #endregion
+
+    #region Infrastructure - Identity
+
+    /// <summary>
+    /// 注册当前身份服务
+    /// </summary>
+    /// <remarks>使用 Lazy 注入 StoreRepository 避免循环依赖</remarks>
+    private static IServiceCollection AddAtlasIdentity(this IServiceCollection services)
+    {
         services.AddScoped<ICurrentIdentity>(sp =>
         {
             var httpContextAccessor = sp.GetRequiredService<IHttpContextAccessor>();
@@ -48,75 +95,143 @@ public static class CoreServiceExtensions
 
             return new CurrentIdentity(httpContextAccessor, lazyStoreRepository, cache);
         });
-        services.AddScoped<ITenantDbConnProvider, TenantDbConnProvider>();
-        services.AddScoped<ITenantDbContextFactory, TenantDbContextFactory>();
 
-        ConfigureCacheServices(services,configuration);
+        return services;
+    }
+
+    #endregion
+
+    #region Infrastructure - Cache
+
+    /// <summary>
+    /// 注册 Atlas 缓存服务
+    /// </summary>
+    /// <remarks>
+    /// 支持三种缓存模式：
+    /// - Memory: 内存缓存（默认）
+    /// - Redis: Redis 分布式缓存
+    /// - Hybrid: 混合缓存（L1 内存 + L2 Redis）
+    /// </remarks>
+    private static IServiceCollection AddAtlasCache(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        var cacheProvider = configuration["CacheSettings:Provider"]?.ToLowerInvariant() ?? "memory";
+
+        services.AddAtlasCaching();
+
+        switch (cacheProvider)
+        {
+            case "redis":
+                services.AddAtlasRedisCache(configuration);
+                break;
+
+            case "hybrid":
+                services.AddAtlasHybridCache(configuration);
+                break;
+
+            case "memory":
+            default:
+                services.AddMemoryCaching();
+                break;
+        }
+
         return services;
     }
 
     /// <summary>
-    /// 添加 Snowflake ID 生成器（从配置文件）
+    /// 配置 Redis 缓存
     /// </summary>
-    /// <param name="services">服务集合</param>
-    /// <param name="configuration">配置</param>
-    /// <returns>服务集合</returns>
-    /// <example>
-    /// appsettings.json:
+    private static IServiceCollection AddAtlasRedisCache(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        var connectionString = configuration["CacheSettings:Redis:ConnectionString"];
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException(
+                "CacheSettings:Redis:ConnectionString is required when using Redis cache");
+        }
+
+        var instanceName = configuration["CacheSettings:Redis:InstanceName"];
+        services.AddRedisCaching(connectionString, instanceName);
+
+        return services;
+    }
+
+    /// <summary>
+    /// 配置混合缓存（L1 内存 + L2 Redis）
+    /// </summary>
+    private static IServiceCollection AddAtlasHybridCache(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        var connectionString = configuration["CacheSettings:Hybrid:RedisConnectionString"];
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException(
+                "CacheSettings:Hybrid:RedisConnectionString is required when using Hybrid cache");
+        }
+
+        services.AddHybridCaching(connectionString, options =>
+        {
+            var l1ExpirationMinutes = configuration.GetValue<int?>(
+                "CacheSettings:Hybrid:L1ExpirationMinutes");
+
+            if (l1ExpirationMinutes.HasValue)
+            {
+                options.L1Expiration = TimeSpan.FromMinutes(l1ExpirationMinutes.Value);
+            }
+        });
+
+        return services;
+    }
+
+    #endregion
+
+    #region Infrastructure - ID Generator
+
+    /// <summary>
+    /// 从配置文件注册 Snowflake ID 生成器
+    /// </summary>
+    /// <remarks>
+    /// appsettings.json 配置示例：
+    /// <code>
     /// {
     ///   "Snowflake": {
     ///     "WorkerId": 1,
     ///     "DatacenterId": 1
     ///   }
     /// }
-    /// 
-    /// Program.cs:
-    /// builder.Services.AddSnowflakeIdGenerator(builder.Configuration);
-    /// </example>
-    public static IServiceCollection AddSnowflakeIdGenerator(
+    /// </code>
+    /// </remarks>
+    public static IServiceCollection AddAtlasSnowflakeId(
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // 读取配置
         var section = configuration.GetSection("Snowflake");
-        var options = section.Get<SnowflakeOptions>();
+        var options = section.Get<SnowflakeOptions>() ?? GetDefaultSnowflakeOptions();
 
-        if (options == null)
-        {
-            // 如果配置不存在，使用默认值（基于环境变量或机器名）
-            options = GetDefaultOptions();
-        }
-
-        // 验证配置
         options.Validate();
 
-        // 注册配置对象
         services.Configure<SnowflakeOptions>(opt =>
         {
             opt.WorkerId = options.WorkerId;
             opt.DatacenterId = options.DatacenterId;
         });
 
-        // 注册 ID 生成器为单例
-        services.TryAddSingleton<IIdGenerator>(sp =>
-        {
-            return new SnowflakeIdGenerator(options.WorkerId, options.DatacenterId);
-        });
+        services.TryAddSingleton<IIdGenerator>(
+            new SnowflakeIdGenerator(options.WorkerId, options.DatacenterId));
 
         return services;
     }
 
     /// <summary>
-    /// 添加 Snowflake ID 生成器（手动指定参数）
+    /// 手动指定参数注册 Snowflake ID 生成器
     /// </summary>
-    /// <param name="services">服务集合</param>
     /// <param name="workerId">机器ID (0-31)</param>
     /// <param name="datacenterId">数据中心ID (0-31)</param>
-    /// <returns>服务集合</returns>
-    /// <example>
-    /// builder.Services.AddSnowflakeIdGenerator(workerId: 1, datacenterId: 1);
-    /// </example>
-    public static IServiceCollection AddSnowflakeIdGenerator(
+    public static IServiceCollection AddAtlasSnowflakeId(
         this IServiceCollection services,
         long workerId,
         long datacenterId)
@@ -135,28 +250,23 @@ public static class CoreServiceExtensions
     }
 
     /// <summary>
-    /// 添加 Snowflake ID 生成器（自动检测配置）
+    /// 自动检测 WorkerId 注册 Snowflake ID 生成器
     /// </summary>
-    /// <param name="services">服务集合</param>
-    /// <param name="datacenterId">数据中心ID，WorkerId 将自动检测</param>
-    /// <returns>服务集合</returns>
-    /// <example>
-    /// // WorkerId 将基于机器名或环境变量自动生成
-    /// builder.Services.AddSnowflakeIdGeneratorAuto(datacenterId: 1);
-    /// </example>
-    public static IServiceCollection AddSnowflakeIdGeneratorAuto(
+    /// <param name="datacenterId">数据中心ID</param>
+    /// <remarks>WorkerId 将基于环境变量或机器名自动生成 (0-31)</remarks>
+    public static IServiceCollection AddAtlasSnowflakeIdAuto(
         this IServiceCollection services,
         long datacenterId = 1)
     {
-        var workerId = GetDefaultWorkerId();
-        return services.AddSnowflakeIdGenerator(workerId, datacenterId);
+        var workerId = GetAutoWorkerId();
+        return services.AddAtlasSnowflakeId(workerId, datacenterId);
     }
 
     /// <summary>
-    /// 添加 Snowflake ID 生成器（从委托工厂）
-    /// 适用于需要在运行时动态确定配置的场景
+    /// 从委托工厂注册 Snowflake ID 生成器
     /// </summary>
-    public static IServiceCollection AddSnowflakeIdGenerator(
+    /// <remarks>适用于运行时动态确定配置的场景</remarks>
+    public static IServiceCollection AddAtlasSnowflakeId(
         this IServiceCollection services,
         Func<IServiceProvider, (long workerId, long datacenterId)> optionsFactory)
     {
@@ -169,14 +279,16 @@ public static class CoreServiceExtensions
         return services;
     }
 
-    #region 私有辅助方法
-
     /// <summary>
-    /// 获取默认配置
+    /// 获取默认 Snowflake 配置
     /// </summary>
-    private static SnowflakeOptions GetDefaultOptions()
+    /// <remarks>
+    /// 优先级：
+    /// 1. 环境变量 SNOWFLAKE_WORKER_ID 和 SNOWFLAKE_DATACENTER_ID
+    /// 2. 自动生成（基于机器名 Hash）
+    /// </remarks>
+    private static SnowflakeOptions GetDefaultSnowflakeOptions()
     {
-        // 优先尝试从环境变量读取
         var envWorkerId = Environment.GetEnvironmentVariable("SNOWFLAKE_WORKER_ID");
         var envDatacenterId = Environment.GetEnvironmentVariable("SNOWFLAKE_DATACENTER_ID");
 
@@ -190,95 +302,57 @@ public static class CoreServiceExtensions
             };
         }
 
-        // 否则使用基于机器名的默认值
         return new SnowflakeOptions
         {
-            WorkerId = GetDefaultWorkerId(),
+            WorkerId = GetAutoWorkerId(),
             DatacenterId = 1
         };
     }
 
     /// <summary>
-    /// 获取默认的 WorkerId（基于机器名）
+    /// 自动获取 WorkerId
     /// </summary>
-    private static long GetDefaultWorkerId()
+    /// <remarks>
+    /// 优先级：
+    /// 1. 环境变量 SNOWFLAKE_WORKER_ID
+    /// 2. 机器名 Hash 取模 (0-31)
+    /// </remarks>
+    private static long GetAutoWorkerId()
     {
-        // 方式1: 从环境变量
         var envWorkerId = Environment.GetEnvironmentVariable("SNOWFLAKE_WORKER_ID");
         if (!string.IsNullOrEmpty(envWorkerId) && long.TryParse(envWorkerId, out var parsedId))
         {
-            if (parsedId >= 0 && parsedId <= 31)
+            if (parsedId is >= 0 and <= 31)
                 return parsedId;
         }
 
-        // 方式2: 基于机器名的 Hash
         var machineName = Environment.MachineName;
         var hash = machineName.GetHashCode();
         return Math.Abs(hash) % 32;
     }
 
+    #endregion
 
-    private static void ConfigureCacheServices(IServiceCollection services, IConfiguration Configuration)
+    #region Business Services
+
+    /// <summary>
+    /// 注册业务服务（包含仓储和服务层）
+    /// </summary>
+    private static IServiceCollection AddAtlasBusinessServices(this IServiceCollection services)
     {
-        // 从配置读取缓存提供器类型
-        var cacheProvider = Configuration["CacheSettings:Provider"] ?? "Memory";
+        // ========== 仓储层 ==========
+        services.AddScoped<IStoreRepository, StoreRepository>();
+        // services.AddScoped<IProductRepository, ProductRepository>();
+        // services.AddScoped<IOrderRepository, OrderRepository>();
+        // services.AddScoped<IInventoryRepository, InventoryRepository>();
 
-        // 使用扩展方法配置缓存服务
-        services.AddAtlasCaching();
+        // ========== 业务服务层 ==========
+        // services.AddScoped<IStoreService, StoreService>();
+        // services.AddScoped<IProductService, ProductService>();
+        // services.AddScoped<IOrderService, OrderService>();
+        // services.AddScoped<IInventoryService, InventoryService>();
 
-        // 根据配置选择缓存提供器
-        switch (cacheProvider.ToLower())
-        {
-            case "redis":
-                ConfigureRedisCache(services, Configuration);
-                break;
-
-            case "hybrid":
-                ConfigureHybridCache(services, Configuration);
-                break;
-
-            case "memory":
-            default:
-                services.AddMemoryCaching();
-                break;
-        }
-    }
-
-    private static void ConfigureRedisCache(IServiceCollection services, IConfiguration configuration)
-    {
-        var connectionString = configuration["CacheSettings:Redis:ConnectionString"];
-        var instanceName = configuration["CacheSettings:Redis:InstanceName"];
-
-        if (string.IsNullOrEmpty(connectionString))
-        {
-            throw new InvalidOperationException(
-                "Redis connection string is not configured in appsettings.json");
-        }
-
-        services.AddRedisCaching(connectionString, instanceName);
-    }
-
-    private static void ConfigureHybridCache(IServiceCollection services, IConfiguration configuration)
-    {
-        var connectionString = configuration["CacheSettings:Hybrid:RedisConnectionString"];
-
-        if (string.IsNullOrEmpty(connectionString))
-        {
-            throw new InvalidOperationException(
-                "Hybrid cache Redis connection string is not configured in appsettings.json");
-        }
-
-        services.AddHybridCaching(connectionString, options =>
-        {
-            // 从配置读取 Hybrid 缓存选项
-            var l1ExpirationMinutes = configuration.GetValue<int?>(
-                "CacheSettings:Hybrid:L1ExpirationMinutes");
-
-            if (l1ExpirationMinutes.HasValue)
-            {
-                options.L1Expiration = TimeSpan.FromMinutes(l1ExpirationMinutes.Value);
-            }
-        });
+        return services;
     }
 
     #endregion

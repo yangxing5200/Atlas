@@ -10,10 +10,9 @@ namespace Atlas.Data.Tenant.Impl
     public class StoreRepository : RepositoryBase<Store, long>, IStoreRepository
     {
         public StoreRepository(
-            AtlasTenantDbContext writeContext,
             ITenantDbContextFactory dbContextFactory,
             ICurrentIdentity currentIdentity)
-            : base(writeContext, dbContextFactory, currentIdentity)
+            : base( dbContextFactory, currentIdentity)
         {
         }
 
