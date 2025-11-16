@@ -438,14 +438,13 @@ namespace Atlas.Integration.Tests.Tenant
         [Fact]
         public async Task AddRangeStore()
         {
-            SwitchToTenant(TestTenants.DemoCompany);
+            SwitchToTenant(TestTenants.ChainEnterprise);
             var _tenantId = TestTenants.DemoCompany;
             var stores = new[]
         {
                 // 1. 总部
                 new Store
                 {
-                    TenantId = _tenantId,
                     Code = "HQ001",
                     Name = "总部",
                     Type = StoreType.Headquarters,
@@ -464,7 +463,6 @@ namespace Atlas.Integration.Tests.Tenant
                 // 2. 直营门店
                 new Store
                 {
-                    TenantId = _tenantId,
                     Code = "ZY001",
                     Name = "浦东直营店",
                     Type = StoreType.DirectOperated,

@@ -1,4 +1,5 @@
 ﻿using Atlas.Core.Services;
+using Atlas.Data.Common.Interceptors;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Threading;
@@ -15,7 +16,7 @@ namespace Atlas.Data.Tenant
     {
         private readonly ICurrentIdentity _currentIdentity;
         private readonly ITenantDbConnProvider _connProvider;
-
+        private readonly AuditInterceptor _auditInterceptor;
         /// <summary>
         /// 请求级缓存：主库连接串
         /// </summary>
@@ -33,10 +34,13 @@ namespace Atlas.Data.Tenant
 
         public TenantDbContextFactory(
             ICurrentIdentity currentIdentity,
-            ITenantDbConnProvider connProvider)
+            ITenantDbConnProvider connProvider,
+            AuditInterceptor auditInterceptor
+            )
         {
             _currentIdentity = currentIdentity;
             _connProvider = connProvider;
+            _auditInterceptor = auditInterceptor;
         }
 
         /// <summary>
@@ -138,7 +142,7 @@ namespace Atlas.Data.Tenant
 
                     // 启用字符串比较转换（性能优化）
                     mySqlOptions.EnableStringComparisonTranslations();
-                });
+                }).AddInterceptors(_auditInterceptor);
 
             // 只读上下文禁用变更跟踪
             if (isReadonly)

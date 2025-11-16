@@ -59,10 +59,10 @@ namespace Atlas.Data.Common.Interceptors
                     if (entity is IVersioned ve)
                         ve.Version = 0;
 
-                    if (hasTenant && entity is ITenantEntity te && te.TenantId == 0)
+                    if (hasTenant && entity is ITenantEntity te) // 强制使用上下文中的 TenantId
                         te.TenantId = tenantId!.Value;
 
-                    if (hasStore && entity is IStoreEntity se && se.StoreId == 0)
+                    if (hasStore && entity is IStoreEntity se) // 强制使用上下文中的 StoreId
                         se.StoreId = storeId!.Value;
                 }
                 else if (entry.State == EntityState.Modified)

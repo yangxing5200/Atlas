@@ -1,6 +1,7 @@
 ﻿using Atlas.Core.Configuration;
 using Atlas.Core.IdGenerators;
 using Atlas.Core.Services;
+using Atlas.Data.Common.Interceptors;
 using Atlas.Data.Global;
 using Atlas.Data.Tenant;
 using Atlas.Data.Tenant.Impl;
@@ -62,12 +63,18 @@ public static class AtlasCoreServiceExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
+        // 审计拦截器
+        services.AddScoped<AuditInterceptor>();
         // 全局数据库
         var globalConnStr = configuration.GetConnectionString("AtlasGlobal")
             ?? throw new InvalidOperationException("AtlasGlobal connection string is required");
 
-        services.AddDbContext<AtlasGlobalDbContext>(options =>
-            options.UseMySql(globalConnStr, ServerVersion.AutoDetect(globalConnStr)));
+        services.AddDbContext<AtlasGlobalDbContext>((sp, options) =>
+        {
+            var auditInterceptor = sp.GetRequiredService<AuditInterceptor>();
+            options.UseMySql(globalConnStr, ServerVersion.AutoDetect(globalConnStr))
+                   .AddInterceptors(auditInterceptor);
+        });
 
         // 租户数据库
         services.AddScoped<ITenantDbConnProvider, TenantDbConnProvider>();
