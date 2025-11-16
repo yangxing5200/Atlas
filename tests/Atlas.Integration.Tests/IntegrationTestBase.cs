@@ -1,12 +1,13 @@
 ﻿// Infrastructure/IntegrationTestBase.cs
+using Atlas.Data.Tenant;
+using Atlas.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.EntityFrameworkCore;
 using System;
 using System.IO;
 using System.Threading.Tasks;
 using Xunit;
-using Atlas.Extensions.DependencyInjection;
 
 namespace Atlas.Integration.Tests.Infrastructure
 {

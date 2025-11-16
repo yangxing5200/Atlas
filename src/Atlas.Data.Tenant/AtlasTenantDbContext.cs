@@ -5,6 +5,7 @@ using Atlas.Data.Abstractions;
 using Atlas.Data.Common.Extensions;
 using Atlas.Models.Tenant.Entities;
 using Microsoft.EntityFrameworkCore;
+using Pomelo.EntityFrameworkCore.MySql.Internal;
 using System.Reflection;
 
 namespace Atlas.Data.Tenant
@@ -17,6 +18,7 @@ namespace Atlas.Data.Tenant
         private readonly ICurrentIdentity _currentUserService;
         private readonly ITenantContext _tenantContext;
         private readonly string? _connectionString;
+
         public AtlasTenantDbContext(
             DbContextOptions<AtlasTenantDbContext> options,
             ITenantContext tenantContext)
@@ -35,15 +37,15 @@ namespace Atlas.Data.Tenant
         }
 
         // 实现IHasCurrentUser接口
-        public long? CurrentUserId => _currentUserService.UserId;
-        public long? StoreId => _currentUserService.StoreId;
-        public long? CurrentTenantId => _currentUserService.TenantId;
-
-        // DbSet定义
-        public DbSet<Store> Stores { get; set; }
-        // public DbSet<Order> Orders { get; set; }
-        // public DbSet<Product> Products { get; set; }
-        // AtlasTenantDbContext.cs
+        public long? CurrentUserId => _currentUserService?.UserId;
+        public long? StoreId => _currentUserService?.StoreId;
+        public long? CurrentTenantId => _currentUserService?.TenantId;
+        internal DbSet<TEntity> GetDbSet<TEntity>() where TEntity : class
+        {
+            // Debug模式下验证调用者
+            DbContextAccessValidator.ValidateAccess();
+            return Set<TEntity>();
+        }
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
             if (!string.IsNullOrEmpty(_connectionString))
@@ -75,8 +77,8 @@ namespace Atlas.Data.Tenant
             base.OnModelCreating(modelBuilder);
 
             // 1. 应用所有实体配置
-            modelBuilder.ApplyConfigurationsFromAssembly(
-                typeof(AtlasTenantDbContext).Assembly);
+            var migrationsAssembly = Assembly.Load("Atlas.Data.Tenant.Migrations");
+            modelBuilder.ApplyConfigurationsFromAssembly(migrationsAssembly);
 
             // 2. 移除所有外键约束 
             modelBuilder.RemoveAllForeignKeyConstraints();

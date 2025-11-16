@@ -32,6 +32,12 @@ namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
 
             builder.Property(x => x.Address)
                 .HasMaxLength(500);
+            builder.Property(x => x.Province)
+                .HasMaxLength(50);
+            builder.Property(x => x.City)
+                .HasMaxLength(50);
+            builder.Property(x => x.District)
+                .HasMaxLength(100);
 
             builder.Property(x => x.ContactPhone)
                 .HasMaxLength(50);

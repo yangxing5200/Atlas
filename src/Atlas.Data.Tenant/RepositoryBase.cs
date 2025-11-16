@@ -138,7 +138,7 @@ namespace Atlas.Data.Tenant
 
         public virtual async Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var query = GetReadContext().GetDbSet<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.FirstOrDefaultAsync(e => e.Id.Equals(id), ct);
         }

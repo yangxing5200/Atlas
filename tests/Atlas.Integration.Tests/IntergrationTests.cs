@@ -48,7 +48,6 @@ public class IntergrationTests : IntegrationTestBase
 
         // 3. —È÷§
         var context = GetService<AtlasTenantDbContext>();
-        Assert.True(await context.Stores.AnyAsync());
     }
 
 

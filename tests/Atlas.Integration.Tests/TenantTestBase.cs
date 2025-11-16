@@ -75,19 +75,15 @@ namespace Atlas.Integration.Tests
                 throw new InvalidOperationException(
                     "无法连接到全局数据库，请检查连接字符串配置");
             }
-
+            SwitchToTenant(TestTenants.PersonalTenant, TestUsers.TestUser);
+            var factory = ServiceProvider.GetService<ITenantDbContextFactory>();
+            await factory.CreateReadonlyDbContextAsync();
             await base.OnInitializeAsync();
         }
-
-        /// <summary>
-        /// 切换当前租户身份
-        /// </summary>
         protected void SwitchToTenant(long tenantId, long userId = TestUsers.AdminUser, long? storeId = null)
         {
             FakeIdentity.SetIdentity(tenantId, userId, storeId);
         }
-
-       
         /// <summary>
         /// 直接获取租户数据库上下文（用于验证数据）
         /// </summary>

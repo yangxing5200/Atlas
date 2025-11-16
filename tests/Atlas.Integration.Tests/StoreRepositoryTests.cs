@@ -289,9 +289,11 @@ namespace Atlas.Integration.Tests.Tenant
         {
             // Arrange
             SwitchToTenant(TestTenants.PersonalTenant, TestUsers.TestUser);
-            var repository = GetService<IStoreRepository>();
 
+            var repository = GetService<IStoreRepository>();
+            var manualId = new SnowflakeIdGenerator(1, 1).NextId();
             var store = CreateTestStore("SOFT_DELETE", "软删除测试");
+            store.Id = manualId;
             await repository.AddAsync(store);
             await repository.SaveChangesAsync();
             _createdStores.Add((TestTenants.PersonalTenant, store.Id));
@@ -306,7 +308,7 @@ namespace Atlas.Integration.Tests.Tenant
 
             // Assert - 直接查询数据库验证（绕过软删除过滤）
             var context = await GetTenantDbContextAsync();
-            var softDeleted = await context.Stores
+            var softDeleted = await repository.AsReadonlyQueryable()
                 .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(s => s.Id == store.Id);
 

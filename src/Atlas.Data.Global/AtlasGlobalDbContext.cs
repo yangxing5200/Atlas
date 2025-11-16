@@ -3,6 +3,7 @@ using Atlas.Data.Abstractions;
 using Atlas.Data.Common.Extensions;
 using Atlas.Models.Global.Entities;
 using Microsoft.EntityFrameworkCore;
+using System.Reflection;
 
 namespace Atlas.Data.Global
 {
@@ -38,8 +39,8 @@ namespace Atlas.Data.Global
             base.OnModelCreating(modelBuilder);
 
             // 1. 应用所有实体配置
-            modelBuilder.ApplyConfigurationsFromAssembly(
-                typeof(AtlasGlobalDbContext).Assembly);
+            var migrationsAssembly = Assembly.Load("Atlas.Data.Global.Migrations");
+            modelBuilder.ApplyConfigurationsFromAssembly(migrationsAssembly);
 
             // 2. 移除所有外键约束 
             //modelBuilder.RemoveAllForeignKeyConstraints(); // 主动去迁移文件中删除外键语句，避免EF Core自动重新创建外键约束

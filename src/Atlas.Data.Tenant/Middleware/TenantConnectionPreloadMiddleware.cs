@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using System.Threading.Tasks;
 
 namespace Atlas.Data.Tenant.Middleware
@@ -19,7 +20,7 @@ namespace Atlas.Data.Tenant.Middleware
         public async Task InvokeAsync(HttpContext context)
         {
             // 修正：使用泛型方法获取服务
-            var factory = context.RequestServices.GetService(typeof(ITenantDbContextFactory)) as ITenantDbContextFactory;
+            var factory = context.RequestServices.GetService<ITenantDbContextFactory>();
 
             if (factory != null)
             {
