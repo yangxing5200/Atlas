@@ -1,5 +1,6 @@
 ﻿using Atlas.Core.Enums;
 using Atlas.Core.IdGenerators;
+using Atlas.Data.Common;
 using Atlas.Data.Tenant.Repositories;
 using Atlas.Integration.Tests.Infrastructure;
 using Atlas.Models.Tenant.Entities;
@@ -52,7 +53,7 @@ namespace Atlas.Integration.Tests.Tenant
             // Arrange
             SwitchToTenant(TestTenants.ChainEnterprise);
             var repository = GetService<IStoreRepository>();
-            
+
             var manualId = new SnowflakeIdGenerator(1, 1).NextId();
             var store = CreateTestStore("CHAIN001", "连锁门店001");
             store.Id = manualId;
@@ -434,6 +435,109 @@ namespace Atlas.Integration.Tests.Tenant
             finalCount2.Should().Be(initialCount2 + 2);
         }
 
+        [Fact]
+        public async Task AddRangeStore()
+        {
+            SwitchToTenant(TestTenants.DemoCompany);
+            var _tenantId = TestTenants.DemoCompany;
+            var stores = new[]
+        {
+                // 1. 总部
+                new Store
+                {
+                    TenantId = _tenantId,
+                    Code = "HQ001",
+                    Name = "总部",
+                    Type = StoreType.Headquarters,
+                    ParentStoreId = null,
+                    Province = "上海",
+                    City = "上海",
+                    District = "浦东新区",
+                    Address = "张江高科技园区 999 号",
+                    ContactPerson = "总部经理",
+                    ContactPhone = "021-12345678",
+                    Status = StoreStatus.Active,
+                    CreatedAt = DateTime.UtcNow,
+                    CreatedBy = SystemIdentity.Seed.UserId
+                },
+                
+                // 2. 直营门店
+                new Store
+                {
+                    TenantId = _tenantId,
+                    Code = "ZY001",
+                    Name = "浦东直营店",
+                    Type = StoreType.DirectOperated,
+                    ParentStoreId = 1,
+                    Province = "上海",
+                    City = "上海",
+                    District = "浦东新区",
+                    Address = "世纪大道 888 号",
+                    ContactPerson = "李经理",
+                    ContactPhone = "021-88888888",
+                    Status = StoreStatus.Active,
+                    CreatedAt = DateTime.UtcNow,
+                    CreatedBy = SystemIdentity.Seed.UserId
+                },
+                new Store
+                {
+                    TenantId = _tenantId,
+                    Code = "ZY002",
+                    Name = "徐汇直营店",
+                    Type = StoreType.DirectOperated,
+                    ParentStoreId = 1,
+                    Province = "上海",
+                    City = "上海",
+                    District = "徐汇区",
+                    Address = "徐家汇 666 号",
+                    ContactPerson = "王经理",
+                    ContactPhone = "021-66666666",
+                    Status = StoreStatus.Active,
+                    CreatedAt = DateTime.UtcNow,
+                    CreatedBy = SystemIdentity.Seed.UserId
+                },
+                
+                // 3. 加盟门店
+                new Store
+                {
+                    TenantId = _tenantId,
+                    Code = "JM001",
+                    Name = "虹口加盟店",
+                    Type = StoreType.Franchised,
+                    ParentStoreId = 1,
+                    Province = "上海",
+                    City = "上海",
+                    District = "虹口区",
+                    Address = "四川北路 555 号",
+                    ContactPerson = "张老板",
+                    ContactPhone = "021-55555555",
+                    Status = StoreStatus.Active,
+                    CreatedAt = DateTime.UtcNow,
+                    CreatedBy = SystemIdentity.Seed.UserId
+                },
+                new Store
+                {
+                    TenantId = _tenantId,
+                    Code = "JM002",
+                    Name = "杨浦加盟店",
+                    Type = StoreType.Franchised,
+                    ParentStoreId = 1,
+                    Province = "上海",
+                    City = "上海",
+                    District = "杨浦区",
+                    Address = "五角场 333 号",
+                    ContactPerson = "赵老板",
+                    ContactPhone = "021-33333333",
+                    Status = StoreStatus.Active,
+                    CreatedAt = DateTime.UtcNow,
+                    CreatedBy = SystemIdentity.Seed.UserId
+                }
+            };
+
+            var repo1 = GetService<IStoreRepository>();
+            await repo1.AddRangeAsync(stores);
+            await repo1.SaveChangesAsync();
+        }
         #endregion
 
         #region Helper Methods
@@ -486,7 +590,7 @@ namespace Atlas.Integration.Tests.Tenant
 
         protected override async Task OnDisposeAsync()
         {
-            await CleanupTestDataAsync();
+            //await CleanupTestDataAsync();
 
             await base.OnDisposeAsync();
         }
