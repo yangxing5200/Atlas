@@ -1,6 +1,7 @@
 ﻿using Atlas.Core.Context;
 using Atlas.Core.Enums;
 using Atlas.Core.Services;
+using Atlas.Data.Tenant.Context;
 using Atlas.Data.Tenant.Repositories;
 using Atlas.Models.Tenant.Entities;
 using Microsoft.EntityFrameworkCore;

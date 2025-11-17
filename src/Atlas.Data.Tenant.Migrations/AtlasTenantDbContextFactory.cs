@@ -1,5 +1,6 @@
 ﻿using Atlas.Data.Common;
 using Atlas.Data.Global;
+using Atlas.Data.Tenant.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using System;

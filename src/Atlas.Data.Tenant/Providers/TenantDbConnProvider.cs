@@ -5,7 +5,7 @@ using Atlas.Models.Global.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 
-namespace Atlas.Data.Tenant
+namespace Atlas.Data.Tenant.Providers
 {
     public class TenantDbConnProvider : ITenantDbConnProvider
     {

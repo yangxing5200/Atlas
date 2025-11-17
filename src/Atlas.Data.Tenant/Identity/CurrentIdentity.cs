@@ -4,7 +4,7 @@ using Atlas.Infrastructure.Caching.Abstractions;
 using Microsoft.AspNetCore.Http;
 using System.Security.Claims;
 
-namespace Atlas.Data.Tenant
+namespace Atlas.Data.Tenant.Identity
 {
     /// <summary>
     /// 当前用户服务实现（从HttpContext获取）

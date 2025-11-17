@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Atlas.Data.Tenant
+namespace Atlas.Data.Tenant.Providers
 {
     /// <summary>
     /// 租户数据库连接信息

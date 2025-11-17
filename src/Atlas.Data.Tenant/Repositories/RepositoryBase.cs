@@ -7,9 +7,10 @@ using System.Threading.Tasks;
 using Atlas.Core.Entities;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
+using Atlas.Data.Tenant.Context;
 using Microsoft.EntityFrameworkCore;
 
-namespace Atlas.Data.Tenant
+namespace Atlas.Data.Tenant.Repositories
 {
     /// <summary>
     /// 仓储基类

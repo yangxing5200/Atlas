@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
+using Atlas.Data.Tenant.Context;
 using Atlas.Data.Tenant.Repositories;
 using Atlas.Models.Tenant.Entities;
 using Microsoft.EntityFrameworkCore;

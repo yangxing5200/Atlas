@@ -3,7 +3,7 @@ using Atlas.Data.Tenant.Repositories;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Core.Models;
 
-namespace Atlas.Data.Tenant
+namespace Atlas.Data.Tenant.Identity
 {
     /// <summary>
     /// 当前用户服务基类（核心逻辑抽象）

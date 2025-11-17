@@ -1,11 +1,12 @@
 ﻿using Atlas.Core.Services;
 using Atlas.Data.Common.Interceptors;
+using Atlas.Data.Tenant.Providers;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Atlas.Data.Tenant
+namespace Atlas.Data.Tenant.Context
 {
     /// <summary>
     /// 租户数据库上下文工厂

@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Pomelo.EntityFrameworkCore.MySql.Internal;
 using System.Reflection;
 
-namespace Atlas.Data.Tenant
+namespace Atlas.Data.Tenant.Context
 {
     /// <summary>
     /// Tenant数据库上下文

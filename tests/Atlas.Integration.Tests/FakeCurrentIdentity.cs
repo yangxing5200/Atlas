@@ -1,5 +1,5 @@
 ﻿using Atlas.Core.Services;
-using Atlas.Data.Tenant;
+using Atlas.Data.Tenant.Identity;
 using Atlas.Data.Tenant.Repositories;
 using Atlas.Infrastructure.Caching.Abstractions;
 using System;

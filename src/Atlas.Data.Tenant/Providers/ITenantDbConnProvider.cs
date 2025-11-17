@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Atlas.Data.Tenant
+namespace Atlas.Data.Tenant.Providers
 {
     public interface ITenantDbConnProvider
     {

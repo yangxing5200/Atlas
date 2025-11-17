@@ -1,7 +1,7 @@
 ﻿using System.Threading;
 using System.Threading.Tasks;
 
-namespace Atlas.Data.Tenant
+namespace Atlas.Data.Tenant.Context
 {
     /// <summary>
     /// 租户数据库上下文工厂接口
@@ -26,7 +26,7 @@ namespace Atlas.Data.Tenant
         /// <summary>
         /// 同步创建只读库上下文（仅在连接串已缓存时使用）
         /// </summary>
-        /// <exception cref="System.InvalidOperationException">连接串未缓存时抛出</exception>
+        /// <exception cref="InvalidOperationException">连接串未缓存时抛出</exception>
         AtlasTenantDbContext CreateReadonlyDbContextSync();
     }
 }

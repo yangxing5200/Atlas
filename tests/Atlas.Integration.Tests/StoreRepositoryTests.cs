@@ -1,5 +1,5 @@
 ﻿using Atlas.Core.Enums;
-using Atlas.Data.Tenant;
+using Atlas.Data.Tenant.Context;
 using Atlas.Data.Tenant.Impl;
 using Atlas.Data.Tenant.Repositories;
 using Atlas.Models.Tenant.Entities;

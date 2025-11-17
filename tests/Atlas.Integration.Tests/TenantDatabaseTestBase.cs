@@ -1,7 +1,7 @@
 ﻿// Atlas.Integration.Tests/TenantDatabase/TenantDatabaseTestBase.cs
 using Atlas.Core.Context;
 using Atlas.Core.Services;
-using Atlas.Data.Tenant;
+using Atlas.Data.Tenant.Context;
 using Atlas.Integration.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
