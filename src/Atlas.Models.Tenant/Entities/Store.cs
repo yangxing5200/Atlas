@@ -3,7 +3,7 @@ using Atlas.Core.Enums;
 
 namespace Atlas.Models.Tenant.Entities
 {
-    public class Store : VersionedEntity, ITenantEntity
+    public class Store : VersionedEntity, ITenantEntity,ISnowflakeId
     {
         public long TenantId { get; set; }
         public string Code { get; set; }

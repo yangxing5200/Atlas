@@ -31,7 +31,7 @@ namespace Atlas.Infrastructure.Caching.Extensions
             services.TryAddSingleton<ICacheSerializer>(sp => new JsonCacheSerializer());
             services.TryAddSingleton<ICacheKeyGenerator>(sp => new CacheKeyGenerator());
             services.TryAddSingleton<ICacheKeyParser>(sp => new CacheKeyParser());
-            services.TryAddSingleton<IScopeContextAccessor, ScopeContextAccessor>();
+            services.TryAddSingleton<IScopeContextAccessor, CurrentUserScopeContextAccessor>();
 
             // Tag management
             services.TryAddSingleton<ITagVersionStore, TagVersionStore>();

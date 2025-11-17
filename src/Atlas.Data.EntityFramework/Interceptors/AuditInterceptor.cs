@@ -3,15 +3,19 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Atlas.Core.Services;
 using Atlas.Core.Entities;
+using Atlas.Core.IdGenerators;
+using System.Reflection.Emit;
 
 namespace Atlas.Data.Common.Interceptors
 {
     public class AuditInterceptor : SaveChangesInterceptor
     {
+        private readonly IIdGenerator _idGenerator;
         private readonly ICurrentIdentity _currentIdentity;
 
-        public AuditInterceptor(ICurrentIdentity currentIdentity)
+        public AuditInterceptor(IIdGenerator idGenerator, ICurrentIdentity currentIdentity)
         {
+            _idGenerator = idGenerator;
             _currentIdentity = currentIdentity;
         }
 
@@ -49,7 +53,10 @@ namespace Atlas.Data.Common.Interceptors
                 if (entry.State == EntityState.Added)
                 {
                     var entity = entry.Entity;
-
+                    if (entity is ISnowflakeId sfe && sfe.Id == 0 && _idGenerator != null)
+                    {
+                        sfe.Id = _idGenerator.NextId();
+                    }
                     if (entity is IBaseEntity be)
                         be.CreatedAt = now;
 

@@ -96,11 +96,12 @@ public static class AtlasCoreServiceExtensions
         services.AddScoped<ICurrentIdentity>(sp =>
         {
             var httpContextAccessor = sp.GetRequiredService<IHttpContextAccessor>();
-            var cache = sp.GetRequiredService<ICacheService>();
+            var lazyCache = new Lazy<ICacheService>(() =>
+                sp.GetRequiredService<ICacheService>());
             var lazyStoreRepository = new Lazy<IStoreRepository>(() =>
                 sp.GetRequiredService<IStoreRepository>());
 
-            return new CurrentIdentity(httpContextAccessor, lazyStoreRepository, cache);
+            return new CurrentIdentity(httpContextAccessor, lazyStoreRepository, lazyCache);
         });
 
         return services;
@@ -349,6 +350,14 @@ public static class AtlasCoreServiceExtensions
     {
         // ========== 仓储层 ==========
         services.AddScoped<IStoreRepository, StoreRepository>();
+
+        services.AddScoped<IProductRepository, ProductRepository>();
+        services.AddScoped<IMemberRepository, MemberRepository>();
+        services.AddScoped<IPromotionRepository, PromotionRepository>();
+
+        services.AddScoped<IOrderRepository, OrderRepository>();
+        services.AddScoped<IInventoryRepository, InventoryRepository>();
+        services.AddScoped<ICashierRecordRepository, CashierRecordRepository>();
         // services.AddScoped<IProductRepository, ProductRepository>();
         // services.AddScoped<IOrderRepository, OrderRepository>();
         // services.AddScoped<IInventoryRepository, InventoryRepository>();

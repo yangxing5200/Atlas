@@ -3,8 +3,10 @@ using Atlas.Data.Global;
 using Atlas.Data.Tenant;
 using Atlas.Data.Tenant.Impl;
 using Atlas.Data.Tenant.Repositories;
+using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Extensions;
 using Atlas.Integration.Tests.Infrastructure;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -49,8 +51,16 @@ namespace Atlas.Integration.Tests
             IConfiguration configuration)
         {
             // FakeCurrentIdentity（单例，便于测试中切换）
-            FakeIdentity = new FakeCurrentIdentity();
-            services.AddSingleton<ICurrentIdentity>(FakeIdentity);
+            services.AddSingleton<ICurrentIdentity>(sp =>
+            {
+                var httpContextAccessor = sp.GetRequiredService<IHttpContextAccessor>();
+                var lazyCache = new Lazy<ICacheService>(() =>
+                    sp.GetRequiredService<ICacheService>());
+                var lazyStoreRepository = new Lazy<IStoreRepository>(() =>
+                    sp.GetRequiredService<IStoreRepository>());
+
+                return new FakeCurrentIdentity(lazyStoreRepository, lazyCache);
+            });
 
             ConfigureAdditionalServices(services, configuration);
         }
@@ -75,10 +85,13 @@ namespace Atlas.Integration.Tests
                 throw new InvalidOperationException(
                     "无法连接到全局数据库，请检查连接字符串配置");
             }
-            SwitchToTenant(TestTenants.PersonalTenant, TestUsers.TestUser);
+            await base.OnInitializeAsync();
+            FakeIdentity = (FakeCurrentIdentity)GetService<ICurrentIdentity>();
+            SwitchToTenant(TestTenants.ChainEnterprise, TestUsers.TestUser);
             var factory = ServiceProvider.GetService<ITenantDbContextFactory>();
             await factory.CreateReadonlyDbContextAsync();
-            await base.OnInitializeAsync();
+          
+
         }
         protected void SwitchToTenant(long tenantId, long userId = TestUsers.AdminUser, long? storeId = null)
         {

@@ -43,9 +43,9 @@ namespace Atlas.Integration.Tests
 
             // 创建Mock用户服务
             _mockUserService = new MockCurrentUserService(userId: 10001, tenantId: 1);
-
-            // 创建AuditInterceptor
-            var auditInterceptor = new AuditInterceptor(_mockUserService);
+            var idGenerator = new SnowflakeIdGenerator(1, 1);
+            
+            var auditInterceptor = new AuditInterceptor(idGenerator,_mockUserService);
 
             // 配置DbContext（真实MySQL）
             var options = new DbContextOptionsBuilder<TestDbContext>()

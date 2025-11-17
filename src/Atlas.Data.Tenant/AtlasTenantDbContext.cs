@@ -79,7 +79,7 @@ namespace Atlas.Data.Tenant
             // 1. 应用所有实体配置
             var migrationsAssembly = Assembly.Load("Atlas.Data.Tenant.Migrations");
             modelBuilder.ApplyConfigurationsFromAssembly(migrationsAssembly);
-
+            ConfigureIdGenerationStrategy(modelBuilder);
             // 2. 移除所有外键约束 
             modelBuilder.RemoveAllForeignKeyConstraints();
 
@@ -88,6 +88,47 @@ namespace Atlas.Data.Tenant
 
             // 4. 应用软删除过滤器
             modelBuilder.ApplySoftDeleteFilter();
+        }
+
+        /// <summary>
+        /// 自动配置ID生成策略
+        /// - 实现了 ISnowflakeId 接口的实体：不使用数据库生成（由应用层生成雪花ID）
+        /// - 其他实体：使用数据库自增ID
+        /// </summary>
+        private void ConfigureIdGenerationStrategy(ModelBuilder modelBuilder)
+        {
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+            {
+                var clrType = entityType.ClrType;
+
+                // 跳过非实体类型
+                if (!typeof(IBaseEntity).IsAssignableFrom(clrType))
+                {
+                    continue;
+                }
+
+                var idProperty = entityType.FindProperty(nameof(IBaseEntity.Id));
+                if (idProperty == null)
+                {
+                    continue;
+                }
+
+                // 检查是否实现了 ISnowflakeId 接口
+                if (typeof(ISnowflakeId).IsAssignableFrom(clrType))
+                {
+                    // 雪花ID：不使用数据库生成
+                    modelBuilder.Entity(clrType)
+                        .Property(nameof(IBaseEntity.Id))
+                        .ValueGeneratedNever();
+                }
+                else
+                {
+                    // 默认：使用数据库自增ID
+                    modelBuilder.Entity(clrType)
+                        .Property(nameof(IBaseEntity.Id))
+                        .ValueGeneratedOnAdd();
+                }
+            }
         }
     }
 }

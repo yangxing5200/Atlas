@@ -140,7 +140,7 @@ namespace Atlas.Data.Global.Seeds
                     ServerCode = "master-01",
                     NetworkEnvCode = NetworkEnvCodes.Default,
                     DbType = "MySQL",
-                    ConnString = "Server=localhost;Port=3306;Database={database};User=root;Password=your_password;CharSet=utf8mb4;",
+                    ConnString = "Server=localhost;Port=3306;Database=atlas;User=root;Password=root;CharSet=utf8mb4;",
                     CreatedAt = DateTime.UtcNow
                 },
                 new DatabaseServerConfig
@@ -149,7 +149,7 @@ namespace Atlas.Data.Global.Seeds
                     ServerCode = "master-01",
                     NetworkEnvCode = NetworkEnvCodes.Vpc,
                     DbType = "MySQL",
-                    ConnString = "Server=10.0.1.10;Port=3306;Database={database};User=root;Password=your_password;CharSet=utf8mb4;",
+                    ConnString = "Server=localhost;Port=3306;Database=atlas;User=root;Password=root;CharSet=utf8mb4;",
                     CreatedAt = DateTime.UtcNow
                 },
                 // readonly-01-01 配置
@@ -159,7 +159,7 @@ namespace Atlas.Data.Global.Seeds
                     ServerCode = "readonly-01-01",
                     NetworkEnvCode = NetworkEnvCodes.Default,
                     DbType = "MySQL",
-                    ConnString = "Server=localhost;Port=3307;Database={database};User=readonly;Password=readonly_password;CharSet=utf8mb4;",
+                    ConnString = "Server=localhost;Port=3306;Database=atlas;User=readonly;Password=root;CharSet=utf8mb4;",
                     CreatedAt = DateTime.UtcNow
                 },
                 // readonly-01-02 配置（报表库）
@@ -169,7 +169,7 @@ namespace Atlas.Data.Global.Seeds
                     ServerCode = "readonly-01-02",
                     NetworkEnvCode = NetworkEnvCodes.Default,
                     DbType = "MySQL",
-                    ConnString = "Server=localhost;Port=3308;Database={database};User=report;Password=report_password;CharSet=utf8mb4;",
+                    ConnString = "Server=localhost;Port=3306;Database=atlas;User=report;Password=root;CharSet=utf8mb4;",
                     CreatedAt = DateTime.UtcNow
                 }
             };

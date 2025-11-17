@@ -2,7 +2,6 @@
 using Atlas.Core.Context;
 using Atlas.Core.Services;
 using Atlas.Data.Tenant;
-using Atlas.Data.Tenant.Seeds;
 using Atlas.Integration.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -60,7 +59,6 @@ namespace Atlas.Integration.Tests.TenantDatabase
         protected override async Task OnInitializeAsync()
         {
             await EnsureDatabaseAsync();
-            await SeedDatabaseAsync();
         }
 
         protected override async Task OnDisposeAsync()
@@ -79,17 +77,6 @@ namespace Atlas.Integration.Tests.TenantDatabase
             await context.Database.EnsureCreatedAsync();
         }
 
-        /// <summary>
-        /// 执行 Tenant 数据库种子数据
-        /// </summary>
-        private async Task SeedDatabaseAsync()
-        {
-            var context = GetService<AtlasTenantDbContext>();
-            var logger = GetOptionalService<ILogger<TenantDataSeeder>>();
-
-            var seeder = new TenantDataSeeder(context, TestTenantId, logger);
-            await seeder.SeedAsync();
-        }
     }
 
     /// <summary>

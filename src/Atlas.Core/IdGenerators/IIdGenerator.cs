@@ -1,19 +1,18 @@
 ﻿namespace Atlas.Core.IdGenerators;
 
 /// <summary>
-/// ID 生成器接口
+/// 雪花ID生成服务接口
 /// </summary>
 public interface IIdGenerator
 {
     /// <summary>
-    /// 生成新的ID
+    /// 生成下一个雪花ID
     /// </summary>
     long NextId();
+
     /// <summary>
-    /// 批量生产新的ID
+    /// 批量生成雪花ID
     /// </summary>
-    /// <param name="count"></param>
-    /// <returns></returns>
     long[] NextIds(int count);
 }
 

@@ -3,6 +3,7 @@ using System;
 using Atlas.Data.Tenant;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Atlas.Data.Tenant.Migrations.Migrations
 {
     [DbContext(typeof(AtlasTenantDbContext))]
-    partial class AtlasTenantDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251117030718_v0.0.3-auto-id")]
+    partial class v003autoid
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -498,6 +501,7 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
             modelBuilder.Entity("Atlas.Models.Tenant.Entities.Store", b =>
                 {
                     b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("bigint");
 
                     b.Property<string>("Address")

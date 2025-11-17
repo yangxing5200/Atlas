@@ -1,6 +1,14 @@
 ﻿namespace Atlas.Core.Entities
 {
-
+    /// <summary>
+    /// 雪花ID标记接口
+    /// 实现此接口的实体将使用雪花算法自动生成ID
+    /// 未实现此接口的实体将使用数据库自增ID
+    /// </summary>
+    public interface ISnowflakeId
+    {
+        long Id { get; set; }
+    }
     public interface IBaseEntity<T>
     {
         T Id { get; set; }

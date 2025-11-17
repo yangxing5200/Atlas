@@ -33,7 +33,7 @@ namespace Atlas.Data.Tenant
         // 请求级缓存：门店ID列表每次请求只异步加载一次
         private List<long>? _accessibleStoreIds;
         private Task<List<long>>? _accessibleStoreIdsTask;
-
+        private long? _cachedForStoreId;
         protected RepositoryBase(
             ITenantDbContextFactory dbContextFactory,
             ICurrentIdentity currentIdentity)
@@ -57,11 +57,21 @@ namespace Atlas.Data.Tenant
             return _writeContext;
         }
 
-        /// <summary>
+        // <summary>
         /// 异步获取可访问的门店ID列表（带请求级缓存，避免重复调用）
         /// </summary>
         private async Task<List<long>> GetAccessibleStoreIdsAsync()
         {
+            var currentStoreId = _currentIdentity.StoreId;
+
+            // 检测 storeId 是否变化，变化则清除缓存
+            if (_cachedForStoreId != currentStoreId)
+            {
+                _accessibleStoreIds = null;
+                _accessibleStoreIdsTask = null;
+                _cachedForStoreId = currentStoreId;
+            }
+
             if (_accessibleStoreIds != null)
             {
                 return _accessibleStoreIds;
@@ -69,7 +79,6 @@ namespace Atlas.Data.Tenant
 
             // 避免并发调用时重复请求
             _accessibleStoreIdsTask ??= _currentIdentity.GetAccessibleStoreIdsAsync();
-
             _accessibleStoreIds = await _accessibleStoreIdsTask;
             return _accessibleStoreIds;
         }
@@ -537,6 +546,14 @@ namespace Atlas.Data.Tenant
         {
             _writeContext?.Dispose();
             _readContext?.Dispose();
+        }
+    }
+    public abstract class RepositoryBase<TEntity>
+        : RepositoryBase<TEntity, long>, IRepository<TEntity>
+        where TEntity : class, IBaseEntity<long>
+    {
+        protected RepositoryBase(ITenantDbContextFactory dbContextFactory, ICurrentIdentity currentIdentity) : base(dbContextFactory, currentIdentity)
+        {
         }
     }
 }

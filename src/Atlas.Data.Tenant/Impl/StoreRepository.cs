@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Atlas.Data.Tenant.Impl
 {
-    public class StoreRepository : RepositoryBase<Store, long>, IStoreRepository
+    public class StoreRepository : RepositoryBase<Store>, IStoreRepository
     {
         public StoreRepository(
             ITenantDbContextFactory dbContextFactory,
