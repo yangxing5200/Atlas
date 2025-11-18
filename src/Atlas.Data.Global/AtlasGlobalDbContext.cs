@@ -42,14 +42,14 @@ namespace Atlas.Data.Global
             var migrationsAssembly = Assembly.Load("Atlas.Data.Global.Migrations");
             modelBuilder.ApplyConfigurationsFromAssembly(migrationsAssembly);
 
-            // 2. 移除所有外键约束 
-            //modelBuilder.RemoveAllForeignKeyConstraints(); // 主动去迁移文件中删除外键语句，避免EF Core自动重新创建外键约束
-
-            // 3. 确保外键字段有索引
+            // 2. 确保外键字段有索引
             modelBuilder.EnsureForeignKeyIndexes();
 
-            // 4. 应用软删除过滤器
+            // 3. 应用软删除过滤器
             modelBuilder.ApplySoftDeleteFilter();
+
+            // 4. 移除所有外键约束
+            modelBuilder.RemoveAllForeignKeyConstraints();
         }
     }
 }

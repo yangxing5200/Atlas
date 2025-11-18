@@ -2,6 +2,7 @@
 using Atlas.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using Microsoft.EntityFrameworkCore.Migrations;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -19,12 +20,12 @@ namespace Atlas.Data.Global.Migrations
              new MySqlServerVersion(new Version(5, 7, 32)),
              options =>
              {
-                 // ✅ 指定迁移程序集
+                 // 指定迁移程序集
                  options.MigrationsAssembly("Atlas.Data.Global.Migrations");
              });
 
             var context = new AtlasGlobalDbContext(optionsBuilder.Options, SystemIdentity.Migration);
-            context.Database.Migrate();
+            //context.Database.Migrate();
             return context;
         }
     }

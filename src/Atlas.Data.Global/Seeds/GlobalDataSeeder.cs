@@ -171,6 +171,26 @@ namespace Atlas.Data.Global.Seeds
                     DbType = "MySQL",
                     ConnString = "Server=localhost;Port=3306;Database=atlas;User=report;Password=root;CharSet=utf8mb4;",
                     CreatedAt = DateTime.UtcNow
+                },
+                // readonly-01-01 配置
+                new DatabaseServerConfig
+                {
+                    Id = 5,
+                    ServerCode = "readonly-02-01",
+                    NetworkEnvCode = NetworkEnvCodes.Default,
+                    DbType = "MySQL",
+                    ConnString = "Server=localhost;Port=3306;Database=atlas;User=readonly;Password=root;CharSet=utf8mb4;",
+                    CreatedAt = DateTime.UtcNow
+                },
+                // readonly-01-02 配置（报表库）
+                new DatabaseServerConfig
+                {
+                    Id = 6,
+                    ServerCode = "readonly-02-02",
+                    NetworkEnvCode = NetworkEnvCodes.Default,
+                    DbType = "MySQL",
+                    ConnString = "Server=localhost;Port=3306;Database=atlas;User=report;Password=root;CharSet=utf8mb4;",
+                    CreatedAt = DateTime.UtcNow
                 }
             };
 
@@ -204,7 +224,7 @@ namespace Atlas.Data.Global.Seeds
                     Name = "华东实例-01",
                     DbType = "MySQL",
                     MasterServerCode = "master-01",
-                    DbName = "atlas_tenant_huadong_01",
+                    DbName = "atlas",
                     Version = "8.0.35",
                     Region = "华东",
                     ConnectionString = "Server=localhost;Port=3306;Database=atlas;User=root;Password=root;CharSet=utf8mb4", // 使用 ServerConfig 自动组装
@@ -216,7 +236,7 @@ namespace Atlas.Data.Global.Seeds
                     Name = "华东实例-02",
                     DbType = "MySQL",
                     MasterServerCode = "master-01",
-                    DbName = "atlas_tenant_huadong_02",
+                    DbName = "atlas",
                     Version = "8.0.35",
                     Region = "华东",
                    ConnectionString = "Server=localhost;Port=3306;Database=atlas;User=root;Password=root;CharSet=utf8mb4", // 使用 ServerConfig 自动组装
@@ -228,7 +248,7 @@ namespace Atlas.Data.Global.Seeds
                     Name = "华北实例-01",
                     DbType = "MySQL",
                     MasterServerCode = "master-02",
-                    DbName = "atlas_tenant_huabei_01",
+                    DbName = "atlas",
                     Version = "8.0.35",
                     Region = "华北",
                     ConnectionString = "Server=localhost;Port=3306;Database=atlas;User=root;Password=root;CharSet=utf8mb4", // 使用 ServerConfig 自动组装
@@ -240,7 +260,7 @@ namespace Atlas.Data.Global.Seeds
                     Name = "测试实例（独立连接串）",
                     DbType = "MySQL",
                     MasterServerCode = "master-01",
-                    DbName = "atlas_tenant_test",
+                    DbName = "atlas",
                     Version = "8.0.35",
                     Region = "华东",
                     // 直接指定连接串（优先级高于 ServerConfig）

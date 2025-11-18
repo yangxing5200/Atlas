@@ -1,6 +1,6 @@
 ﻿using Atlas.Core.Enums;
-using Atlas.Data.Tenant.Impl;
 using Atlas.Data.Tenant.Repositories;
+using Atlas.Data.Tenant.Repositories.Impl;
 using Atlas.Models.Tenant.Entities;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;

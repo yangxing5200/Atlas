@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Atlas.Core.IdGenerators;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Tenant.Context;
@@ -10,14 +11,15 @@ using Atlas.Data.Tenant.Repositories;
 using Atlas.Models.Tenant.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace Atlas.Data.Tenant.Impl
+namespace Atlas.Data.Tenant.Repositories.Impl
 {
     public class ProductRepository : RepositoryBase<Product>, IProductRepository
     {
         public ProductRepository(
             ITenantDbContextFactory dbContextFactory,
-            ICurrentIdentity currentIdentity)
-            : base(dbContextFactory, currentIdentity)
+            ICurrentIdentity currentIdentity,
+            IIdGenerator idGenerator)
+            : base(dbContextFactory, currentIdentity, idGenerator)
         {
         }
     }
@@ -25,8 +27,9 @@ namespace Atlas.Data.Tenant.Impl
     {
         public MemberRepository(
             ITenantDbContextFactory dbContextFactory,
-            ICurrentIdentity currentIdentity)
-            : base(dbContextFactory, currentIdentity)
+            ICurrentIdentity currentIdentity,
+            IIdGenerator idGenerator)
+            : base(dbContextFactory, currentIdentity, idGenerator)
         {
         }
     }
@@ -34,8 +37,9 @@ namespace Atlas.Data.Tenant.Impl
     {
         public PromotionRepository(
             ITenantDbContextFactory dbContextFactory,
-            ICurrentIdentity currentIdentity)
-            : base(dbContextFactory, currentIdentity)
+            ICurrentIdentity currentIdentity,
+            IIdGenerator idGenerator)
+            : base(dbContextFactory, currentIdentity, idGenerator)
         {
         }
     }
@@ -43,8 +47,9 @@ namespace Atlas.Data.Tenant.Impl
     {
         public OrderRepository(
             ITenantDbContextFactory dbContextFactory,
-            ICurrentIdentity currentIdentity)
-            : base(dbContextFactory, currentIdentity)
+            ICurrentIdentity currentIdentity,
+            IIdGenerator idGenerator)
+            : base(dbContextFactory, currentIdentity, idGenerator)
         {
         }
     }
@@ -52,8 +57,9 @@ namespace Atlas.Data.Tenant.Impl
     {
         public InventoryRepository(
             ITenantDbContextFactory dbContextFactory,
-            ICurrentIdentity currentIdentity)
-            : base(dbContextFactory, currentIdentity)
+            ICurrentIdentity currentIdentity,
+            IIdGenerator idGenerator)
+            : base(dbContextFactory, currentIdentity, idGenerator)
         {
         }
     }
@@ -61,8 +67,9 @@ namespace Atlas.Data.Tenant.Impl
     {
         public CashierRecordRepository(
             ITenantDbContextFactory dbContextFactory,
-            ICurrentIdentity currentIdentity)
-            : base(dbContextFactory, currentIdentity)
+            ICurrentIdentity currentIdentity,
+            IIdGenerator idGenerator)
+            : base(dbContextFactory, currentIdentity, idGenerator)
         {
         }
     }

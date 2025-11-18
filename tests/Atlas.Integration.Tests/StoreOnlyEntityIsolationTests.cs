@@ -1,6 +1,5 @@
 ﻿using Atlas.Core.Enums;
 using Atlas.Data.Tenant.Context;
-using Atlas.Data.Tenant.Impl;
 using Atlas.Data.Tenant.Repositories;
 using Atlas.Models.Tenant.Entities;
 using FluentAssertions;
@@ -38,14 +37,14 @@ namespace Atlas.Integration.Tests.Repositories
         public async Task Order_EachStore_CompletelyIsolated()
         {
             // Arrange - 不同门店创建订单
-            await CreateOrderAsStore(0, "ORDER-HQ-001");
+            await CreateOrderAsStore(1000, "ORDER-HQ-001");
             await CreateOrderAsStore(1, "ORDER-A-001");
             await CreateOrderAsStore(2, "ORDER-B-001");
             await CreateOrderAsStore(100, "ORDER-X-001");
             await CreateOrderAsStore(103, "ORDER-F-001");
 
             // Act & Assert - 平台总部只能看到自己的订单
-            SwitchToTenant(TestTenants.ChainEnterprise, TestUsers.AdminUser, 0);
+            SwitchToTenant(TestTenants.ChainEnterprise, TestUsers.AdminUser, 1000);
             var ordersHQ = await _orderRepository.GetAllAsync();
             ordersHQ.Should().HaveCount(1);
             ordersHQ.First().OrderNo.Should().Be("ORDER-HQ-001");
@@ -91,11 +90,11 @@ namespace Atlas.Integration.Tests.Repositories
         public async Task Order_Headquarters_CannotSee_DirectStoreOrders()
         {
             // Arrange
-            await CreateOrderAsStore(0, "ORDER-HQ-001");
+            await CreateOrderAsStore(1000, "ORDER-HQ-001");
             await CreateOrderAsStore(1, "ORDER-A-001");
 
             // Act - 平台总部查询
-            SwitchToTenant(TestTenants.ChainEnterprise, TestUsers.AdminUser, 0);
+            SwitchToTenant(TestTenants.ChainEnterprise, TestUsers.AdminUser, 1000);
             var orders = await _orderRepository.GetAllAsync();
 
             // Assert - 只能看到总部自己的订单
@@ -419,16 +418,167 @@ namespace Atlas.Integration.Tests.Repositories
 
         private async Task SetupCompleteStoreHierarchy()
         {
+
             var stores = new[]
             {
-                new Store { Id = 0, TenantId = TestTenants.ChainEnterprise, Code = "HQ", Name = "平台总部", Type = StoreType.Headquarters, ParentStoreId = null, IsActive = true, Status = StoreStatus.Active },
-                new Store { Id = 1, TenantId = TestTenants.ChainEnterprise, Code = "STORE-A", Name = "平台直营A", Type = StoreType.DirectOperated, ParentStoreId = 0, IsActive = true, Status = StoreStatus.Active },
-                new Store { Id = 2, TenantId = TestTenants.ChainEnterprise, Code = "STORE-B", Name = "平台直营B", Type = StoreType.DirectOperated, ParentStoreId = 0, IsActive = true, Status = StoreStatus.Active },
-                new Store { Id = 3, TenantId = TestTenants.ChainEnterprise, Code = "STORE-C", Name = "平台直营C", Type = StoreType.DirectOperated, ParentStoreId = 0, IsActive = true, Status = StoreStatus.Active },
-                new Store { Id = 100, TenantId = TestTenants.ChainEnterprise, Code = "HQ-X", Name = "加盟商X总部", Type = StoreType.FranchiseHeadquarters, ParentStoreId = 0, IsActive = true, Status = StoreStatus.Active },
-                new Store { Id = 101, TenantId = TestTenants.ChainEnterprise, Code = "STORE-D", Name = "加盟商X直营D", Type = StoreType.DirectOperated, ParentStoreId = 100, IsActive = true, Status = StoreStatus.Active },
-                new Store { Id = 102, TenantId = TestTenants.ChainEnterprise, Code = "STORE-E", Name = "加盟商X直营E", Type = StoreType.DirectOperated, ParentStoreId = 100, IsActive = true, Status = StoreStatus.Active },
-                new Store { Id = 103, TenantId = TestTenants.ChainEnterprise, Code = "STORE-F", Name = "加盟商X加盟F", Type = StoreType.Franchised, ParentStoreId = 100, IsActive = true, Status = StoreStatus.Active },
+                // 平台总部
+                new Store
+                {
+                    Id = 1000,
+                    TenantId = TestTenants.ChainEnterprise,
+                    Code = "HQ",
+                    Name = "平台总部",
+                    Type = StoreType.Headquarters,
+                    ParentStoreId = null,
+                    IsActive = true,
+                    Status = StoreStatus.Active,
+                    Address = "上海市黄浦区南京东路100号",
+                    ContactPhone = "021-12345678",
+                    ContactPerson = "张总",
+                    Province = "上海市",
+                    City = "上海市",
+                    District = "黄浦区"
+                },
+                
+                // 平台直营门店
+                new Store
+                {
+                    Id = 1,
+                    TenantId = TestTenants.ChainEnterprise,
+                    Code = "STORE-A",
+                    Name = "平台直营A",
+                    Type = StoreType.DirectOperated,
+                    ParentStoreId = 1000,
+                    IsActive = true,
+                    Status = StoreStatus.Active,
+                    Address = "上海市浦东新区陆家嘴环路1000号",
+                    ContactPhone = "021-11111111",
+                    ContactPerson = "王经理",
+                    Province = "上海市",
+                    City = "上海市",
+                    District = "浦东新区"
+                },
+                new Store
+                {
+                    Id = 2,
+                    TenantId = TestTenants.ChainEnterprise,
+                    Code = "STORE-B",
+                    Name = "平台直营B",
+                    Type = StoreType.DirectOperated,
+                    ParentStoreId = 1000,
+                    IsActive = true,
+                    Status = StoreStatus.Active,
+                    Address = "上海市徐汇区淮海中路200号",
+                    ContactPhone = "021-22222222",
+                    ContactPerson = "李经理",
+                    Province = "上海市",
+                    City = "上海市",
+                    District = "徐汇区"
+                },
+                new Store
+                {
+                    Id = 3,
+                    TenantId = TestTenants.ChainEnterprise,
+                    Code = "STORE-C",
+                    Name = "平台直营C",
+                    Type = StoreType.DirectOperated,
+                    ParentStoreId = 1000,
+                    IsActive = true,
+                    Status = StoreStatus.Active,
+                    Address = "上海市静安区南京西路300号",
+                    ContactPhone = "021-33333333",
+                    ContactPerson = "赵经理",
+                    Province = "上海市",
+                    City = "上海市",
+                    District = "静安区"
+                },
+                
+                // 加盟商X总部及门店
+                new Store
+                {
+                    Id = 100,
+                    TenantId = TestTenants.ChainEnterprise,
+                    Code = "HQ-X",
+                    Name = "加盟商X总部",
+                    Type = StoreType.FranchiseHeadquarters,
+                    ParentStoreId = 0,
+                    IsActive = true,
+                    Status = StoreStatus.Active,
+                    Address = "北京市朝阳区建国路88号",
+                    ContactPhone = "010-11111111",
+                    ContactPerson = "刘总",
+                    Province = "北京市",
+                    City = "北京市",
+                    District = "朝阳区"
+                },
+                new Store
+                {
+                    Id = 101,
+                    TenantId = TestTenants.ChainEnterprise,
+                    Code = "STORE-D",
+                    Name = "加盟商X直营D",
+                    Type = StoreType.DirectOperated,
+                    ParentStoreId = 100,
+                    IsActive = true,
+                    Status = StoreStatus.Active,
+                    Address = "北京市海淀区中关村大街1号",
+                    ContactPhone = "010-22222222",
+                    ContactPerson = "陈经理",
+                    Province = "北京市",
+                    City = "北京市",
+                    District = "海淀区"
+                },
+                new Store
+                {
+                    Id = 102,
+                    TenantId = TestTenants.ChainEnterprise,
+                    Code = "STORE-E",
+                    Name = "加盟商X直营E",
+                    Type = StoreType.DirectOperated,
+                    ParentStoreId = 100,
+                    IsActive = true,
+                    Status = StoreStatus.Active,
+                    Address = "北京市东城区王府井大街100号",
+                    ContactPhone = "010-33333333",
+                    ContactPerson = "吴经理",
+                    Province = "北京市",
+                    City = "北京市",
+                    District = "东城区"
+                },
+                new Store
+                {
+                    Id = 103,
+                    TenantId = TestTenants.ChainEnterprise,
+                    Code = "STORE-F",
+                    Name = "加盟商X加盟F",
+                    Type = StoreType.Franchised,
+                    ParentStoreId = 100,
+                    IsActive = true,
+                    Status = StoreStatus.Active,
+                    Address = "北京市西城区西单北大街50号",
+                    ContactPhone = "010-44444444",
+                    ContactPerson = "周店长",
+                    Province = "北京市",
+                    City = "北京市",
+                    District = "西城区"
+                },
+                new Store
+                {
+                    Id = 104,
+                    TenantId = TestTenants.ChainEnterprise,
+                    Code = "STORE-G",
+                    Name = "加盟商X加盟G",
+                    Type = StoreType.Franchised,
+                    ParentStoreId = 100,
+                    IsActive = true,
+                    Status = StoreStatus.Active,
+                    Address = "北京市丰台区丽泽金融商务区200号",
+                    ContactPhone = "010-55555555",
+                    ContactPerson = "郑店长",
+                    Province = "北京市",
+                    City = "北京市",
+                    District = "丰台区"
+                },
             };
 
             await _storeRepository.AddRangeAsync(stores);

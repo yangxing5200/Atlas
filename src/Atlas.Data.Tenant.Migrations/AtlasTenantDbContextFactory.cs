@@ -20,12 +20,11 @@ namespace Atlas.Data.Tenant.Migrations
              new MySqlServerVersion(new Version(5, 7, 32)),
              options =>
              {
-                 // ✅ 指定迁移程序集
+                 // 指定迁移程序集
                  options.MigrationsAssembly("Atlas.Data.Tenant.Migrations");
              });
 
             var context = new AtlasTenantDbContext(optionsBuilder.Options, SystemIdentity.Migration);
-            context.Database.Migrate();
             return context;
         }
     }

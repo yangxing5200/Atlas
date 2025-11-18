@@ -14,15 +14,19 @@ namespace Atlas.Data.Common.Extensions
         /// </summary>
         public static ModelBuilder RemoveAllForeignKeyConstraints(this ModelBuilder modelBuilder)
         {
-            foreach (var relationship in modelBuilder.Model
-                .GetEntityTypes()
-                .SelectMany(e => e.GetForeignKeys()))
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {
-                // 不在数据库中创建外键约束
-                relationship.SetConstraintName(null);
+                // 获取所有外键并转为列表（避免迭代时修改集合）
+                var foreignKeys = entityType.GetForeignKeys().ToList();
 
-                // 设置删除行为为客户端处理
-                relationship.DeleteBehavior = DeleteBehavior.ClientSetNull;
+                foreach (var foreignKey in foreignKeys)
+                {
+                    // 强制设置约束名为 null，覆盖 Configuration 中的设置
+                    foreignKey.SetConstraintName(null);
+
+                    // 或者使用更底层的 Metadata API
+                    foreignKey.SetAnnotation("Relational:Name", null);
+                }
             }
 
             return modelBuilder;
@@ -131,5 +135,48 @@ namespace Atlas.Data.Common.Extensions
 
             return modelBuilder;
         }
+
+        /// <summary>
+        /// 自动配置ID生成策略
+        /// - 实现了 ISnowflakeId 接口的实体：不使用数据库生成（由应用层生成雪花ID）
+        /// - 其他实体：使用数据库自增ID
+        /// </summary>
+        public static ModelBuilder ConfigureIdGenerationStrategy(this ModelBuilder modelBuilder)
+        {
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+            {
+                var clrType = entityType.ClrType;
+
+                // 跳过非实体类型
+                if (!typeof(IBaseEntity).IsAssignableFrom(clrType))
+                {
+                    continue;
+                }
+
+                var idProperty = entityType.FindProperty(nameof(IBaseEntity.Id));
+                if (idProperty == null)
+                {
+                    continue;
+                }
+
+                // 检查是否实现了 ISnowflakeId 接口
+                if (typeof(ISnowflakeId).IsAssignableFrom(clrType))
+                {
+                    // 雪花ID：不使用数据库生成
+                    modelBuilder.Entity(clrType)
+                        .Property(nameof(IBaseEntity.Id))
+                        .ValueGeneratedNever();
+                }
+                else
+                {
+                    // 默认：使用数据库自增ID
+                    modelBuilder.Entity(clrType)
+                        .Property(nameof(IBaseEntity.Id))
+                        .ValueGeneratedOnAdd();
+                }
+            }
+            return modelBuilder;
+        }
     }
 }
+

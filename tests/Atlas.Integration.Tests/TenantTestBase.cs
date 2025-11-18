@@ -1,7 +1,6 @@
 ﻿using Atlas.Core.Services;
 using Atlas.Data.Global;
 using Atlas.Data.Tenant.Context;
-using Atlas.Data.Tenant.Impl;
 using Atlas.Data.Tenant.Repositories;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Extensions;
@@ -118,5 +117,6 @@ namespace Atlas.Integration.Tests
             await connection.CloseAsync();
             return dbName;
         }
+
     }
 }

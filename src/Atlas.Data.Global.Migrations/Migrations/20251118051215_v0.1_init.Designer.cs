@@ -11,8 +11,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Atlas.Data.Global.Migrations.Migrations
 {
     [DbContext(typeof(AtlasGlobalDbContext))]
-    [Migration("20251116135241_v0.0.3")]
-    partial class v003
+    [Migration("20251118051215_v0.1_init")]
+    partial class v01_init
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)

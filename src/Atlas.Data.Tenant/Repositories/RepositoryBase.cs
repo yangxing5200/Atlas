@@ -5,6 +5,7 @@ using System.Linq.Expressions;
 using System.Text;
 using System.Threading.Tasks;
 using Atlas.Core.Entities;
+using Atlas.Core.IdGenerators;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Tenant.Context;
@@ -25,6 +26,7 @@ namespace Atlas.Data.Tenant.Repositories
         private AtlasTenantDbContext? _writeContext;
         private AtlasTenantDbContext? _readContext;
         private Task<AtlasTenantDbContext>? _writeContextTask;
+        private readonly IIdGenerator _idGenerator;
 
         // 静态缓存：避免重复反射
         private static readonly bool _isStoreOnlyEntity = typeof(IStoreOnlyEntity).IsAssignableFrom(typeof(TEntity));
@@ -37,10 +39,12 @@ namespace Atlas.Data.Tenant.Repositories
         private long? _cachedForStoreId;
         protected RepositoryBase(
             ITenantDbContextFactory dbContextFactory,
-            ICurrentIdentity currentIdentity)
+            ICurrentIdentity currentIdentity,
+            IIdGenerator idGenerator)
         {
             _dbContextFactory = dbContextFactory ?? throw new ArgumentNullException(nameof(dbContextFactory));
             _currentIdentity = currentIdentity ?? throw new ArgumentNullException(nameof(currentIdentity));
+            _idGenerator = idGenerator;
         }
 
         private AtlasTenantDbContext GetReadContext()
@@ -188,15 +192,15 @@ namespace Atlas.Data.Tenant.Repositories
             var query = GetReadContext().Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
 
-            var countTask = query.CountAsync(ct);
-            var itemsTask = query
+            // 顺序执行，避免并发问题
+            var total = await query.CountAsync(ct);
+
+            var items = await query
                 .Skip((pageIndex - 1) * pageSize)
                 .Take(pageSize)
                 .ToListAsync(ct);
 
-            await Task.WhenAll(countTask, itemsTask);
-
-            return (itemsTask.Result, countTask.Result);
+            return (items, total);
         }
 
         public virtual async Task<(List<TEntity> Items, int Total)> GetPagedAsync(
@@ -356,11 +360,20 @@ namespace Atlas.Data.Tenant.Repositories
             await context.Set<TEntity>().AddAsync(entity, ct);
             return entity;
         }
-
         public virtual async Task AddRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default)
         {
-            var entityList = entities as IReadOnlyCollection<TEntity> ?? entities.ToList();
+            var entityList = entities.ToList();
             var context = await GetWriteContextAsync();
+
+            // 为实现了 ISnowflakeId 的实体自动生成ID
+            foreach (var entity in entityList)
+            {
+                if (entity is ISnowflakeId se && se.Id == 0 && _idGenerator != null)
+                {
+                    se.Id = _idGenerator.NextId();
+                }
+            }
+
             await context.Set<TEntity>().AddRangeAsync(entityList, ct);
         }
 
@@ -553,7 +566,7 @@ namespace Atlas.Data.Tenant.Repositories
         : RepositoryBase<TEntity, long>, IRepository<TEntity>
         where TEntity : class, IBaseEntity<long>
     {
-        protected RepositoryBase(ITenantDbContextFactory dbContextFactory, ICurrentIdentity currentIdentity) : base(dbContextFactory, currentIdentity)
+        protected RepositoryBase(ITenantDbContextFactory dbContextFactory, ICurrentIdentity currentIdentity, IIdGenerator idGenerator) : base(dbContextFactory, currentIdentity, idGenerator)
         {
         }
     }
