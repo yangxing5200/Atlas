@@ -1,8 +1,10 @@
 ﻿using Atlas.Core.Configuration;
 using Atlas.Core.IdGenerators;
 using Atlas.Core.Services;
+using Atlas.Data.Abstractions;
 using Atlas.Data.Common.Interceptors;
 using Atlas.Data.Global;
+using Atlas.Data.Tenant;
 using Atlas.Data.Tenant.Context;
 using Atlas.Data.Tenant.Identity;
 using Atlas.Data.Tenant.Providers;
@@ -31,6 +33,7 @@ public static class AtlasCoreServiceExtensions
         IConfiguration configuration)
     {
         // 基础设施服务
+        services.AddLogging();
         services.AddHttpContextAccessor();
         services.AddAtlasSnowflakeId(configuration);
         services.AddAtlasDatabase(configuration);
@@ -77,11 +80,6 @@ public static class AtlasCoreServiceExtensions
             options.UseMySql(globalConnStr, ServerVersion.AutoDetect(globalConnStr))
                    .AddInterceptors(auditInterceptor);
         });
-
-        // 租户数据库
-        services.AddScoped<ITenantDbConnProvider, TenantDbConnProvider>();
-        services.AddScoped<ITenantDbContextFactory, TenantDbContextFactory>();
-
         return services;
     }
 
@@ -350,8 +348,13 @@ public static class AtlasCoreServiceExtensions
     /// </summary>
     private static IServiceCollection AddAtlasBusinessServices(this IServiceCollection services)
     {
+        services.AddScoped<ITenantDbConnProvider, TenantDbConnProvider>();
+        services.AddScoped<ITenantDbContextFactory, TenantDbContextFactory>();
+        services.AddScoped<IUnitOfWork, UnitOfWork>();
+
         // ========== 仓储层 ==========
-        services.AddScoped<IStoreRepository, StoreRepository>();
+        services.AddScoped(typeof(IRepository<>), typeof(RepositoryBase<>));
+        services.AddScoped<IStoreRepository, StoreRepository>(); // 有单独业务的需要单独注册
 
         services.AddScoped<IProductRepository, ProductRepository>();
         services.AddScoped<IMemberRepository, MemberRepository>();

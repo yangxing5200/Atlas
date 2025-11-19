@@ -33,6 +33,8 @@ namespace Atlas.Data.Tenant.Context
         /// </summary>
         private string? _cachedReportConnString;
 
+        private AtlasTenantDbContext? _cachedWriteContext;
+        private AtlasTenantDbContext? _cachedReadonlyContext;
         public TenantDbContextFactory(
             ICurrentIdentity currentIdentity,
             ITenantDbConnProvider connProvider,
@@ -50,8 +52,12 @@ namespace Atlas.Data.Tenant.Context
         /// </summary>
         public async Task<AtlasTenantDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
         {
+            if (_cachedWriteContext != null)
+                return _cachedWriteContext;
+
             _cachedMasterConnString ??= await _connProvider.GetConnStringAsync(cancellationToken);
-            return CreateContext(_cachedMasterConnString, isReadonly: false);
+            _cachedWriteContext = CreateContext(_cachedMasterConnString, isReadonly: false);
+            return _cachedWriteContext;
         }
 
         /// <summary>
@@ -66,8 +72,12 @@ namespace Atlas.Data.Tenant.Context
                 return await CreateDbContextAsync(cancellationToken);
             }
 
+            if (_cachedReadonlyContext != null)
+                return _cachedReadonlyContext;
+
             _cachedReadonlyConnString ??= await _connProvider.GetReadonlyConnStringAsync(cancellationToken);
-            return CreateContext(_cachedReadonlyConnString, isReadonly: true);
+            _cachedReadonlyContext = CreateContext(_cachedReadonlyConnString, isReadonly: true);
+            return _cachedReadonlyContext;
         }
 
         /// <summary>
@@ -94,23 +104,17 @@ namespace Atlas.Data.Tenant.Context
         /// <exception cref="InvalidOperationException">连接串未缓存时抛出异常</exception>
         public AtlasTenantDbContext CreateReadonlyDbContextSync()
         {
-            if (IsInTransaction())
-            {
-                if (_cachedMasterConnString == null)
-                {
-                    throw new InvalidOperationException(
-                        "在事务中首次创建DbContext必须使用异步方法 CreateDbContextAsync");
-                }
-                return CreateContext(_cachedMasterConnString, isReadonly: false);
-            }
+            if (_cachedReadonlyContext != null)
+                return _cachedReadonlyContext;
 
             if (_cachedReadonlyConnString == null)
             {
                 throw new InvalidOperationException(
-                    "首次创建ReadonlyDbContext必须使用异步方法 CreateReadonlyDbContextAsync");
+                    "首次创建ReadonlyDbContext必须使用异步方法");
             }
 
-            return CreateContext(_cachedReadonlyConnString, isReadonly: true);
+            _cachedReadonlyContext = CreateContext(_cachedReadonlyConnString, isReadonly: true);
+            return _cachedReadonlyContext;
         }
 
         /// <summary>
@@ -140,7 +144,7 @@ namespace Atlas.Data.Tenant.Context
                     // 启用详细错误信息（仅开发环境）
                     // mySqlOptions.EnableDetailedErrors();
 
-
+                   
                     // 启用字符串比较转换（性能优化）
                     mySqlOptions.EnableStringComparisonTranslations();
                 }).AddInterceptors(_auditInterceptor);

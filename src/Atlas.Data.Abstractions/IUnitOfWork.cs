@@ -9,33 +9,36 @@ namespace Atlas.Data.Abstractions
 {
     /// <summary>
     /// 工作单元接口
+    /// 仅在需要跨多个 Repository 的事务操作时使用
     /// </summary>
-    public interface IUnitOfWork : IDisposable
+    public interface IUnitOfWork : IAsyncDisposable, IDisposable
     {
+        /// <summary>
+        /// 获取仓储实例（所有仓储共享同一个 DbContext）
+        /// </summary>
+        IRepository<TEntity> GetRepository<TEntity>()
+            where TEntity : class, IBaseEntity<long>;
+
         /// <summary>
         /// 保存所有更改
         /// </summary>
-        /// <returns>受影响的行数</returns>
-        Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
+        Task<int> SaveChangesAsync(CancellationToken ct = default);
 
         /// <summary>
         /// 开始事务
         /// </summary>
-        Task BeginTransactionAsync(CancellationToken cancellationToken = default);
+        Task ExecuteInTransactionAsync(
+            Func<Task> operation,
+            CancellationToken ct = default);
 
         /// <summary>
         /// 提交事务
         /// </summary>
-        Task CommitTransactionAsync(CancellationToken cancellationToken = default);
+        Task CommitAsync(CancellationToken ct = default);
 
         /// <summary>
         /// 回滚事务
         /// </summary>
-        Task RollbackTransactionAsync(CancellationToken cancellationToken = default);
-
-        /// <summary>
-        /// 检查是否有活动事务
-        /// </summary>
-        bool HasActiveTransaction { get; }
+        Task RollbackAsync(CancellationToken ct = default);
     }
 }

@@ -40,8 +40,8 @@ namespace Atlas.Data.Abstractions
 
         Task<List<TEntity>> GetAllAsync(CancellationToken ct = default);
 
-        Task<List<TEntity>> FindAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default);
-
+        Task<List<TEntity>> ReadOnlyQueryAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default);
+        Task<List<TEntity>> QueryWithTrackingAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default);
         // ========== 分页查询 ==========
 
         Task<(List<TEntity> Items, int Total)> GetPagedAsync(int pageIndex, int pageSize, CancellationToken ct = default);

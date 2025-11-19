@@ -26,9 +26,6 @@ namespace Atlas.Data.Common
 
             // 应用全局查询过滤器
             ApplyGlobalFilters(modelBuilder);
-
-            // 应用所有配置
-            modelBuilder.ApplyConfigurationsFromAssembly(GetType().Assembly);
         }
 
         /// <summary>
@@ -46,17 +43,24 @@ namespace Atlas.Data.Common
         {
             base.ConfigureConventions(configurationBuilder);
 
-            // 配置字符串默认长度
             configurationBuilder.Properties<string>()
-                .HaveMaxLength(256);
+                .HaveMaxLength(256)
+                .HaveColumnType("varchar(256)") // 明确指定为 varchar
+                .HaveAnnotation("MySql:CharSet", "utf8mb4"); // 确保支持 Emoji 😄
 
-            // 配置 decimal 精度
             configurationBuilder.Properties<decimal>()
                 .HavePrecision(18, 2);
 
-            // 配置 DateTime 类型（使用 UTC）
+            // 确保 C# 的时间存入 MySQL 后不会丢失毫秒/微秒，避免并发冲突
             configurationBuilder.Properties<DateTime>()
-                .HaveConversion<long>();
+                .HaveColumnType("datetime(6)");
+
+            configurationBuilder.Properties<DateTime?>()
+                .HaveColumnType("datetime(6)");
+
+            // MySQL 使用 tinyint(1) 表示布尔值
+            configurationBuilder.Properties<bool>()
+                .HaveColumnType("tinyint(1)");
         }
     }
 }

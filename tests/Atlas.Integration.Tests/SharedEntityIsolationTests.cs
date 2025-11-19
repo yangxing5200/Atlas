@@ -1,9 +1,13 @@
 ﻿using Atlas.Core.Enums;
+using Atlas.Data.Abstractions;
 using Atlas.Data.Tenant.Context;
 using Atlas.Data.Tenant.Repositories;
 using Atlas.Models.Tenant.Entities;
+using Atlas.Data.Common.Extensions;
 using FluentAssertions;
 using Xunit;
+using Atlas.Core.Exceptions;
+using Atlas.Data.Tenant.Repositories.Impl;
 
 namespace Atlas.Integration.Tests.Repositories
 {
@@ -17,7 +21,9 @@ namespace Atlas.Integration.Tests.Repositories
         private IProductRepository _productRepository = null!;
         private IMemberRepository _memberRepository = null!;
 
-
+        private IRepository<Product> _productRepos = null!;
+        private IRepository<Order> _orderRepos = null!;
+        private IUnitOfWork _uow = null!;
 
         protected override async Task OnInitializeAsync()
         {
@@ -25,6 +31,9 @@ namespace Atlas.Integration.Tests.Repositories
             _storeRepository = GetService<IStoreRepository>();
             _productRepository = GetService<IProductRepository>();
             _memberRepository = GetService<IMemberRepository>();
+            _productRepos = GetService<IRepository<Product>>();
+            _orderRepos = GetService<IRepository<Order>>();
+            _uow = GetService<IUnitOfWork>();
             var factory = GetService<ITenantDbContextFactory>();
             await factory.CreateReadonlyDbContextAsync();
             await SetupCompleteStoreHierarchy();
@@ -335,10 +344,54 @@ namespace Atlas.Integration.Tests.Repositories
 
         #endregion
 
+        // 事务操作：用 UnitOfWork
+        [Fact]
+        public async Task CreateOrder()
+        {
+            SwitchToTenant(TestTenants.ChainEnterprise, TestUsers.AdminUser, 2);
+            var dto = new
+            {
+                ProductId = 1001,
+                Quantity = 10,
+                TotalAmount = 20
+            };
+            await _uow.ExecuteInTransactionAsync(async () =>
+            {
+                var orderRepo = _uow.GetRepository<Order>();
+                var inventoryRepo = _uow.GetRepository<Inventory>();
+
+                // 检查库存
+                var inventories = await inventoryRepo.QueryWithTrackingAsync(x => x.ProductId == dto.ProductId);
+                var inventory = inventories.FirstOrDefault();
+                if (inventory == null || inventory.Quantity < dto.Quantity)
+                {
+                    throw new AtlasException("库存不足");
+                }
+
+                // 扣减库存
+                inventory.Quantity -= dto.Quantity;
+                await inventoryRepo.UpdateAsync(inventory);
+                
+                // 创建订单
+                var order = new Order
+                {
+                    OrderNo = GenerateOrderNo(),
+                    TotalAmount = dto.TotalAmount
+                };
+                await orderRepo.AddAsync(order);
+                await _uow.SaveChangesAsync();
+                // ✅ 自动提交事务
+            });
+        }
+
+        private string GenerateOrderNo() => $"ORD{DateTime.Now:yyyyMMddHHmmss}";
+
         #region 辅助方法
 
-        private async Task  SetupCompleteStoreHierarchy()
+        private async Task SetupCompleteStoreHierarchy()
         {
+            var isexists = await _storeRepository.AnyAsync(x => x.Id > 0);
+            if (isexists) return;
             var stores = new[]
             {
                 // 平台总部

@@ -13,7 +13,7 @@ namespace Atlas.Data.Tenant.Identity
         protected readonly Lazy<IStoreRepository> _storeRepository;
         protected readonly Lazy<ICacheService> _cache;
 
-        protected static readonly CacheKeyDefinition AccessibleStoresCacheKey =
+        protected static readonly CacheKeyDefinition ShareStoresCacheKey =
             CacheKeyDefinition.Create("access:store:{id}")
             .WithInstanceKey("id")
             .WithExpiration(CacheExpirations.TwelveHours)
@@ -36,7 +36,7 @@ namespace Atlas.Data.Tenant.Identity
         /// <summary>
         /// 获取可访问的门店ID列表（带缓存）
         /// </summary>
-        public async Task<List<long>> GetAccessibleStoreIdsAsync(
+        public async Task<List<long>> GetShareStoreIdsAsync(
             CancellationToken ct = default)
         {
             var storeId = GetCurrentStoreId();
@@ -47,8 +47,8 @@ namespace Atlas.Data.Tenant.Identity
             }
 
             var result = await _cache.Value.GetOrSetAsync(
-                AccessibleStoresCacheKey,
-                factory: () => CalculateAccessibleStoreIdsAsync(storeId.Value, ct),
+                ShareStoresCacheKey,
+                factory: () => CalculateShareStoreIdsAsync(storeId.Value, ct),
                 instanceValue: storeId.Value,
                 cancellationToken: ct);
 
@@ -58,7 +58,7 @@ namespace Atlas.Data.Tenant.Identity
         /// <summary>
         /// 计算可访问的门店ID列表
         /// </summary>
-        protected async Task<List<long>> CalculateAccessibleStoreIdsAsync(
+        protected async Task<List<long>> CalculateShareStoreIdsAsync(
             long storeId,
             CancellationToken ct)
         {
@@ -70,50 +70,50 @@ namespace Atlas.Data.Tenant.Identity
                 return new List<long> { storeId };
             }
 
-            var accessibleStoreIds = new List<long>();
+            var shareStoreIds = new List<long>();
 
             switch (currentStore.Type)
             {
                 case StoreType.Franchised:
                     // 加盟门店：独享
-                    accessibleStoreIds.Add(storeId);
+                    shareStoreIds.Add(storeId);
                     break;
 
                 case StoreType.Headquarters:
                 case StoreType.FranchiseHeadquarters:
                     // 总部：自己 + 下级所有直营门店
-                    accessibleStoreIds.Add(storeId);
+                    shareStoreIds.Add(storeId);
 
                     var childDirectStores = await _storeRepository.Value
                         .GetChildDirectStoresAsync(storeId, ct);
 
-                    accessibleStoreIds.AddRange(childDirectStores.Select(s => s.Id));
+                    shareStoreIds.AddRange(childDirectStores.Select(s => s.Id));
                     break;
 
                 case StoreType.DirectOperated:
                     // 直营门店：同级直营门店 + 上级总部
                     if (currentStore.ParentStoreId.HasValue)
                     {
-                        accessibleStoreIds.Add(currentStore.ParentStoreId.Value);
+                        shareStoreIds.Add(currentStore.ParentStoreId.Value);
 
                         var siblingDirectStores = await _storeRepository.Value
                             .GetSiblingDirectStoresAsync(
                                 currentStore.ParentStoreId.Value, ct);
 
-                        accessibleStoreIds.AddRange(siblingDirectStores.Select(s => s.Id));
+                        shareStoreIds.AddRange(siblingDirectStores.Select(s => s.Id));
                     }
                     else
                     {
-                        accessibleStoreIds.Add(storeId);
+                        shareStoreIds.Add(storeId);
                     }
                     break;
 
                 default:
-                    accessibleStoreIds.Add(storeId);
+                    shareStoreIds.Add(storeId);
                     break;
             }
 
-            return accessibleStoreIds.Distinct().ToList();
+            return shareStoreIds.Distinct().ToList();
         }
     }
 }
