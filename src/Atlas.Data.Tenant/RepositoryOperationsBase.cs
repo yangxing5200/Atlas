@@ -47,7 +47,7 @@ namespace Atlas.Data.Tenant
         /// </summary>
         protected virtual async Task<IQueryable<TEntity>> ApplyStoreScopeFilterAsync(IQueryable<TEntity> query)
         {
-            return await EntityScopeFilter<TEntity>.ApplyFilterAsync(query, CurrentIdentity);
+            return await EntityScopeFilter<TEntity>.ApplyAsync(query, CurrentIdentity);
         }
 
         // ========== 基本查询 ==========

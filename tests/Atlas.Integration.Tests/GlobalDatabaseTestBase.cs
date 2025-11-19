@@ -98,7 +98,7 @@ namespace Atlas.Integration.Tests.GlobalDatabase
         public long? TenantId { get; set; }
         public bool IsAuthenticated { get; set; }
 
-        public Task<List<long>> GetAccessibleStoreIdsAsync(CancellationToken ct = default)
+        public Task<List<long>> GetShareStoreIdsAsync(CancellationToken ct = default)
         {
             return Task.FromResult(StoreId.HasValue
                 ? new List<long> { StoreId.Value }

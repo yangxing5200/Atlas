@@ -60,7 +60,7 @@ namespace Atlas.Data.Tenant.Repositories
                 ? await _storeIdsCache.GetAsync()
                 : null;
 
-            return await EntityScopeFilter<TEntity>.ApplyFilterAsync(
+            return await EntityScopeFilter<TEntity>.ApplyAsync(
                 query,
                 CurrentIdentity,
                 cachedStoreIds);
@@ -75,7 +75,7 @@ namespace Atlas.Data.Tenant.Repositories
 
             if (cachedStoreIds != null || !EntityScopeFilter<TEntity>.IsSharedEntity)
             {
-                return EntityScopeFilter<TEntity>.ApplyFilterSync(query, CurrentIdentity, cachedStoreIds);
+                return EntityScopeFilter<TEntity>.Apply(query, CurrentIdentity, cachedStoreIds);
             }
 
             return query;

@@ -33,6 +33,6 @@
         /// <summary>
         /// 获取可访问的门店ID列表（带缓存）
         /// </summary>
-        Task<List<long>> GetAccessibleStoreIdsAsync(CancellationToken ct = default);
+        Task<List<long>> GetShareStoreIdsAsync(CancellationToken ct = default);
     }
 }

@@ -65,7 +65,7 @@ namespace Atlas.Core.Tests.Mocks
             return new TestCurrentUserService(null, null, null);
         }
 
-        public Task<List<long>> GetAccessibleStoreIdsAsync(CancellationToken ct = default)
+        public Task<List<long>> GetShareStoreIdsAsync(CancellationToken ct = default)
         {
             throw new NotImplementedException();
         }

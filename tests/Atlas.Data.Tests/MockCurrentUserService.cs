@@ -49,7 +49,7 @@ namespace Atlas.Data.Tests.Mocks
             };
         }
 
-        public Task<List<long>> GetAccessibleStoreIdsAsync(CancellationToken ct = default)
+        public Task<List<long>> GetShareStoreIdsAsync(CancellationToken ct = default)
         {
             throw new NotImplementedException();
         }

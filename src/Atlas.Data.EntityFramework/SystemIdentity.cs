@@ -250,7 +250,7 @@ namespace Atlas.Data.Common
         /// 获取可访问的门店ID列表
         /// 系统身份默认返回空列表（无门店限制）
         /// </summary>
-        public Task<List<long>> GetAccessibleStoreIdsAsync(CancellationToken ct = default)
+        public Task<List<long>> GetShareStoreIdsAsync(CancellationToken ct = default)
         {
             // 如果指定了门店ID，返回该门店
             if (StoreId.HasValue)

@@ -1,5 +1,6 @@
 ﻿using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
+using Atlas.Data.Common;
 using Atlas.Data.Common.Extensions;
 using Atlas.Models.Global.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -10,7 +11,7 @@ namespace Atlas.Data.Global
     /// <summary>
     /// Global数据库上下文
     /// </summary>
-    public class AtlasGlobalDbContext : DbContext, IHasCurrentUser
+    public class AtlasGlobalDbContext : DbContextBase, IHasCurrentUser
     {
         private readonly ICurrentIdentity _currentUserService;
 

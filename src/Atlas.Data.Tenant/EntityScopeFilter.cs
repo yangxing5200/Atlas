@@ -27,10 +27,10 @@ namespace Atlas.Data.Tenant
         /// <summary>
         /// 异步应用门店范围过滤
         /// </summary>
-        public static async Task<IQueryable<TEntity>> ApplyFilterAsync(
+        public static async Task<IQueryable<TEntity>> ApplyAsync(
             IQueryable<TEntity> query,
             ICurrentIdentity currentIdentity,
-            List<long>? cachedAccessibleStoreIds = null)
+            List<long>? cachedShareStoreIds = null)
         {
             // 租户过滤
             if (_isTenantEntity)
@@ -71,16 +71,16 @@ namespace Atlas.Data.Tenant
             // ISharedEntity：共享范围门店
             if (_isSharedEntity)
             {
-                var accessibleStoreIds = cachedAccessibleStoreIds
-                    ?? await currentIdentity.GetAccessibleStoreIdsAsync();
+                var shareStoreIds = cachedShareStoreIds
+                    ?? await currentIdentity.GetShareStoreIdsAsync();
 
-                if (accessibleStoreIds.Count == 0)
+                if (shareStoreIds.Count == 0)
                 {
                     return query.Where(_ => false);
                 }
 
                 return ((IQueryable<ISharedEntity>)query)
-                    .Where(e => accessibleStoreIds.Contains(e.StoreId))
+                    .Where(e => shareStoreIds.Contains(e.StoreId))
                     .Cast<TEntity>();
             }
 
@@ -90,10 +90,10 @@ namespace Atlas.Data.Tenant
         /// <summary>
         /// 同步应用门店范围过滤（仅在门店ID已缓存时使用）
         /// </summary>
-        public static IQueryable<TEntity> ApplyFilterSync(
+        public static IQueryable<TEntity> Apply(
             IQueryable<TEntity> query,
             ICurrentIdentity currentIdentity,
-            List<long>? cachedAccessibleStoreIds)
+            List<long>? cachedShareStoreIds)
         {
             // 租户过滤
             if (_isTenantEntity)
@@ -126,10 +126,10 @@ namespace Atlas.Data.Tenant
             }
 
             // ISharedEntity：共享范围门店（必须已缓存）
-            if (_isSharedEntity && cachedAccessibleStoreIds != null && cachedAccessibleStoreIds.Count > 0)
+            if (_isSharedEntity && cachedShareStoreIds != null && cachedShareStoreIds.Count > 0)
             {
                 return ((IQueryable<ISharedEntity>)query)
-                    .Where(e => cachedAccessibleStoreIds.Contains(e.StoreId))
+                    .Where(e => cachedShareStoreIds.Contains(e.StoreId))
                     .Cast<TEntity>();
             }
 
@@ -143,8 +143,8 @@ namespace Atlas.Data.Tenant
     internal class AccessibleStoreIdsCache
     {
         private readonly ICurrentIdentity _currentIdentity;
-        private List<long>? _accessibleStoreIds;
-        private Task<List<long>>? _accessibleStoreIdsTask;
+        private List<long>? _shareStoreIds;
+        private Task<List<long>>? _shareStoreIdsTask;
         private long? _cachedForStoreId;
 
         public AccessibleStoreIdsCache(ICurrentIdentity currentIdentity)
@@ -155,7 +155,7 @@ namespace Atlas.Data.Tenant
         /// <summary>
         /// 获取缓存的门店ID（如果已加载）
         /// </summary>
-        public List<long>? GetCached() => _accessibleStoreIds;
+        public List<long>? GetCached() => _shareStoreIds;
 
         /// <summary>
         /// 异步获取可访问的门店ID列表（带请求级缓存）
@@ -167,20 +167,20 @@ namespace Atlas.Data.Tenant
             // 检测 storeId 是否变化，变化则清除缓存
             if (_cachedForStoreId != currentStoreId)
             {
-                _accessibleStoreIds = null;
-                _accessibleStoreIdsTask = null;
+                _shareStoreIds = null;
+                _shareStoreIdsTask = null;
                 _cachedForStoreId = currentStoreId;
             }
 
-            if (_accessibleStoreIds != null)
+            if (_shareStoreIds != null)
             {
-                return _accessibleStoreIds;
+                return _shareStoreIds;
             }
 
             // 避免并发调用时重复请求
-            _accessibleStoreIdsTask ??= _currentIdentity.GetAccessibleStoreIdsAsync();
-            _accessibleStoreIds = await _accessibleStoreIdsTask;
-            return _accessibleStoreIds;
+            _shareStoreIdsTask ??= _currentIdentity.GetShareStoreIdsAsync();
+            _shareStoreIds = await _shareStoreIdsTask;
+            return _shareStoreIds;
         }
     }
 }
