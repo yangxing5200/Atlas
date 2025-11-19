@@ -418,7 +418,8 @@ namespace Atlas.Integration.Tests.Repositories
 
         private async Task SetupCompleteStoreHierarchy()
         {
-
+            var isexists = await _storeRepository.AnyAsync(x => x.Id > 0);
+            if (isexists) return;
             var stores = new[]
             {
                 // 平台总部

@@ -37,6 +37,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
+      <ProjectReference Include="..\..\src\Atlas.Data.EntityFramework\Atlas.Data.Common.csproj" />
       <ProjectReference Include="..\..\src\Atlas.Data.Global.Migrations\Atlas.Data.Global.Migrations.csproj" />
       <ProjectReference Include="..\..\src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj" />
       <ProjectReference Include="..\..\src\Atlas.Extensions.DependencyInjection\Atlas.Extensions.DependencyInjection.csproj" />

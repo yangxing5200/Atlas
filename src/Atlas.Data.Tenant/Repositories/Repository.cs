@@ -31,6 +31,7 @@ namespace Atlas.Data.Tenant.Repositories
         // 静态缓存：避免重复反射
         private static readonly bool _isStoreOnlyEntity = typeof(IStoreOnlyEntity).IsAssignableFrom(typeof(TEntity));
         private static readonly bool _isSharedEntity = typeof(ISharedEntity).IsAssignableFrom(typeof(TEntity));
+        private static readonly bool _isTenantEntity = typeof(ITenantEntity).IsAssignableFrom(typeof(TEntity));
         private static readonly bool _isStoreScopedEntity = _isStoreOnlyEntity || _isSharedEntity;
 
         // 请求级缓存：门店ID列表每次请求只异步加载一次
@@ -93,8 +94,7 @@ namespace Atlas.Data.Tenant.Repositories
         /// </summary>
         private async Task<IQueryable<TEntity>> ApplyStoreScopeFilterAsync(IQueryable<TEntity> query)
         {
-
-            if (typeof(ITenantEntity).IsAssignableFrom(typeof(TEntity)))
+            if (_isTenantEntity)
             {
                 if (!_currentIdentity.TenantId.HasValue)
                 {
@@ -562,11 +562,11 @@ namespace Atlas.Data.Tenant.Repositories
             _readContext?.Dispose();
         }
     }
-    public abstract class RepositoryBase<TEntity>
+    public  class Repository<TEntity>
         : RepositoryBase<TEntity, long>, IRepository<TEntity>
         where TEntity : class, IBaseEntity<long>
     {
-        protected RepositoryBase(ITenantDbContextFactory dbContextFactory, ICurrentIdentity currentIdentity, IIdGenerator idGenerator) : base(dbContextFactory, currentIdentity, idGenerator)
+        public Repository(ITenantDbContextFactory dbContextFactory, ICurrentIdentity currentIdentity, IIdGenerator idGenerator) : base(dbContextFactory, currentIdentity, idGenerator)
         {
         }
     }

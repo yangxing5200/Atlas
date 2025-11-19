@@ -1,5 +1,4 @@
-﻿// Core/Models/CachedValue.cs
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace Atlas.Infrastructure.Caching.Core.Models
@@ -12,5 +11,6 @@ namespace Atlas.Infrastructure.Caching.Core.Models
         public T Value { get; set; } = default!;
         public Dictionary<string, long> TagVersions { get; set; } = new();
         public DateTime CachedAt { get; set; } = DateTime.UtcNow;
+        public bool IsNull { get; set; }
     }
 }

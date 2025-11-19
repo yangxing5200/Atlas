@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Atlas.Data.Tenant.Repositories.Impl
 {
-    public class StoreRepository : RepositoryBase<Store>, IStoreRepository
+    public class StoreRepository : Repository<Store>, IStoreRepository
     {
         public StoreRepository(
             ITenantDbContextFactory dbContextFactory,
