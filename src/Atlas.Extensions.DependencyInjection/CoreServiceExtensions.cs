@@ -353,7 +353,7 @@ public static class AtlasCoreServiceExtensions
         services.AddScoped<IUnitOfWork, UnitOfWork>();
 
         // ========== 仓储层 ==========
-        services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+        services.AddScoped(typeof(IRepository<>), typeof(RepositoryBase<>));
         services.AddScoped<IStoreRepository, StoreRepository>(); // 有单独业务的需要单独注册
 
         services.AddScoped<IProductRepository, ProductRepository>();

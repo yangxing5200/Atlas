@@ -11,148 +11,51 @@ using Atlas.Data.Abstractions;
 using Atlas.Data.Tenant.Context;
 using Microsoft.EntityFrameworkCore;
 
-namespace Atlas.Data.Tenant.Repositories
+namespace Atlas.Data.Tenant
 {
     /// <summary>
-    /// 仓储基类
+    /// Repository 操作的共享基类 - 包含所有通用的 CRUD 实现
+    /// 子类只需实现 GetContextAsync 方法
     /// </summary>
-    /// <typeparam name="TEntity">实体类型</typeparam>
-    public abstract class RepositoryBase<TEntity, TKey> : IRepository<TEntity, TKey>
-         where TEntity : class, IBaseEntity<TKey>
-         where TKey : IEquatable<TKey>
+    public abstract class RepositoryOperationsBase<TEntity, TKey> : IRepository<TEntity, TKey>
+        where TEntity : class, IBaseEntity<TKey>
+        where TKey : IEquatable<TKey>
     {
-        private readonly ITenantDbContextFactory _dbContextFactory;
-        private readonly ICurrentIdentity _currentIdentity;
-        private AtlasTenantDbContext? _writeContext;
-        private AtlasTenantDbContext? _readContext;
-        private Task<AtlasTenantDbContext>? _writeContextTask;
-        private readonly IIdGenerator _idGenerator;
+        protected readonly ICurrentIdentity CurrentIdentity;
+        protected readonly IIdGenerator IdGenerator;
 
-        // 静态缓存：避免重复反射
-        private static readonly bool _isStoreOnlyEntity = typeof(IStoreOnlyEntity).IsAssignableFrom(typeof(TEntity));
-        private static readonly bool _isSharedEntity = typeof(ISharedEntity).IsAssignableFrom(typeof(TEntity));
-        private static readonly bool _isTenantEntity = typeof(ITenantEntity).IsAssignableFrom(typeof(TEntity));
-        private static readonly bool _isStoreScopedEntity = _isStoreOnlyEntity || _isSharedEntity;
-
-        // 请求级缓存：门店ID列表每次请求只异步加载一次
-        private List<long>? _accessibleStoreIds;
-        private Task<List<long>>? _accessibleStoreIdsTask;
-        private long? _cachedForStoreId;
-        protected RepositoryBase(
-            ITenantDbContextFactory dbContextFactory,
+        protected RepositoryOperationsBase(
             ICurrentIdentity currentIdentity,
             IIdGenerator idGenerator)
         {
-            _dbContextFactory = dbContextFactory ?? throw new ArgumentNullException(nameof(dbContextFactory));
-            _currentIdentity = currentIdentity ?? throw new ArgumentNullException(nameof(currentIdentity));
-            _idGenerator = idGenerator;
-        }
-
-        private AtlasTenantDbContext GetReadContext()
-        {
-            return _readContext ??= _dbContextFactory.CreateReadonlyDbContextSync();
-        }
-
-        private async Task<AtlasTenantDbContext> GetWriteContextAsync()
-        {
-            if (_writeContext != null)
-                return _writeContext;
-
-            _writeContextTask ??= _dbContextFactory.CreateDbContextAsync();
-            _writeContext = await _writeContextTask;
-            return _writeContext;
-        }
-
-        // <summary>
-        /// 异步获取可访问的门店ID列表（带请求级缓存，避免重复调用）
-        /// </summary>
-        private async Task<List<long>> GetAccessibleStoreIdsAsync()
-        {
-            var currentStoreId = _currentIdentity.StoreId;
-
-            // 检测 storeId 是否变化，变化则清除缓存
-            if (_cachedForStoreId != currentStoreId)
-            {
-                _accessibleStoreIds = null;
-                _accessibleStoreIdsTask = null;
-                _cachedForStoreId = currentStoreId;
-            }
-
-            if (_accessibleStoreIds != null)
-            {
-                return _accessibleStoreIds;
-            }
-
-            // 避免并发调用时重复请求
-            _accessibleStoreIdsTask ??= _currentIdentity.GetAccessibleStoreIdsAsync();
-            _accessibleStoreIds = await _accessibleStoreIdsTask;
-            return _accessibleStoreIds;
+            CurrentIdentity = currentIdentity ?? throw new ArgumentNullException(nameof(currentIdentity));
+            IdGenerator = idGenerator ?? throw new ArgumentNullException(nameof(idGenerator));
         }
 
         /// <summary>
-        /// 应用门店范围过滤（异步版本，在执行查询前调用）
+        /// 获取 DbContext（子类实现）
         /// </summary>
-        private async Task<IQueryable<TEntity>> ApplyStoreScopeFilterAsync(IQueryable<TEntity> query)
+        protected abstract Task<AtlasTenantDbContext> GetContextAsync();
+
+        /// <summary>
+        /// 获取只读 DbContext（可选，用于读写分离优化）
+        /// </summary>
+        protected virtual Task<AtlasTenantDbContext> GetReadContextAsync() => GetContextAsync();
+
+        /// <summary>
+        /// 应用门店范围过滤
+        /// </summary>
+        protected virtual async Task<IQueryable<TEntity>> ApplyStoreScopeFilterAsync(IQueryable<TEntity> query)
         {
-            if (_isTenantEntity)
-            {
-                if (!_currentIdentity.TenantId.HasValue)
-                {
-                    // 无租户ID时返回空结果
-                    return query.Where(_ => false);
-                }
-
-                var currentTenantId = _currentIdentity.TenantId.Value;
-                query = ((IQueryable<ITenantEntity>)query)
-                    .Where(e => e.TenantId == currentTenantId)
-                    .Cast<TEntity>();
-            }
-
-            // 快速路径：非门店相关实体
-            if (!_isStoreScopedEntity)
-            {
-                return query;
-            }
-
-            // 无门店ID时返回空结果
-            if (!_currentIdentity.StoreId.HasValue)
-            {
-                return query.Where(_ => false);
-            }
-
-            var currentStoreId = _currentIdentity.StoreId.Value;
-
-            // IStoreOnlyEntity：仅当前门店
-            if (_isStoreOnlyEntity)
-            {
-                return ((IQueryable<IStoreOnlyEntity>)query)
-                    .Where(e => e.StoreId == currentStoreId)
-                    .Cast<TEntity>();
-            }
-
-            // ISharedEntity：共享范围门店
-            if (_isSharedEntity)
-            {
-                var accessibleStoreIds = await GetAccessibleStoreIdsAsync();
-
-                if (accessibleStoreIds.Count == 0)
-                {
-                    return query.Where(_ => false);
-                }
-
-                return ((IQueryable<ISharedEntity>)query)
-                    .Where(e => accessibleStoreIds.Contains(e.StoreId))
-                    .Cast<TEntity>();
-            }
-
-            return query;
+            return await EntityScopeFilter<TEntity>.ApplyFilterAsync(query, CurrentIdentity);
         }
 
         // ========== 基本查询 ==========
 
         public virtual async Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default)
         {
-            var query = GetReadContext().GetDbSet<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.FirstOrDefaultAsync(e => e.Id.Equals(id), ct);
         }
@@ -161,23 +64,36 @@ namespace Atlas.Data.Tenant.Repositories
             Expression<Func<TEntity, bool>> predicate,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.FirstOrDefaultAsync(predicate, ct);
         }
 
         public virtual async Task<List<TEntity>> GetAllAsync(CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.ToListAsync(ct);
         }
 
-        public virtual async Task<List<TEntity>> FindAsync(
+        public virtual async Task<List<TEntity>> ReadOnlyQueryAsync(
             Expression<Func<TEntity, bool>> predicate,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
+            query = await ApplyStoreScopeFilterAsync(query);
+            return await query.Where(predicate).ToListAsync(ct);
+        }
+
+        public virtual async Task<List<TEntity>> QueryWithTrackingAsync(
+            Expression<Func<TEntity, bool>> predicate,
+            CancellationToken ct = default)
+        {
+            var context = await GetContextAsync();
+            var query = context.Set<TEntity>().AsTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.Where(predicate).ToListAsync(ct);
         }
@@ -189,12 +105,11 @@ namespace Atlas.Data.Tenant.Repositories
             int pageSize,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
 
-            // 顺序执行，避免并发问题
             var total = await query.CountAsync(ct);
-
             var items = await query
                 .Skip((pageIndex - 1) * pageSize)
                 .Take(pageSize)
@@ -209,19 +124,18 @@ namespace Atlas.Data.Tenant.Repositories
             int pageSize,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             query = query.Where(predicate);
 
-            var countTask = query.CountAsync(ct);
-            var itemsTask = query
+            var total = await query.CountAsync(ct);
+            var items = await query
                 .Skip((pageIndex - 1) * pageSize)
                 .Take(pageSize)
                 .ToListAsync(ct);
 
-            await Task.WhenAll(countTask, itemsTask);
-
-            return (itemsTask.Result, countTask.Result);
+            return (items, total);
         }
 
         public virtual async Task<(List<TEntity> Items, int Total)> GetPagedAsync<TProperty>(
@@ -232,28 +146,27 @@ namespace Atlas.Data.Tenant.Repositories
             int pageSize,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             query = query.Where(predicate);
 
-            var countTask = query.CountAsync(ct);
-
+            var total = await query.CountAsync(ct);
             var orderedQuery = ascending ? query.OrderBy(orderBy) : query.OrderByDescending(orderBy);
-            var itemsTask = orderedQuery
+            var items = await orderedQuery
                 .Skip((pageIndex - 1) * pageSize)
                 .Take(pageSize)
                 .ToListAsync(ct);
 
-            await Task.WhenAll(countTask, itemsTask);
-
-            return (itemsTask.Result, countTask.Result);
+            return (items, total);
         }
 
         // ========== 统计 ==========
 
         public virtual async Task<int> CountAsync(CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.CountAsync(ct);
         }
@@ -262,14 +175,16 @@ namespace Atlas.Data.Tenant.Repositories
             Expression<Func<TEntity, bool>> predicate,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.CountAsync(predicate, ct);
         }
 
         public virtual async Task<long> LongCountAsync(CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.LongCountAsync(ct);
         }
@@ -278,14 +193,16 @@ namespace Atlas.Data.Tenant.Repositories
             Expression<Func<TEntity, bool>> predicate,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.LongCountAsync(predicate, ct);
         }
 
         public virtual async Task<bool> ExistsAsync(TKey id, CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.AnyAsync(e => e.Id.Equals(id), ct);
         }
@@ -294,7 +211,8 @@ namespace Atlas.Data.Tenant.Repositories
             Expression<Func<TEntity, bool>> predicate,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.AnyAsync(predicate, ct);
         }
@@ -305,13 +223,13 @@ namespace Atlas.Data.Tenant.Repositories
             Expression<Func<TEntity, TResult>> selector,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
 
             if (!await query.AnyAsync(ct))
-            {
                 return default;
-            }
+
             return await query.MaxAsync(selector, ct);
         }
 
@@ -319,13 +237,13 @@ namespace Atlas.Data.Tenant.Repositories
             Expression<Func<TEntity, TResult>> selector,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
 
             if (!await query.AnyAsync(ct))
-            {
                 return default;
-            }
+
             return await query.MinAsync(selector, ct);
         }
 
@@ -333,7 +251,8 @@ namespace Atlas.Data.Tenant.Repositories
             Expression<Func<TEntity, decimal>> selector,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.SumAsync(selector, ct);
         }
@@ -342,13 +261,13 @@ namespace Atlas.Data.Tenant.Repositories
             Expression<Func<TEntity, decimal>> selector,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
 
             if (!await query.AnyAsync(ct))
-            {
                 return 0;
-            }
+
             return await query.AverageAsync(selector, ct);
         }
 
@@ -356,24 +275,29 @@ namespace Atlas.Data.Tenant.Repositories
 
         public virtual async Task<TEntity> AddAsync(TEntity entity, CancellationToken ct = default)
         {
-            var context = await GetWriteContextAsync();
+            if (entity is ISnowflakeId se && se.Id == 0)
+            {
+                se.Id = IdGenerator.NextId();
+            }
+
+            var context = await GetContextAsync();
             await context.Set<TEntity>().AddAsync(entity, ct);
             return entity;
         }
+
         public virtual async Task AddRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default)
         {
             var entityList = entities.ToList();
-            var context = await GetWriteContextAsync();
 
-            // 为实现了 ISnowflakeId 的实体自动生成ID
             foreach (var entity in entityList)
             {
-                if (entity is ISnowflakeId se && se.Id == 0 && _idGenerator != null)
+                if (entity is ISnowflakeId se && se.Id == 0)
                 {
-                    se.Id = _idGenerator.NextId();
+                    se.Id = IdGenerator.NextId();
                 }
             }
 
+            var context = await GetContextAsync();
             await context.Set<TEntity>().AddRangeAsync(entityList, ct);
         }
 
@@ -381,34 +305,61 @@ namespace Atlas.Data.Tenant.Repositories
 
         public virtual async Task UpdateAsync(TEntity entity, CancellationToken ct = default)
         {
-            var context = await GetWriteContextAsync();
-            context.Entry(entity).State = EntityState.Modified;
+            if (entity == null)
+                throw new ArgumentNullException(nameof(entity));
+
+            var context = await GetContextAsync();
+            var entry = context.Entry(entity);
+
+            switch (entry.State)
+            {
+                case EntityState.Detached:
+                    context.Update(entity);
+                    break;
+
+                case EntityState.Unchanged:
+                    entry.State = EntityState.Modified;
+                    break;
+
+                case EntityState.Modified:
+                case EntityState.Added:
+                    break;
+
+                case EntityState.Deleted:
+                    throw new InvalidOperationException(
+                        $"Cannot update entity of type {typeof(TEntity).Name} that is marked for deletion.");
+
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+
+            await Task.CompletedTask;
         }
 
         public virtual async Task UpdateRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default)
         {
             var entityList = entities as IReadOnlyCollection<TEntity> ?? entities.ToList();
-            var context = await GetWriteContextAsync();
+            var context = await GetContextAsync();
+
             foreach (var entity in entityList)
             {
                 context.Entry(entity).State = EntityState.Modified;
             }
+
+            await Task.CompletedTask;
         }
 
         // ========== 删除 ==========
 
         public virtual async Task<bool> DeleteAsync(TKey id, CancellationToken ct = default)
         {
-            var context = await GetWriteContextAsync();
+            var context = await GetContextAsync();
             var query = context.Set<TEntity>().AsQueryable();
             query = await ApplyStoreScopeFilterAsync(query);
 
             var entity = await query.FirstOrDefaultAsync(e => e.Id.Equals(id), ct);
-
             if (entity == null)
-            {
                 return false;
-            }
 
             context.Set<TEntity>().Remove(entity);
             return true;
@@ -416,15 +367,17 @@ namespace Atlas.Data.Tenant.Repositories
 
         public virtual async Task DeleteAsync(TEntity entity, CancellationToken ct = default)
         {
-            var context = await GetWriteContextAsync();
+            var context = await GetContextAsync();
             context.Set<TEntity>().Remove(entity);
+            await Task.CompletedTask;
         }
 
         public virtual async Task DeleteRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default)
         {
             var entityList = entities as IReadOnlyCollection<TEntity> ?? entities.ToList();
-            var context = await GetWriteContextAsync();
+            var context = await GetContextAsync();
             context.Set<TEntity>().RemoveRange(entityList);
+            await Task.CompletedTask;
         }
 
         // ========== 高级查询 ==========
@@ -435,7 +388,8 @@ namespace Atlas.Data.Tenant.Repositories
             bool ascending = true,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             query = query.Where(predicate);
             query = ascending ? query.OrderBy(orderBy) : query.OrderByDescending(orderBy);
@@ -444,7 +398,8 @@ namespace Atlas.Data.Tenant.Repositories
 
         public virtual async Task<List<TEntity>> GetTopAsync(int count, CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.Take(count).ToListAsync(ct);
         }
@@ -454,7 +409,8 @@ namespace Atlas.Data.Tenant.Repositories
             int count,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.Where(predicate).Take(count).ToListAsync(ct);
         }
@@ -466,7 +422,8 @@ namespace Atlas.Data.Tenant.Repositories
             int count,
             CancellationToken ct = default)
         {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
+            var context = await GetReadContextAsync();
+            var query = context.Set<TEntity>().AsNoTracking();
             query = await ApplyStoreScopeFilterAsync(query);
             query = query.Where(predicate);
             query = ascending ? query.OrderBy(orderBy) : query.OrderByDescending(orderBy);
@@ -475,99 +432,36 @@ namespace Atlas.Data.Tenant.Repositories
 
         // ========== 原始查询访问 ==========
 
-        public virtual IQueryable<TEntity> AsReadonlyQueryable()
-        {
-            var query = GetReadContext().Set<TEntity>().AsNoTracking();
-
-            if (_accessibleStoreIds != null)
-            {
-                return ApplyStoreScopeFilterSync(query);
-            }
-
-            return query;
-        }
-
         public virtual async Task<IQueryable<TEntity>> AsQueryable()
         {
-            var context = await GetWriteContextAsync();
+            var context = await GetContextAsync();
             var query = context.Set<TEntity>().AsQueryable();
-
-            if (_accessibleStoreIds != null)
-            {
-                return ApplyStoreScopeFilterSync(query);
-            }
-
-            return query;
-        }
-
-        public virtual IQueryable<TEntity> AsReadonlyQueryableUnfiltered()
-        {
-            return GetReadContext().Set<TEntity>().AsNoTracking();
+            return await ApplyStoreScopeFilterAsync(query);
         }
 
         public virtual async Task<IQueryable<TEntity>> AsQueryableUnfiltered()
         {
-            var context = await GetWriteContextAsync();
+            var context = await GetContextAsync();
             return context.Set<TEntity>().AsQueryable();
         }
 
-        /// <summary>
-        /// 同步应用门店过滤（仅在门店ID已缓存时使用）
-        /// </summary>
-        private IQueryable<TEntity> ApplyStoreScopeFilterSync(IQueryable<TEntity> query)
-        {
-            if (!_isStoreScopedEntity || !_currentIdentity.StoreId.HasValue)
-            {
-                return query;
-            }
+        public abstract IQueryable<TEntity> AsReadonlyQueryable();
 
-            var currentStoreId = _currentIdentity.StoreId.Value;
-
-            if (_isStoreOnlyEntity)
-            {
-                return ((IQueryable<IStoreOnlyEntity>)query)
-                    .Where(e => e.StoreId == currentStoreId)
-                    .Cast<TEntity>();
-            }
-
-            if (_isSharedEntity && _accessibleStoreIds != null && _accessibleStoreIds.Count > 0)
-            {
-                return ((IQueryable<ISharedEntity>)query)
-                    .Where(e => _accessibleStoreIds.Contains(e.StoreId))
-                    .Cast<TEntity>();
-            }
-
-            return query;
-        }
+        public abstract IQueryable<TEntity> AsReadonlyQueryableUnfiltered();
 
         // ========== 保存 ==========
 
-        public virtual async Task<int> SaveChangesAsync(CancellationToken ct = default)
-        {
-            var context = await GetWriteContextAsync();
-            return await context.SaveChangesAsync(ct);
-        }
+        public abstract Task<int> SaveChangesAsync(CancellationToken ct = default);
 
         public virtual async Task<TEntity?> GetForUpdateAsync(TKey id, CancellationToken ct = default)
         {
-            var context = await GetWriteContextAsync();
+            var context = await GetContextAsync();
             var query = context.Set<TEntity>().AsQueryable();
             query = await ApplyStoreScopeFilterAsync(query);
             return await query.FirstOrDefaultAsync(e => e.Id.Equals(id), ct);
         }
 
-        public virtual void Dispose()
-        {
-            _writeContext?.Dispose();
-            _readContext?.Dispose();
-        }
-    }
-    public  class Repository<TEntity>
-        : RepositoryBase<TEntity, long>, IRepository<TEntity>
-        where TEntity : class, IBaseEntity<long>
-    {
-        public Repository(ITenantDbContextFactory dbContextFactory, ICurrentIdentity currentIdentity, IIdGenerator idGenerator) : base(dbContextFactory, currentIdentity, idGenerator)
-        {
-        }
+        public abstract void Dispose();
     }
 }
+

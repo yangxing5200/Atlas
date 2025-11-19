@@ -361,7 +361,7 @@ namespace Atlas.Integration.Tests.Repositories
                 var inventoryRepo = _uow.GetRepository<Inventory>();
 
                 // 检查库存
-                var inventories = await inventoryRepo.FindAsync(x => x.ProductId == dto.ProductId);
+                var inventories = await inventoryRepo.QueryWithTrackingAsync(x => x.ProductId == dto.ProductId);
                 var inventory = inventories.FirstOrDefault();
                 if (inventory == null || inventory.Quantity < dto.Quantity)
                 {
@@ -371,7 +371,7 @@ namespace Atlas.Integration.Tests.Repositories
                 // 扣减库存
                 inventory.Quantity -= dto.Quantity;
                 await inventoryRepo.UpdateAsync(inventory);
-
+                
                 // 创建订单
                 var order = new Order
                 {

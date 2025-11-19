@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Atlas.Data.Tenant.Repositories.Impl
 {
-    public class ProductRepository : Repository<Product>, IProductRepository
+    public class ProductRepository : RepositoryBase<Product>, IProductRepository
     {
         public ProductRepository(
             ITenantDbContextFactory dbContextFactory,
@@ -23,7 +23,7 @@ namespace Atlas.Data.Tenant.Repositories.Impl
         {
         }
     }
-    public class MemberRepository : Repository<Member>, IMemberRepository
+    public class MemberRepository : RepositoryBase<Member>, IMemberRepository
     {
         public MemberRepository(
             ITenantDbContextFactory dbContextFactory,
@@ -33,7 +33,7 @@ namespace Atlas.Data.Tenant.Repositories.Impl
         {
         }
     }
-    public class PromotionRepository : Repository<Promotion>, IPromotionRepository
+    public class PromotionRepository : RepositoryBase<Promotion>, IPromotionRepository
     {
         public PromotionRepository(
             ITenantDbContextFactory dbContextFactory,
@@ -43,7 +43,7 @@ namespace Atlas.Data.Tenant.Repositories.Impl
         {
         }
     }
-    public class OrderRepository : Repository<Order>, IOrderRepository
+    public class OrderRepository : RepositoryBase<Order>, IOrderRepository
     {
         public OrderRepository(
             ITenantDbContextFactory dbContextFactory,
@@ -53,7 +53,7 @@ namespace Atlas.Data.Tenant.Repositories.Impl
         {
         }
     }
-    public class InventoryRepository : Repository<Inventory>, IInventoryRepository
+    public class InventoryRepository : RepositoryBase<Inventory>, IInventoryRepository
     {
         public InventoryRepository(
             ITenantDbContextFactory dbContextFactory,
@@ -63,7 +63,7 @@ namespace Atlas.Data.Tenant.Repositories.Impl
         {
         }
     }
-    public class CashierRecordRepository : Repository<CashierRecord>, ICashierRecordRepository
+    public class CashierRecordRepository : RepositoryBase<CashierRecord>, ICashierRecordRepository
     {
         public CashierRecordRepository(
             ITenantDbContextFactory dbContextFactory,
