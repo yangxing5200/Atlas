@@ -21,6 +21,28 @@ namespace Atlas.Infrastructure.Caching.Core.Models
             .WithDescription("共享数据的门店id")
             .Build();
 
+        /// <summary>
+        /// 患者来源列表缓存（按共享组）
+        /// Key: T:{tenantId}:patient-source-list:group:{sharedGroupId}
+        /// 同一个共享组的所有直营门店共享同一份列表缓存
+        /// </summary>
+        public static readonly CacheKeyDefinition PatientSourceListByGroup =
+            CacheKeyDefinition.Create("patient-source-list:group:{groupId}")
+                .WithScope(CacheScope.Tenant)
+                .WithInstanceKey("groupId")
+                .WithExpiration(TimeSpan.FromMinutes(30))
+                .WithDescription("患者来源列表缓存（按共享组）")
+                .WithTagGenerator((context, instanceValue) =>
+                {
+                    return new[]
+                    {
+                    $"tenant:{context.TenantId}",
+                    "entity:patient-source",
+                    $"shared-group:{instanceValue}",
+                    $"list:patient-source:group:{instanceValue}"
+                    };
+                })
+                .Build();
         #endregion
 
     }

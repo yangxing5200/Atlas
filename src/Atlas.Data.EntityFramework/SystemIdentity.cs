@@ -162,12 +162,6 @@ namespace Atlas.Data.Common
             userName: "MESSAGE_QUEUE",
             identityType: "MessageQueue");
 
-        /// <summary>
-        /// 默认身份（向后兼容）
-        /// </summary>
-        [Obsolete("Use SystemIdentity.System instead")]
-        public static SystemIdentity Default => System;
-
         #endregion
 
         #region 工厂方法
