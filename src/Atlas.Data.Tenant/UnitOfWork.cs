@@ -44,7 +44,7 @@ namespace Atlas.Data.Tenant
             if (_context != null)
                 return _context;
 
-            _contextTask ??= _factory.CreateDbContextAsync();
+            _contextTask ??= _factory.GetMasterDbContextAsync();
             _context = await _contextTask;
             return _context;
         }

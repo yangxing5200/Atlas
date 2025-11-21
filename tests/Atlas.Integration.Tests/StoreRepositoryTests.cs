@@ -23,7 +23,7 @@ namespace Atlas.Integration.Tests.Repositories
             await base.OnInitializeAsync();
             _storeRepository = GetService<IStoreRepository>();
             var factory = GetService<ITenantDbContextFactory>();
-            await factory.CreateReadonlyDbContextAsync();
+            await factory.GetReadonlyDbContextAsync();
         }
 
         [Fact]

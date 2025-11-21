@@ -29,7 +29,7 @@ namespace Atlas.Data.Tenant.Middleware
                 {
                     // 预加载只读库连接串到缓存
                     // 创建后立即释放，仅为了触发连接串加载
-                    using (var readContext = await factory.CreateReadonlyDbContextAsync(context.RequestAborted))
+                    using (var readContext = await factory.GetReadonlyDbContextAsync(context.RequestAborted))
                     {
                         // 连接串已缓存，后续可同步获取
                     }

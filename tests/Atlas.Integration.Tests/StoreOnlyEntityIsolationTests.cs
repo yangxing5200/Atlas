@@ -27,7 +27,7 @@ namespace Atlas.Integration.Tests.Repositories
             _inventoryRepository = GetService<IInventoryRepository>();
             _cashierRepository = GetService<ICashierRecordRepository>();
             var factory = GetService<ITenantDbContextFactory>();
-            await factory.CreateReadonlyDbContextAsync();
+            await factory.GetReadonlyDbContextAsync();
             await SetupCompleteStoreHierarchy();
         }
 

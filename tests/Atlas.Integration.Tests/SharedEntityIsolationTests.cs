@@ -35,7 +35,7 @@ namespace Atlas.Integration.Tests.Repositories
             _orderRepos = GetService<IRepository<Order>>();
             _uow = GetService<IUnitOfWork>();
             var factory = GetService<ITenantDbContextFactory>();
-            await factory.CreateReadonlyDbContextAsync();
+            await factory.GetReadonlyDbContextAsync();
             await SetupCompleteStoreHierarchy();
         }
 

@@ -50,7 +50,7 @@ namespace Atlas.Data.Tenant.Context
         /// 创建主库上下文（读写）
         /// 使用主库连接串，启用变更跟踪
         /// </summary>
-        public async Task<AtlasTenantDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+        public async Task<AtlasTenantDbContext> GetMasterDbContextAsync(CancellationToken cancellationToken = default)
         {
             if (_cachedWriteContext != null)
                 return _cachedWriteContext;
@@ -65,11 +65,11 @@ namespace Atlas.Data.Tenant.Context
         /// 如果在事务中则使用主库，否则使用只读库连接串
         /// 禁用变更跟踪以优化性能
         /// </summary>
-        public async Task<AtlasTenantDbContext> CreateReadonlyDbContextAsync(CancellationToken cancellationToken = default)
+        public async Task<AtlasTenantDbContext> GetReadonlyDbContextAsync(CancellationToken cancellationToken = default)
         {
             if (IsInTransaction())
             {
-                return await CreateDbContextAsync(cancellationToken);
+                return await GetMasterDbContextAsync(cancellationToken);
             }
 
             if (_cachedReadonlyContext != null)
@@ -85,11 +85,11 @@ namespace Atlas.Data.Tenant.Context
         /// 如果在事务中则使用主库，否则使用报表库连接串
         /// 禁用变更跟踪以优化性能
         /// </summary>
-        public async Task<AtlasTenantDbContext> CreateReportDbContextAsync(CancellationToken cancellationToken = default)
+        public async Task<AtlasTenantDbContext> GetReportDbContextAsync(CancellationToken cancellationToken = default)
         {
             if (IsInTransaction())
             {
-                return await CreateDbContextAsync(cancellationToken);
+                return await GetMasterDbContextAsync(cancellationToken);
             }
 
             _cachedReportConnString ??= await _connProvider.GetReportConnStringAsync(cancellationToken);
@@ -102,7 +102,7 @@ namespace Atlas.Data.Tenant.Context
         /// 主要用于Repository延迟初始化场景
         /// </summary>
         /// <exception cref="InvalidOperationException">连接串未缓存时抛出异常</exception>
-        public AtlasTenantDbContext CreateReadonlyDbContextSync()
+        public AtlasTenantDbContext GetReadonlyDbContext()
         {
             if (_cachedReadonlyContext != null)
                 return _cachedReadonlyContext;
@@ -115,6 +115,27 @@ namespace Atlas.Data.Tenant.Context
 
             _cachedReadonlyContext = CreateContext(_cachedReadonlyConnString, isReadonly: true);
             return _cachedReadonlyContext;
+        }
+
+        /// <summary>
+        /// 同步创建只读库上下文
+        /// 仅在连接串已缓存时使用，避免阻塞
+        /// 主要用于Repository延迟初始化场景
+        /// </summary>
+        /// <exception cref="InvalidOperationException">连接串未缓存时抛出异常</exception>
+        public AtlasTenantDbContext GetDbContext()
+        {
+            if (_cachedWriteContext != null)
+                return _cachedWriteContext;
+
+            if (_cachedMasterConnString == null)
+            {
+                throw new InvalidOperationException(
+                    "首次创建DbContext必须使用异步方法");
+            }
+
+            _cachedWriteContext = CreateContext(_cachedMasterConnString, isReadonly: true);
+            return _cachedWriteContext;
         }
 
         /// <summary>

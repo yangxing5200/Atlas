@@ -36,7 +36,7 @@ namespace Atlas.Data.Tenant.Repositories
 
         private AtlasTenantDbContext GetReadContextSync()
         {
-            return _readContext ??= _dbContextFactory.CreateReadonlyDbContextSync();
+            return _readContext ??= _dbContextFactory.GetReadonlyDbContext();
         }
 
         protected override async Task<AtlasTenantDbContext> GetContextAsync()
@@ -44,7 +44,7 @@ namespace Atlas.Data.Tenant.Repositories
             if (_writeContext != null)
                 return _writeContext;
 
-            _writeContextTask ??= _dbContextFactory.CreateDbContextAsync();
+            _writeContextTask ??= _dbContextFactory.GetMasterDbContextAsync();
             _writeContext = await _writeContextTask;
             return _writeContext;
         }
@@ -62,7 +62,7 @@ namespace Atlas.Data.Tenant.Repositories
 
             return await EntityScopeFilter<TEntity>.ApplyAsync(
                 query,
-                CurrentIdentity,
+                _currentIdentity,
                 cachedStoreIds);
         }
 
@@ -75,7 +75,7 @@ namespace Atlas.Data.Tenant.Repositories
 
             if (cachedStoreIds != null || !EntityScopeFilter<TEntity>.IsSharedEntity)
             {
-                return EntityScopeFilter<TEntity>.Apply(query, CurrentIdentity, cachedStoreIds);
+                return EntityScopeFilter<TEntity>.Apply(query, _currentIdentity, cachedStoreIds);
             }
 
             return query;

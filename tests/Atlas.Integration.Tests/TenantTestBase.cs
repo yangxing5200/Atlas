@@ -88,7 +88,7 @@ namespace Atlas.Integration.Tests
             FakeIdentity = (FakeCurrentIdentity)GetService<ICurrentIdentity>();
             SwitchToTenant(TestTenants.ChainEnterprise, TestUsers.TestUser);
             var factory = ServiceProvider.GetService<ITenantDbContextFactory>();
-            await factory.CreateReadonlyDbContextAsync();
+            await factory.GetReadonlyDbContextAsync();
           
 
         }
@@ -102,7 +102,7 @@ namespace Atlas.Integration.Tests
         protected async Task<AtlasTenantDbContext> GetTenantDbContextAsync()
         {
             var factory = GetService<ITenantDbContextFactory>();
-            return await factory.CreateDbContextAsync();
+            return await factory.GetMasterDbContextAsync();
         }
 
         /// <summary>
