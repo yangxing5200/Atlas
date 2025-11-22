@@ -11,7 +11,7 @@ namespace Atlas.Data.Tenant.Context
         /// <summary>
         /// 异步创建主库上下文（读写）
         /// </summary>
-        Task<AtlasTenantDbContext> GetMasterDbContextAsync(CancellationToken cancellationToken = default);
+        Task<AtlasTenantDbContext> GetDbContextAsync(CancellationToken cancellationToken = default);
 
         /// <summary>
         /// 异步创建只读库上下文

@@ -9,15 +9,11 @@ namespace Atlas.Data.Tenant.Identity
     /// <summary>
     /// 当前用户服务实现（从HttpContext获取）
     /// </summary>
-    public class CurrentIdentity : CurrentIdentityBase, ICurrentIdentity
+    public class CurrentIdentity :  ICurrentIdentity
     {
         private readonly IHttpContextAccessor _httpContextAccessor;
 
-        public CurrentIdentity(
-            IHttpContextAccessor httpContextAccessor,
-            Lazy<IStoreRepository> storeRepository,
-            Lazy<ICacheService> cache)
-            : base(storeRepository, cache)
+        public CurrentIdentity(IHttpContextAccessor httpContextAccessor)
         {
             _httpContextAccessor = httpContextAccessor;
         }
@@ -41,10 +37,5 @@ namespace Atlas.Data.Tenant.Identity
 
         public bool IsAuthenticated =>
             User?.Identity?.IsAuthenticated ?? false;
-
-        /// <summary>
-        /// 实现基类的抽象方法：从HttpContext获取StoreId
-        /// </summary>
-        protected override long? GetCurrentStoreId() => StoreId;
     }
 }

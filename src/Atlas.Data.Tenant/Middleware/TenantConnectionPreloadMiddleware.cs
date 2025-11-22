@@ -1,6 +1,10 @@
-﻿using Atlas.Data.Tenant.Context;
+﻿using Atlas.Data.Abstractions;
+using Atlas.Data.Tenant.Context;
+using Atlas.Data.Tenant.Providers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using System;
 using System.Threading.Tasks;
 
 namespace Atlas.Data.Tenant.Middleware
@@ -12,35 +16,47 @@ namespace Atlas.Data.Tenant.Middleware
     public class TenantConnectionPreloadMiddleware
     {
         private readonly RequestDelegate _next;
+        private readonly ILogger<TenantConnectionPreloadMiddleware> _logger;
 
-        public TenantConnectionPreloadMiddleware(RequestDelegate next)
+        public TenantConnectionPreloadMiddleware(
+            RequestDelegate next,
+            ILogger<TenantConnectionPreloadMiddleware> logger)
         {
             _next = next;
+            _logger = logger;
         }
 
         public async Task InvokeAsync(HttpContext context)
         {
-            // 修正：使用泛型方法获取服务
-            var factory = context.RequestServices.GetService<ITenantDbContextFactory>();
+            var connProvider = context.RequestServices.GetService<ITenantDbConnProvider>();
+            var dataScope = context.RequestServices.GetService<IDataScope>();
 
-            if (factory != null)
+            if (connProvider?.TenantId != null)
             {
                 try
                 {
-                    // 预加载只读库连接串到缓存
-                    // 创建后立即释放，仅为了触发连接串加载
-                    using (var readContext = await factory.GetReadonlyDbContextAsync(context.RequestAborted))
+                    // 预加载连接字符串
+                    _ = await connProvider.GetConnStringAsync(context.RequestAborted);
+                    _ = await connProvider.GetReadonlyConnStringAsync(context.RequestAborted);
+
+                    // ✅ 预加载ShareStoreIds（如果有StoreId）
+                    if (dataScope != null && dataScope.StoreId.HasValue)
                     {
-                        // 连接串已缓存，后续可同步获取
+                        await dataScope.PreloadShareStoreIdsAsync(context.RequestAborted);
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // 预加载失败不影响请求继续，后续会重新尝试
+                    // 记录警告但不中断请求流程
+                    _logger.LogWarning(ex,
+                        "预加载租户数据失败 - TenantId: {TenantId}, StoreId: {StoreId}",
+                        connProvider.TenantId,
+                        dataScope?.StoreId);
                 }
             }
 
             await _next(context);
         }
+
     }
 }

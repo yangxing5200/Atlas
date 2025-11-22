@@ -17,30 +17,33 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 
 namespace Atlas.Extensions.DependencyInjection;
 
 /// <summary>
-/// Atlas 核心服务注册扩展
+/// Provides extension methods for registering Atlas core services.
 /// </summary>
 public static class AtlasCoreServiceExtensions
 {
+    private const string DefaultCacheProvider = "memory";
+    private const string GlobalConnectionStringKey = "AtlasGlobal";
+    private const long DefaultDatacenterId = 1;
+    private const int MaxWorkerId = 31;
+
     /// <summary>
-    /// 注册 Atlas 核心服务（包含基础设施和业务服务）
+    /// Registers all Atlas core services including infrastructure and business layers.
     /// </summary>
     public static IServiceCollection AddAtlasCore(
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // 基础设施服务
         services.AddLogging();
         services.AddHttpContextAccessor();
         services.AddAtlasSnowflakeId(configuration);
         services.AddAtlasDatabase(configuration);
         services.AddAtlasIdentity();
         services.AddAtlasCache(configuration);
-
-        // 业务服务
         services.AddAtlasBusinessServices();
 
         return services;
@@ -48,9 +51,6 @@ public static class AtlasCoreServiceExtensions
 
     #region Infrastructure - HTTP Context
 
-    /// <summary>
-    /// 注册 HTTP 上下文访问器
-    /// </summary>
     private static IServiceCollection AddHttpContextAccessor(this IServiceCollection services)
     {
         services.TryAddSingleton<IHttpContextAccessor, HttpContextAccessor>();
@@ -62,24 +62,24 @@ public static class AtlasCoreServiceExtensions
     #region Infrastructure - Database
 
     /// <summary>
-    /// 注册 Atlas 数据库服务（全局库和租户库）
+    /// Registers global database context with audit interceptor.
     /// </summary>
     private static IServiceCollection AddAtlasDatabase(
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // 审计拦截器
         services.AddScoped<AuditInterceptor>();
-        // 全局数据库
-        var globalConnStr = configuration.GetConnectionString("AtlasGlobal")
-            ?? throw new InvalidOperationException("AtlasGlobal connection string is required");
+
+        var connectionString = configuration.GetConnectionString(GlobalConnectionStringKey)
+            ?? throw new InvalidOperationException($"Connection string '{GlobalConnectionStringKey}' is required.");
 
         services.AddDbContext<AtlasGlobalDbContext>((sp, options) =>
         {
-            var auditInterceptor = sp.GetRequiredService<AuditInterceptor>();
-            options.UseMySql(globalConnStr, ServerVersion.AutoDetect(globalConnStr))
-                   .AddInterceptors(auditInterceptor);
+            var interceptor = sp.GetRequiredService<AuditInterceptor>();
+            options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString))
+                   .AddInterceptors(interceptor);
         });
+
         return services;
     }
 
@@ -88,20 +88,14 @@ public static class AtlasCoreServiceExtensions
     #region Infrastructure - Identity
 
     /// <summary>
-    /// 注册当前身份服务
+    /// Registers current identity service for multi-tenant context.
     /// </summary>
-    /// <remarks>使用 Lazy 注入 StoreRepository 避免循环依赖</remarks>
     private static IServiceCollection AddAtlasIdentity(this IServiceCollection services)
     {
         services.AddScoped<ICurrentIdentity>(sp =>
         {
-            var httpContextAccessor = sp.GetRequiredService<IHttpContextAccessor>();
-            var lazyCache = new Lazy<ICacheService>(() =>
-                sp.GetRequiredService<ICacheService>());
-            var lazyStoreRepository = new Lazy<IStoreRepository>(() =>
-                sp.GetRequiredService<IStoreRepository>());
-
-            return new CurrentIdentity(httpContextAccessor, lazyStoreRepository, lazyCache);
+            var accessor = sp.GetRequiredService<IHttpContextAccessor>();
+            return new CurrentIdentity(accessor);
         });
 
         return services;
@@ -112,87 +106,52 @@ public static class AtlasCoreServiceExtensions
     #region Infrastructure - Cache
 
     /// <summary>
-    /// 注册 Atlas 缓存服务
+    /// Registers caching service based on configuration.
+    /// Supports Memory, Redis, and Hybrid (L1+L2) strategies.
     /// </summary>
-    /// <remarks>
-    /// 支持三种缓存模式：
-    /// - Memory: 内存缓存（默认）
-    /// - Redis: Redis 分布式缓存
-    /// - Hybrid: 混合缓存（L1 内存 + L2 Redis）
-    /// </remarks>
     private static IServiceCollection AddAtlasCache(
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var cacheProvider = configuration["CacheSettings:Provider"]?.ToLowerInvariant() ?? "memory";
+        var provider = configuration["CacheSettings:Provider"]?.ToLowerInvariant()
+            ?? DefaultCacheProvider;
 
         services.AddAtlasCaching();
 
-        switch (cacheProvider)
+        return provider switch
         {
-            case "redis":
-                services.AddAtlasRedisCache(configuration);
-                break;
-
-            case "hybrid":
-                services.AddAtlasHybridCache(configuration);
-                break;
-
-            case "memory":
-            default:
-                services.AddMemoryCaching();
-                break;
-        }
-
-        return services;
+            "redis" => services.AddAtlasRedisCache(configuration),
+            "hybrid" => services.AddAtlasHybridCache(configuration),
+            _ => services.AddMemoryCaching()
+        };
     }
 
-    /// <summary>
-    /// 配置 Redis 缓存
-    /// </summary>
     private static IServiceCollection AddAtlasRedisCache(
         this IServiceCollection services,
         IConfiguration configuration)
     {
         var connectionString = configuration["CacheSettings:Redis:ConnectionString"];
         if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new InvalidOperationException(
-                "CacheSettings:Redis:ConnectionString is required when using Redis cache");
-        }
+            throw new InvalidOperationException("Redis connection string is required.");
 
         var instanceName = configuration["CacheSettings:Redis:InstanceName"];
-        services.AddRedisCaching(connectionString, instanceName);
-
-        return services;
+        return services.AddRedisCaching(connectionString, instanceName);
     }
 
-    /// <summary>
-    /// 配置混合缓存（L1 内存 + L2 Redis）
-    /// </summary>
     private static IServiceCollection AddAtlasHybridCache(
         this IServiceCollection services,
         IConfiguration configuration)
     {
         var connectionString = configuration["CacheSettings:Hybrid:RedisConnectionString"];
         if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new InvalidOperationException(
-                "CacheSettings:Hybrid:RedisConnectionString is required when using Hybrid cache");
-        }
+            throw new InvalidOperationException("Hybrid cache Redis connection string is required.");
 
-        services.AddHybridCaching(connectionString, options =>
+        return services.AddHybridCaching(connectionString, options =>
         {
-            var l1ExpirationMinutes = configuration.GetValue<int?>(
-                "CacheSettings:Hybrid:L1ExpirationMinutes");
-
-            if (l1ExpirationMinutes.HasValue)
-            {
-                options.L1Expiration = TimeSpan.FromMinutes(l1ExpirationMinutes.Value);
-            }
+            var l1Minutes = configuration.GetValue<int?>("CacheSettings:Hybrid:L1ExpirationMinutes");
+            if (l1Minutes.HasValue)
+                options.L1Expiration = TimeSpan.FromMinutes(l1Minutes.Value);
         });
-
-        return services;
     }
 
     #endregion
@@ -200,25 +159,15 @@ public static class AtlasCoreServiceExtensions
     #region Infrastructure - ID Generator
 
     /// <summary>
-    /// 从配置文件注册 Snowflake ID 生成器
+    /// Registers Snowflake ID generator from configuration.
+    /// Falls back to environment variables or auto-detection if config is missing.
     /// </summary>
-    /// <remarks>
-    /// appsettings.json 配置示例：
-    /// <code>
-    /// {
-    ///   "Snowflake": {
-    ///     "WorkerId": 1,
-    ///     "DatacenterId": 1
-    ///   }
-    /// }
-    /// </code>
-    /// </remarks>
     public static IServiceCollection AddAtlasSnowflakeId(
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var section = configuration.GetSection("Snowflake");
-        var options = section.Get<SnowflakeOptions>() ?? GetDefaultSnowflakeOptions();
+        var options = configuration.GetSection("Snowflake").Get<SnowflakeOptions>()
+            ?? GetDefaultSnowflakeOptions();
 
         options.Validate();
 
@@ -235,20 +184,14 @@ public static class AtlasCoreServiceExtensions
     }
 
     /// <summary>
-    /// 手动指定参数注册 Snowflake ID 生成器
+    /// Registers Snowflake ID generator with explicit worker and datacenter IDs.
     /// </summary>
-    /// <param name="workerId">机器ID (0-31)</param>
-    /// <param name="datacenterId">数据中心ID (0-31)</param>
     public static IServiceCollection AddAtlasSnowflakeId(
         this IServiceCollection services,
         long workerId,
         long datacenterId)
     {
-        var options = new SnowflakeOptions
-        {
-            WorkerId = workerId,
-            DatacenterId = datacenterId
-        };
+        var options = new SnowflakeOptions { WorkerId = workerId, DatacenterId = datacenterId };
         options.Validate();
 
         services.TryAddSingleton<IIdGenerator>(
@@ -258,22 +201,19 @@ public static class AtlasCoreServiceExtensions
     }
 
     /// <summary>
-    /// 自动检测 WorkerId 注册 Snowflake ID 生成器
+    /// Registers Snowflake ID generator with auto-detected worker ID.
+    /// Worker ID is derived from environment variables or machine name hash.
     /// </summary>
-    /// <param name="datacenterId">数据中心ID</param>
-    /// <remarks>WorkerId 将基于环境变量或机器名自动生成 (0-31)</remarks>
     public static IServiceCollection AddAtlasSnowflakeIdAuto(
         this IServiceCollection services,
-        long datacenterId = 1)
+        long datacenterId = DefaultDatacenterId)
     {
-        var workerId = GetAutoWorkerId();
-        return services.AddAtlasSnowflakeId(workerId, datacenterId);
+        return services.AddAtlasSnowflakeId(GetAutoWorkerId(), datacenterId);
     }
 
     /// <summary>
-    /// 从委托工厂注册 Snowflake ID 生成器
+    /// Registers Snowflake ID generator with runtime-resolved configuration.
     /// </summary>
-    /// <remarks>适用于运行时动态确定配置的场景</remarks>
     public static IServiceCollection AddAtlasSnowflakeId(
         this IServiceCollection services,
         Func<IServiceProvider, (long workerId, long datacenterId)> optionsFactory)
@@ -288,55 +228,38 @@ public static class AtlasCoreServiceExtensions
     }
 
     /// <summary>
-    /// 获取默认 Snowflake 配置
+    /// Resolves Snowflake options from environment variables or auto-generation.
+    /// Priority: ENV vars > Machine name hash.
     /// </summary>
-    /// <remarks>
-    /// 优先级：
-    /// 1. 环境变量 SNOWFLAKE_WORKER_ID 和 SNOWFLAKE_DATACENTER_ID
-    /// 2. 自动生成（基于机器名 Hash）
-    /// </remarks>
     private static SnowflakeOptions GetDefaultSnowflakeOptions()
     {
         var envWorkerId = Environment.GetEnvironmentVariable("SNOWFLAKE_WORKER_ID");
         var envDatacenterId = Environment.GetEnvironmentVariable("SNOWFLAKE_DATACENTER_ID");
 
-        if (!string.IsNullOrEmpty(envWorkerId) && long.TryParse(envWorkerId, out var workerId) &&
-            !string.IsNullOrEmpty(envDatacenterId) && long.TryParse(envDatacenterId, out var datacenterId))
+        if (long.TryParse(envWorkerId, out var workerId) &&
+            long.TryParse(envDatacenterId, out var datacenterId))
         {
-            return new SnowflakeOptions
-            {
-                WorkerId = workerId,
-                DatacenterId = datacenterId
-            };
+            return new SnowflakeOptions { WorkerId = workerId, DatacenterId = datacenterId };
         }
 
         return new SnowflakeOptions
         {
             WorkerId = GetAutoWorkerId(),
-            DatacenterId = 1
+            DatacenterId = DefaultDatacenterId
         };
     }
 
     /// <summary>
-    /// 自动获取 WorkerId
+    /// Generates worker ID from environment variable or machine name hash (0-31).
     /// </summary>
-    /// <remarks>
-    /// 优先级：
-    /// 1. 环境变量 SNOWFLAKE_WORKER_ID
-    /// 2. 机器名 Hash 取模 (0-31)
-    /// </remarks>
     private static long GetAutoWorkerId()
     {
         var envWorkerId = Environment.GetEnvironmentVariable("SNOWFLAKE_WORKER_ID");
-        if (!string.IsNullOrEmpty(envWorkerId) && long.TryParse(envWorkerId, out var parsedId))
-        {
-            if (parsedId is >= 0 and <= 31)
-                return parsedId;
-        }
 
-        var machineName = Environment.MachineName;
-        var hash = machineName.GetHashCode();
-        return Math.Abs(hash) % 32;
+        if (long.TryParse(envWorkerId, out var workerId) && workerId is >= 0 and <= MaxWorkerId)
+            return workerId;
+
+        return Math.Abs(Environment.MachineName.GetHashCode()) % (MaxWorkerId + 1);
     }
 
     #endregion
@@ -344,34 +267,37 @@ public static class AtlasCoreServiceExtensions
     #region Business Services
 
     /// <summary>
-    /// 注册业务服务（包含仓储和服务层）
+    /// Registers business layer services with proper dependency resolution order:
+    /// 1. TenantDbConnProvider
+    /// 2. TenantDbContextFactory
+    /// 3. DataScope (decoupled from repositories)
+    /// 4. Repositories and Unit of Work
     /// </summary>
     private static IServiceCollection AddAtlasBusinessServices(this IServiceCollection services)
     {
+        // Data access foundation
         services.AddScoped<ITenantDbConnProvider, TenantDbConnProvider>();
         services.AddScoped<ITenantDbContextFactory, TenantDbContextFactory>();
-        services.AddScoped<IUnitOfWork, UnitOfWork>();
 
-        // ========== 仓储层 ==========
+        // Data scope with lazy dependencies to avoid circular references
+        services.AddScoped<IDataScope>(sp =>
+        {
+            var cache = sp.GetRequiredService<ICacheService>();
+            var identity = sp.GetRequiredService<ICurrentIdentity>();
+            var dbFactory = sp.GetRequiredService<ITenantDbContextFactory>();
+            var logger = sp.GetRequiredService<ILogger<DataScope>>();
+
+            return new DataScope(
+                new Lazy<ICacheService>(() => cache),
+                identity,
+                dbFactory,
+                logger);
+        });
+
+        // Repository layer
+        services.AddScoped<IUnitOfWork, TenantUnitOfWork>();
         services.AddScoped(typeof(IRepository<>), typeof(RepositoryBase<>));
-        services.AddScoped<IStoreRepository, StoreRepository>(); // 有单独业务的需要单独注册
-
-        services.AddScoped<IProductRepository, ProductRepository>();
-        services.AddScoped<IMemberRepository, MemberRepository>();
-        services.AddScoped<IPromotionRepository, PromotionRepository>();
-
-        services.AddScoped<IOrderRepository, OrderRepository>();
-        services.AddScoped<IInventoryRepository, InventoryRepository>();
-        services.AddScoped<ICashierRecordRepository, CashierRecordRepository>();
-        // services.AddScoped<IProductRepository, ProductRepository>();
-        // services.AddScoped<IOrderRepository, OrderRepository>();
-        // services.AddScoped<IInventoryRepository, InventoryRepository>();
-
-        // ========== 业务服务层 ==========
-        // services.AddScoped<IStoreService, StoreService>();
-        // services.AddScoped<IProductService, ProductService>();
-        // services.AddScoped<IOrderService, OrderService>();
-        // services.AddScoped<IInventoryService, InventoryService>();
+        services.AddScoped<IStoreRepository, StoreRepository>();
 
         return services;
     }

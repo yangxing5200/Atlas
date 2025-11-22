@@ -9,6 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Atlas.Core\Atlas.Core.csproj" />
     <ProjectReference Include="..\Atlas.Data.Global\Atlas.Data.Global.csproj" />
+    <ProjectReference Include="..\Atlas.Data.Tenant\Atlas.Data.Tenant.csproj" />
   </ItemGroup>
 
 </Project>

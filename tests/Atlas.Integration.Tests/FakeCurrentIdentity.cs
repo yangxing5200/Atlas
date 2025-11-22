@@ -16,7 +16,7 @@ namespace Atlas.Integration.Tests
     /// <summary>
     /// 测试专用的身份实现（支持动态设置身份信息）
     /// </summary>
-    public class FakeCurrentIdentity : CurrentIdentityBase, ICurrentIdentity
+    public class FakeCurrentIdentity :  ICurrentIdentity
     {
         private long? _userId;
         private string _userName = string.Empty;
@@ -24,10 +24,7 @@ namespace Atlas.Integration.Tests
         private long? _tenantId;
         private bool _isAuthenticated=true;
 
-        public FakeCurrentIdentity(
-            Lazy<IStoreRepository> storeRepository,
-            Lazy<ICacheService> cache)
-            : base(storeRepository, cache)
+        public FakeCurrentIdentity()
         {
         }
 
@@ -37,9 +34,6 @@ namespace Atlas.Integration.Tests
         public long? StoreId => _storeId;
         public long? TenantId => _tenantId;
         public bool IsAuthenticated => _isAuthenticated;
-
-        // 基类抽象方法实现
-        protected override long? GetCurrentStoreId() => _storeId;
 
         // ===== 测试辅助方法 =====
 

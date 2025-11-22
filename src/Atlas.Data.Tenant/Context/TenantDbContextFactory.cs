@@ -2,7 +2,9 @@
 using Atlas.Data.Common.Interceptors;
 using Atlas.Data.Tenant.Providers;
 using Microsoft.EntityFrameworkCore;
+using MySqlConnector;
 using System;
+using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -13,7 +15,7 @@ namespace Atlas.Data.Tenant.Context
     /// 负责创建主库、只读库、报表库的DbContext实例
     /// 使用请求级缓存避免重复获取连接串
     /// </summary>
-    public class TenantDbContextFactory : ITenantDbContextFactory
+    public class TenantDbContextFactory : ITenantDbContextFactory, IDisposable
     {
         private readonly ICurrentIdentity _currentIdentity;
         private readonly ITenantDbConnProvider _connProvider;
@@ -35,6 +37,9 @@ namespace Atlas.Data.Tenant.Context
 
         private AtlasTenantDbContext? _cachedWriteContext;
         private AtlasTenantDbContext? _cachedReadonlyContext;
+        private bool _disposed;
+        private static readonly ConcurrentDictionary<string, ServerVersion> _serverVersionCache = new();
+        private readonly SemaphoreSlim _masterLock = new(1, 1);
         public TenantDbContextFactory(
             ICurrentIdentity currentIdentity,
             ITenantDbConnProvider connProvider,
@@ -50,14 +55,25 @@ namespace Atlas.Data.Tenant.Context
         /// 创建主库上下文（读写）
         /// 使用主库连接串，启用变更跟踪
         /// </summary>
-        public async Task<AtlasTenantDbContext> GetMasterDbContextAsync(CancellationToken cancellationToken = default)
+        public async Task<AtlasTenantDbContext> GetDbContextAsync(CancellationToken cancellationToken)
         {
-            if (_cachedWriteContext != null)
-                return _cachedWriteContext;
+            if (_cachedWriteContext != null) return _cachedWriteContext;
 
-            _cachedMasterConnString ??= await _connProvider.GetConnStringAsync(cancellationToken);
-            _cachedWriteContext = CreateContext(_cachedMasterConnString, isReadonly: false);
-            return _cachedWriteContext;
+            await _masterLock.WaitAsync(cancellationToken);
+            try
+            {
+                if (_cachedMasterConnString == null)
+                    _cachedMasterConnString = await _connProvider.GetConnStringAsync(cancellationToken);
+
+                if (_cachedWriteContext == null)
+                    _cachedWriteContext = CreateContext(_cachedMasterConnString, false);
+
+                return _cachedWriteContext;
+            }
+            finally
+            {
+                _masterLock.Release();
+            }
         }
 
         /// <summary>
@@ -69,7 +85,7 @@ namespace Atlas.Data.Tenant.Context
         {
             if (IsInTransaction())
             {
-                return await GetMasterDbContextAsync(cancellationToken);
+                return await GetDbContextAsync(cancellationToken);
             }
 
             if (_cachedReadonlyContext != null)
@@ -89,7 +105,7 @@ namespace Atlas.Data.Tenant.Context
         {
             if (IsInTransaction())
             {
-                return await GetMasterDbContextAsync(cancellationToken);
+                return await GetDbContextAsync(cancellationToken);
             }
 
             _cachedReportConnString ??= await _connProvider.GetReportConnStringAsync(cancellationToken);
@@ -134,7 +150,7 @@ namespace Atlas.Data.Tenant.Context
                     "首次创建DbContext必须使用异步方法");
             }
 
-            _cachedWriteContext = CreateContext(_cachedMasterConnString, isReadonly: true);
+            _cachedWriteContext = CreateContext(_cachedMasterConnString, isReadonly: false);
             return _cachedWriteContext;
         }
 
@@ -146,11 +162,10 @@ namespace Atlas.Data.Tenant.Context
         private AtlasTenantDbContext CreateContext(string connectionString, bool isReadonly)
         {
             var optionsBuilder = new DbContextOptionsBuilder<AtlasTenantDbContext>();
-
+            var serverVersion = _serverVersionCache.GetOrAdd(GetServerKey(connectionString),
+                _ => ServerVersion.AutoDetect(connectionString));
             // 配置 MySQL 连接
-            optionsBuilder.UseMySql(
-                connectionString,
-                ServerVersion.AutoDetect(connectionString),  // 自动检测 MySQL 版本
+            optionsBuilder.UseMySql(connectionString, serverVersion,
                 mySqlOptions =>
                 {
                     // 启用连接重试机制
@@ -165,7 +180,6 @@ namespace Atlas.Data.Tenant.Context
                     // 启用详细错误信息（仅开发环境）
                     // mySqlOptions.EnableDetailedErrors();
 
-                   
                     // 启用字符串比较转换（性能优化）
                     mySqlOptions.EnableStringComparisonTranslations();
                 }).AddInterceptors(_auditInterceptor);
@@ -187,14 +201,35 @@ namespace Atlas.Data.Tenant.Context
 
             return context;
         }
-
+        private string GetServerKey(string connectionString)
+        {
+            var builder = new MySqlConnectionStringBuilder(connectionString);
+            return $"{builder.Server}:{builder.Port}";
+        }
         /// <summary>
         /// 检查是否在分布式事务中
         /// 在事务中必须使用主库以保证数据一致性
         /// </summary>
         private bool IsInTransaction()
         {
-            return System.Transactions.Transaction.Current != null;
+            if (System.Transactions.Transaction.Current != null)
+                return true;
+
+            // 检测 EF Core 事务
+            if (_cachedWriteContext?.Database.CurrentTransaction != null)
+                return true;
+
+            return false;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+
+            _cachedWriteContext?.Dispose();
+            _cachedReadonlyContext?.Dispose();
+
+            _disposed = true;
         }
     }
 }

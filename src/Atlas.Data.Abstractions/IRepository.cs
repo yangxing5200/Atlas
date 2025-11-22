@@ -11,7 +11,7 @@ namespace Atlas.Data.Abstractions
     /// <summary>
     /// 仓储基础接口（非泛型）
     /// </summary>
-    public interface IRepository : IDisposable
+    public interface IRepository
     {
     }
 
@@ -33,7 +33,7 @@ namespace Atlas.Data.Abstractions
        where TEntity : class, IBaseEntity<TKey>
     {
         IQueryable<TEntity> Query(Expression<Func<TEntity, bool>> where);
-        Task<TEntity?> GetByIdAsync(long id, CancellationToken ct = default);
+        Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default);
         IQueryable<TEntity> Tracking(Expression<Func<TEntity, bool>> where);
         Task AddAsync(TEntity entity, CancellationToken ct = default);
         Task AddRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default);

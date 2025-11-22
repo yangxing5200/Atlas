@@ -10,7 +10,7 @@ using Atlas.Infrastructure.Caching.Abstractions;
 
 namespace Atlas.Data.Tenant.Identity
 {
-    public class TenantSystemIdentity : CurrentIdentityBase, ICurrentIdentity
+    public class TenantSystemIdentity : ICurrentIdentity
     {
         private long? _userId;
         private string _userName = string.Empty;
@@ -18,10 +18,7 @@ namespace Atlas.Data.Tenant.Identity
         private long? _tenantId;
         private bool _isAuthenticated = true;
 
-        public TenantSystemIdentity(
-            Lazy<IStoreRepository> storeRepository,
-            Lazy<ICacheService> cache)
-            : base(storeRepository, cache)
+        public TenantSystemIdentity()
         {
         }
 
@@ -31,9 +28,6 @@ namespace Atlas.Data.Tenant.Identity
         public long? StoreId => _storeId;
         public long? TenantId => _tenantId;
         public bool IsAuthenticated => _isAuthenticated;
-
-        // 基类抽象方法实现
-        protected override long? GetCurrentStoreId() => _storeId;
 
         // ===== 测试辅助方法 =====
 

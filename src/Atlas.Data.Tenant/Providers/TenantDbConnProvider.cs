@@ -55,8 +55,7 @@ namespace Atlas.Data.Tenant.Providers
 
             if (readonlyServers.Any())
             {
-                var random = new Random();
-                var selectedServer = readonlyServers[random.Next(readonlyServers.Count)];
+                var selectedServer = readonlyServers[Random.Shared.Next(readonlyServers.Count)];
                 return selectedServer.ConnectionString;
             }
 
@@ -77,8 +76,7 @@ namespace Atlas.Data.Tenant.Providers
             var reportServers = connInfo.ReportServers;
             if (reportServers.Any())
             {
-                var random = new Random();
-                var selectedServer = reportServers[random.Next(reportServers.Count)];
+                var selectedServer = reportServers[Random.Shared.Next(reportServers.Count)];
                 return selectedServer.ConnectionString;
             }
 
