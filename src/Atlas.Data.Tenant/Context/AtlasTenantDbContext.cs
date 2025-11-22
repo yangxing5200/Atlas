@@ -14,26 +14,15 @@ namespace Atlas.Data.Tenant.Context
     /// <summary>
     /// Tenant数据库上下文
     /// </summary>
-    public class AtlasTenantDbContext : DbContextBase, IHasCurrentUser
+    public class AtlasTenantDbContext : DbContextBase
     {
-        private readonly ICurrentIdentity _currentUserService;
-        private readonly string? _connectionString;
         public AtlasTenantDbContext(
-            DbContextOptions<AtlasTenantDbContext> options,
-            ICurrentIdentity currentUserService)
+            DbContextOptions<AtlasTenantDbContext> options)
             : base(options)
         {
-            _currentUserService = currentUserService;
         }
-
-        // 实现IHasCurrentUser接口
-        public long? CurrentUserId => _currentUserService?.UserId;
-        public long? StoreId => _currentUserService?.StoreId;
-        public long? CurrentTenantId => _currentUserService?.TenantId;
         internal DbSet<TEntity> GetDbSet<TEntity>() where TEntity : class
         {
-            // Debug模式下验证调用者
-            DbContextAccessValidator.ValidateAccess();
             return Set<TEntity>();
         }
 

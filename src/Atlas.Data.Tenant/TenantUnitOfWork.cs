@@ -10,16 +10,23 @@ namespace Atlas.Data.Tenant
 {
     /// <summary>
     /// Manages database transactions and change persistence for tenant operations.
-    /// Implements Unit of Work pattern with lazy DbContext initialization.
+    /// Implements Unit of Work pattern with thread-safe lazy DbContext initialization.
     /// </summary>
+    /// <remarks>
+    /// CONCURRENCY CONSTRAINTS:
+    /// - DbContext is NOT thread-safe. This class should be scoped per request/operation.
+    /// - Do NOT share instances across threads or concurrent tasks.
+    /// - Use one instance per logical unit of work (typically per HTTP request).
+    /// </remarks>
     public class TenantUnitOfWork : IUnitOfWork, IAsyncDisposable
     {
         private readonly ITenantDbContextFactory _dbFactory;
-        private readonly SemaphoreSlim _lock = new(1, 1);
+        private readonly SemaphoreSlim _initLock = new(1, 1);
 
         private IDbContextTransaction? _transaction;
         private AtlasTenantDbContext? _dbContext;
         private bool _disposed;
+
 
         public TenantUnitOfWork(ITenantDbContextFactory dbFactory)
         {
@@ -29,12 +36,13 @@ namespace Atlas.Data.Tenant
         public bool HasActiveTransaction => _transaction != null;
 
         /// <summary>
-        /// Begins a new database transaction. Throws if transaction already exists.
+        /// Begins a new database transaction.
         /// </summary>
+        /// <exception cref="InvalidOperationException">Transaction already active or thread safety violation.</exception>
         public async Task BeginTransactionAsync(CancellationToken ct = default)
         {
             ThrowIfDisposed();
-
+           
             if (_transaction != null)
                 throw new InvalidOperationException("Transaction already in progress.");
 
@@ -44,13 +52,13 @@ namespace Atlas.Data.Tenant
 
         /// <summary>
         /// Persists tracked changes to the database.
-        /// Changes are committed immediately if no transaction is active, 
+        /// Changes are committed immediately if no transaction is active,
         /// otherwise staged until CommitAsync is called.
         /// </summary>
         public async Task<int> SaveChangesAsync(CancellationToken ct = default)
         {
             ThrowIfDisposed();
-
+           
             _dbContext = await EnsureDbContextAsync(ct);
             return await _dbContext.SaveChangesAsync(ct);
         }
@@ -62,7 +70,7 @@ namespace Atlas.Data.Tenant
         public async Task CommitAsync(CancellationToken ct = default)
         {
             ThrowIfDisposed();
-
+           
             if (_transaction == null)
                 throw new InvalidOperationException("No active transaction to commit.");
 
@@ -87,7 +95,7 @@ namespace Atlas.Data.Tenant
         public async Task RollbackAsync(CancellationToken ct = default)
         {
             ThrowIfDisposed();
-
+           
             if (_transaction != null)
             {
                 try
@@ -103,17 +111,19 @@ namespace Atlas.Data.Tenant
 
         /// <summary>
         /// Ensures DbContext is initialized with thread-safe lazy loading.
-        /// Returns cached instance if available.
+        /// Uses double-checked locking pattern to prevent race conditions.
         /// </summary>
         private async Task<AtlasTenantDbContext> EnsureDbContextAsync(CancellationToken ct = default)
         {
+            // Fast path: already initialized
             if (_dbContext != null)
                 return _dbContext;
 
-            await _lock.WaitAsync(ct);
+            // Acquire lock for initialization
+            await _initLock.WaitAsync(ct);
             try
             {
-                // Double-check pattern to prevent race conditions
+                // Double-check after lock acquisition
                 if (_dbContext != null)
                     return _dbContext;
 
@@ -122,7 +132,7 @@ namespace Atlas.Data.Tenant
             }
             finally
             {
-                _lock.Release();
+                _initLock.Release();
             }
         }
 
@@ -145,10 +155,25 @@ namespace Atlas.Data.Tenant
         {
             if (_disposed) return;
 
-            _transaction?.Dispose();
-            _transaction = null;
-            _lock.Dispose();
-            
+            if (_transaction != null)
+            {
+                // 如果事务还活跃，先回滚
+                if (HasActiveTransaction)
+                {
+                    try
+                    {
+                        _transaction.Rollback();
+                    }
+                    catch (Exception ex)
+                    {
+                        // 记录日志但不抛出异常
+                    }
+                }
+                _transaction.Dispose();
+                _transaction = null;
+            }
+
+            _initLock.Dispose();
             _disposed = true;
         }
 
@@ -162,13 +187,10 @@ namespace Atlas.Data.Tenant
                 _transaction = null;
             }
 
-            if (_dbContext != null)
-            {
-                await _dbContext.DisposeAsync();
-                _dbContext = null;
-            }
+            // DbContext lifecycle is managed by factory
+            _dbContext = null;
 
-            _lock.Dispose();
+            _initLock.Dispose();
             _disposed = true;
         }
     }

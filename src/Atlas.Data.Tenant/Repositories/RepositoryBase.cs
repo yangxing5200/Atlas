@@ -72,9 +72,9 @@ namespace Atlas.Data.Tenant.Repositories
 
         public async Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default)
         {
-            var db = await _dbFactory.GetReadonlyDbContextAsync(ct);
+            var db = await _dbFactory.GetDbContextAsync(ct);
 
-            return await db.Set<TEntity>()
+            return await db.Set<TEntity>().AsTracking()
                            .ApplyScope(_dataScope)
                            .FirstOrDefaultAsync(x => x.Id.Equals(id), ct);
         }

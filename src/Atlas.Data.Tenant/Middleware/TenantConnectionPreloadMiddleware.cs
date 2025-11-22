@@ -1,5 +1,4 @@
 ﻿using Atlas.Data.Abstractions;
-using Atlas.Data.Tenant.Context;
 using Atlas.Data.Tenant.Providers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,8 +9,8 @@ using System.Threading.Tasks;
 namespace Atlas.Data.Tenant.Middleware
 {
     /// <summary>
-    /// 租户连接串预加载中间件
-    /// 在请求开始时异步加载连接串到缓存，后续Repository可同步获取
+    /// Preloads tenant connection strings and data scope into cache during request initialization.
+    /// Enables synchronous repository operations by ensuring required data is cached.
     /// </summary>
     public class TenantConnectionPreloadMiddleware
     {
@@ -35,21 +34,29 @@ namespace Atlas.Data.Tenant.Middleware
             {
                 try
                 {
-                    // 预加载连接字符串
-                    _ = await connProvider.GetConnStringAsync(context.RequestAborted);
-                    _ = await connProvider.GetReadonlyConnStringAsync(context.RequestAborted);
+                    var ct = context.RequestAborted;
 
-                    // ✅ 预加载ShareStoreIds（如果有StoreId）
-                    if (dataScope != null && dataScope.StoreId.HasValue)
+                    // Preload connection strings in parallel
+                    var masterTask = connProvider.GetConnStringAsync(ct);
+                    var readonlyTask = connProvider.GetReadonlyConnStringAsync(ct);
+
+                    await Task.WhenAll(masterTask, readonlyTask);
+
+                    // Preload data scope if store context exists
+                    if (dataScope?.StoreId.HasValue == true)
                     {
-                        await dataScope.PreloadShareStoreIdsAsync(context.RequestAborted);
+                        await dataScope.PreloadShareStoreIdsAsync(ct);
                     }
+
+                    _logger.LogDebug(
+                        "Preload completed - TenantId: {TenantId}, StoreId: {StoreId}",
+                        connProvider.TenantId,
+                        dataScope?.StoreId);
                 }
                 catch (Exception ex)
                 {
-                    // 记录警告但不中断请求流程
                     _logger.LogWarning(ex,
-                        "预加载租户数据失败 - TenantId: {TenantId}, StoreId: {StoreId}",
+                        "Preload failed - TenantId: {TenantId}, StoreId: {StoreId}. Request will continue.",
                         connProvider.TenantId,
                         dataScope?.StoreId);
                 }
@@ -57,6 +64,5 @@ namespace Atlas.Data.Tenant.Middleware
 
             await _next(context);
         }
-
     }
 }

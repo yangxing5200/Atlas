@@ -24,7 +24,7 @@ namespace Atlas.Data.Tenant.Migrations
                  options.MigrationsAssembly("Atlas.Data.Tenant.Migrations");
              });
 
-            var context = new AtlasTenantDbContext(optionsBuilder.Options, SystemIdentity.Migration);
+            var context = new AtlasTenantDbContext(optionsBuilder.Options);
             return context;
         }
     }
