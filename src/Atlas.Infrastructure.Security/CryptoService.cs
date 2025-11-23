@@ -1,88 +1,75 @@
 ﻿using Atlas.Core.Security;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace Atlas.Infrastructure.Security
 {
-    public sealed class CryptoService : ICryptoService
+    public sealed class CryptoService : ICryptoService, IDisposable
     {
         private readonly byte[] _key;
-        private readonly byte[] _iv;
-        private readonly IMemoryCache _cache;
+        private bool _disposed;
 
-        // 使用线程安全的AES实例池
-        private readonly ThreadLocal<Aes> _aesPool;
-
-        public CryptoService(IMemoryCache cache, IOptions<CryptoOptions> options)
+        public CryptoService(IOptions<CryptoOptions> options)
         {
-            _cache = cache;
+            ArgumentException.ThrowIfNullOrEmpty(options.Value.Key, nameof(options.Value.Key));
 
-            // 初始化密钥
-            var opts = options.Value;
-
-            _key = PadKey(opts.Key, 32);
-            _iv = PadKey(opts.IV, 16);
-
-            // 初始化AES实例池
-            _aesPool = new ThreadLocal<Aes>(() =>
-            {
-                var aes = Aes.Create();
-                aes.Key = _key;
-                aes.IV = _iv;
-                aes.Mode = CipherMode.CBC;
-                aes.Padding = PaddingMode.PKCS7;
-                return aes;
-            }, trackAllValues: false);
+            // 使用SHA256派生固定长度密钥
+            _key = DeriveKey(options.Value.Key, 32);
         }
 
-        private byte[] PadKey(string key, int length)
+        private static byte[] DeriveKey(string key, int length)
         {
-            var result = new byte[length];
             var keyBytes = Encoding.UTF8.GetBytes(key);
-            Buffer.BlockCopy(keyBytes, 0, result, 0, Math.Min(keyBytes.Length, length));
-            return result;
+
+            // 如果密钥长度正好，直接返回
+            if (keyBytes.Length == length)
+                return keyBytes;
+
+            // 使用SHA256派生密钥
+            var hash = SHA256.HashData(keyBytes); // ✅ .NET 8 静态方法，无需using
+
+            if (hash.Length >= length)
+                return hash.AsSpan(0, length).ToArray();
+
+            // 如果需要更长的密钥，使用PBKDF2
+            return Rfc2898DeriveBytes.Pbkdf2(
+                keyBytes,
+                "Atlas.Security.Salt"u8.ToArray(), // ✅ .NET 8 UTF-8 字符串字面量
+                10000,
+                HashAlgorithmName.SHA256,
+                length);
         }
 
         public string Encrypt(string plainText)
         {
-            if (string.IsNullOrEmpty(plainText))
-                return string.Empty;
+            ArgumentException.ThrowIfNullOrEmpty(plainText);
+            ObjectDisposedException.ThrowIf(_disposed, this);
 
             try
             {
-                // 检查缓存
-                var cacheKey = $"enc_{plainText.GetHashCode()}";
-                if (_cache.TryGetValue<string>(cacheKey, out var cached))
-                    return cached;
+                using var aes = Aes.Create();
+                aes.Key = _key;
+                aes.GenerateIV(); // ✅ 随机IV
+                aes.Mode = CipherMode.CBC;
+                aes.Padding = PaddingMode.PKCS7;
 
                 var plainBytes = Encoding.UTF8.GetBytes(plainText);
-                byte[] cipherBytes;
 
-                // 使用线程本地的AES实例
-                var aes = _aesPool.Value!;
-                using (var encryptor = aes.CreateEncryptor())
-                {
-                    // 使用 TransformFinalBlock 一次性完成加密
-                    cipherBytes = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
-                }
+                using var encryptor = aes.CreateEncryptor();
+                var cipherBytes = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
+
+                // ✅ 格式: IV(16字节) + 密文
+                var result = new byte[aes.IV.Length + cipherBytes.Length];
+                aes.IV.CopyTo(result, 0);
+                cipherBytes.CopyTo(result, aes.IV.Length);
 
                 // 转换为URL安全的Base64
-                var result = Convert.ToBase64String(cipherBytes)
+                return Convert.ToBase64String(result)
                     .Replace('+', '-')
                     .Replace('/', '_')
                     .TrimEnd('=');
-
-                // 缓存结果
-                _cache.Set(cacheKey, result, TimeSpan.FromMinutes(1));
-
-
-                return result;
             }
             catch (Exception ex)
             {
@@ -92,60 +79,63 @@ namespace Atlas.Infrastructure.Security
 
         public string? Decrypt(string cipherText)
         {
-            if (string.IsNullOrEmpty(cipherText))
-                return null;
+            ArgumentException.ThrowIfNullOrEmpty(cipherText);
+            ObjectDisposedException.ThrowIf(_disposed, this);
 
             try
             {
-                // 检查缓存
-                var cacheKey = $"dec_{cipherText.GetHashCode()}";
-                if (_cache.TryGetValue<string>(cacheKey, out var cached))
-                    return cached;
-
                 // 还原Base64
-                cipherText = cipherText.Replace('-', '+').Replace('_', '/');
-                var padding = (4 - cipherText.Length % 4) % 4;
-                if (padding > 0)
-                    cipherText += new string('=', padding);
+                var base64 = cipherText
+                    .Replace('-', '+')
+                    .Replace('_', '/')
+                    .PadRight(cipherText.Length + (4 - cipherText.Length % 4) % 4, '=');
 
-                var cipherBytes = Convert.FromBase64String(cipherText);
-                byte[] plainBytes;
+                var data = Convert.FromBase64String(base64);
 
-                // 使用线程本地的AES实例
-                var aes = _aesPool.Value!;
-                using (var decryptor = aes.CreateDecryptor())
-                {
-                    // 使用 TransformFinalBlock 一次性完成解密
-                    plainBytes = decryptor.TransformFinalBlock(cipherBytes, 0, cipherBytes.Length);
-                }
+                // 至少需要16字节IV
+                if (data.Length < 16)
+                    return null;
 
-                var result = Encoding.UTF8.GetString(plainBytes);
+                using var aes = Aes.Create();
+                aes.Key = _key;
+                aes.Mode = CipherMode.CBC;
+                aes.Padding = PaddingMode.PKCS7;
 
-                // 缓存结果
-                _cache.Set(cacheKey, result, TimeSpan.FromMinutes(1));
+                // ✅ 提取IV (前16字节) - 使用 Span
+                aes.IV = data.AsSpan(0, 16).ToArray();
 
+                // ✅ 提取密文
+                var cipherBytes = data.AsSpan(16).ToArray();
 
-                return result;
+                using var decryptor = aes.CreateDecryptor();
+                var plainBytes = decryptor.TransformFinalBlock(cipherBytes, 0, cipherBytes.Length);
+
+                return Encoding.UTF8.GetString(plainBytes);
             }
-            catch (Exception ex)
+            catch (CryptographicException)
+            {
+                return null;
+            }
+            catch (FormatException)
             {
                 return null;
             }
         }
 
-        // 清理资源
         public void Dispose()
         {
-            if (_aesPool.IsValueCreated)
-            {
-                _aesPool.Value?.Dispose();
-            }
-            _aesPool.Dispose();
+            if (_disposed)
+                return;
+
+            // ✅ .NET 8: CryptographicOperations.ZeroMemory 更安全
+            CryptographicOperations.ZeroMemory(_key);
+
+            _disposed = true;
         }
     }
+
     public class CryptoOptions
     {
-        public string Key { get; set; } = string.Empty;
-        public string IV { get; set; } = string.Empty;
+        public required string Key { get; set; } // ✅ .NET 8 required 属性
     }
 }

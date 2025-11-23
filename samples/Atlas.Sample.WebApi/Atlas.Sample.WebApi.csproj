@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\src\Atlas.Data.Tenant\Atlas.Data.Tenant.csproj" />
     <ProjectReference Include="..\..\src\Atlas.Extensions.DependencyInjection\Atlas.Extensions.DependencyInjection.csproj" />
     <ProjectReference Include="..\..\src\Atlas.Infrastructure.Logging\Atlas.Infrastructure.Logging.csproj" />
+    <ProjectReference Include="..\..\src\Atlas.Infrastructure.Security\Atlas.Infrastructure.Security.csproj" />
   </ItemGroup>
 
 </Project>

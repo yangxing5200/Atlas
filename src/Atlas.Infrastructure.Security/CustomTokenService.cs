@@ -1,10 +1,9 @@
 ﻿using Atlas.Core.Security;
 using Atlas.Core.Services;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -12,42 +11,44 @@ using System.Threading.Tasks;
 
 namespace Atlas.Infrastructure.Security
 {
-    public  class CustomTokenService : ITokenService
+    public class CustomTokenService : ITokenService, IDisposable
     {
         private readonly ICryptoService _cryptoService;
         private readonly IMemoryCache _cache;
+        private readonly ILogger<CustomTokenService> _logger;
         private readonly byte[] _secretKeyBytes;
         private readonly int _expirationMinutes;
         private readonly TokenOptions _options;
+        private bool _disposed;
+
         // Token格式常量
         private const char TOKEN_SEPARATOR = '.';
         private const string TOKEN_VERSION = "1";
         private const int EXPECTED_TOKEN_PARTS = 4;
 
-        // 性能优化：预编译的HMAC实例
-        private readonly ThreadLocal<HMACSHA256> _hmac;
-
         public CustomTokenService(
             ICryptoService cryptoService,
             IMemoryCache cache,
+            ILogger<CustomTokenService> logger,
             IOptions<TokenOptions> options)
         {
             _cryptoService = cryptoService;
             _cache = cache;
+            _logger = logger;
             _options = options.Value;
-            _secretKeyBytes = Encoding.UTF8.GetBytes(_options.SecretKey);
-            _expirationMinutes = 1440;
 
-            // ThreadLocal确保每个线程有自己的HMAC实例（线程安全+高性能）
-            _hmac = new ThreadLocal<HMACSHA256>(() => new HMACSHA256(_secretKeyBytes));
+            if (string.IsNullOrEmpty(_options.SecretKey))
+                throw new ArgumentException("Token secret key cannot be empty");
+
+            _secretKeyBytes = Encoding.UTF8.GetBytes(_options.SecretKey);
+            _expirationMinutes = _options.ExpirationMinutes > 0 ? _options.ExpirationMinutes : 1440;
         }
 
-        /// <summary>
-        /// 生成自定义格式的Token
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public string GenerateToken(ICurrentIdentity user, string? extra = null)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
             // 1. 创建token数据
             var tokenInfo = TokenInfo.Create(user, _expirationMinutes, extra);
             var serializedData = tokenInfo.ToString();
@@ -55,10 +56,10 @@ namespace Atlas.Infrastructure.Security
             // 2. 加密数据
             var encryptedData = _cryptoService.Encrypt(serializedData);
 
-            // 3. 生成时间戳（秒级精度足够）
+            // 3. 生成时间戳（秒级精度）
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
 
-            // 4. 构建待签名数据（使用StringBuilder避免字符串连接）
+            // 4. 构建待签名数据
             var dataToSign = new StringBuilder(256);
             dataToSign.Append(TOKEN_VERSION);
             dataToSign.Append(TOKEN_SEPARATOR);
@@ -73,48 +74,42 @@ namespace Atlas.Infrastructure.Security
             dataToSign.Append(TOKEN_SEPARATOR);
             dataToSign.Append(signature);
 
-            var token = dataToSign.ToString();
-
-            return token;
+            return dataToSign.ToString();
         }
 
-        /// <summary>
-        /// 异步验证Token（用于高并发场景）
-        /// </summary>
         public async Task<TokenInfo?> ValidateTokenAsync(string token)
         {
-            // 先检查缓存
-            var cacheKey = $"token_valid_{token.GetHashCode()}";
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            // ✅ 使用SHA256作为缓存键，避免HashCode碰撞
+            var cacheKey = GetSecureCacheKey(token);
+
             if (_cache.TryGetValue<TokenInfo>(cacheKey, out var cachedInfo))
             {
-                // 再次检查是否过期
                 if (!cachedInfo.IsExpired)
                     return cachedInfo;
 
-                // 过期则移除缓存
                 _cache.Remove(cacheKey);
             }
 
-            // 异步验证
             var result = await Task.Run(() => ValidateTokenCore(token));
 
-            // 缓存有效的token信息（5分钟）
+            // ✅ 缓存时间缩短到30秒，减少已注销token仍有效的风险
             if (result != null)
             {
-                _cache.Set(cacheKey, result, TimeSpan.FromMinutes(5));
+                _cache.Set(cacheKey, result, TimeSpan.FromSeconds(30));
             }
 
             return result;
         }
 
-        /// <summary>
-        /// 同步验证Token
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public TokenInfo? ValidateToken(string token)
         {
-            // 先检查缓存
-            var cacheKey = $"token_valid_{token.GetHashCode()}";
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            var cacheKey = GetSecureCacheKey(token);
+
             if (_cache.TryGetValue<TokenInfo>(cacheKey, out var cachedInfo))
             {
                 if (!cachedInfo.IsExpired)
@@ -125,31 +120,36 @@ namespace Atlas.Infrastructure.Security
 
             var result = ValidateTokenCore(token);
 
-            // 缓存有效的token信息
             if (result != null)
             {
-                _cache.Set(cacheKey, result, TimeSpan.FromMinutes(5));
+                _cache.Set(cacheKey, result, TimeSpan.FromSeconds(30));
             }
 
             return result;
         }
 
         /// <summary>
-        /// Token验证核心逻辑
+        /// ✅ 使用SHA256生成安全的缓存键，避免HashCode碰撞
         /// </summary>
+        private static string GetSecureCacheKey(string token)
+        {
+            using var sha = SHA256.Create();
+            var hashBytes = sha.ComputeHash(Encoding.UTF8.GetBytes(token));
+            // 只取前16字节转Base64，减少内存占用
+            return $"token_{Convert.ToBase64String(hashBytes, 0, 16)}";
+        }
+
         private TokenInfo? ValidateTokenCore(string token)
         {
             try
             {
-                // 1. 快速检查token格式
                 if (string.IsNullOrEmpty(token))
                     return null;
 
                 // 使用Span避免字符串分割的内存分配
                 var tokenSpan = token.AsSpan();
                 var separatorCount = 0;
-                var lastSeparatorIndex = -1;
-                var indices = new int[3]; // 存储分隔符位置
+                var indices = new int[3];
 
                 for (int i = 0; i < tokenSpan.Length; i++)
                 {
@@ -158,65 +158,76 @@ namespace Atlas.Infrastructure.Security
                         if (separatorCount < 3)
                             indices[separatorCount] = i;
                         separatorCount++;
-                        lastSeparatorIndex = i;
                     }
                 }
 
                 if (separatorCount != 3)
                 {
+                    _logger.LogWarning("Invalid token format: incorrect separator count");
                     return null;
                 }
 
-                // 2. 提取token部分（使用Span切片）
+                // 提取token部分
                 var version = tokenSpan.Slice(0, indices[0]);
                 var timestamp = tokenSpan.Slice(indices[0] + 1, indices[1] - indices[0] - 1);
                 var encryptedData = tokenSpan.Slice(indices[1] + 1, indices[2] - indices[1] - 1);
                 var signature = tokenSpan.Slice(indices[2] + 1);
 
-                // 3. 验证版本
+                // 验证版本
                 if (!version.SequenceEqual(TOKEN_VERSION.AsSpan()))
                 {
+                    _logger.LogWarning("Invalid token version");
                     return null;
                 }
 
-                // 4. 验证时间戳（防重放攻击）
+                // 验证时间戳（防重放攻击）
                 if (!long.TryParse(timestamp, out var tokenTimestamp))
+                {
+                    _logger.LogWarning("Invalid token timestamp format");
                     return null;
+                }
 
                 var currentTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 var tokenAge = currentTimestamp - tokenTimestamp;
 
-                // Token生成超过24小时则拒绝
-                if (tokenAge > 86400 || tokenAge < -60) // 允许60秒时钟偏差
+                // ✅ Token生成超过配置时间则拒绝，且不允许未来时间戳
+                var maxTokenAge = _expirationMinutes * 60 + 300; // 额外5分钟宽限
+                if (tokenAge > maxTokenAge || tokenAge < 0)
                 {
+                    _logger.LogWarning("Token timestamp out of valid range: age={TokenAge}s", tokenAge);
                     return null;
                 }
 
-                // 5. 验证签名
+                // ✅ 验证签名（使用完整签名）
                 var dataToVerify = tokenSpan.Slice(0, indices[2]).ToString();
                 var expectedSignature = GenerateSignature(dataToVerify);
+
                 if (!signature.SequenceEqual(expectedSignature.AsSpan()))
                 {
+                    _logger.LogWarning("Token signature verification failed");
                     return null;
                 }
 
-                // 6. 解密数据
+                // 解密数据
                 var decryptedData = _cryptoService.Decrypt(encryptedData.ToString());
                 if (string.IsNullOrEmpty(decryptedData))
                 {
+                    _logger.LogWarning("Token decryption failed");
                     return null;
                 }
 
-                // 7. 解析UserTokenInfo
+                // 解析TokenInfo
                 var tokenInfo = TokenInfo.Parse(decryptedData);
                 if (tokenInfo == null)
                 {
+                    _logger.LogWarning("Token data parsing failed");
                     return null;
                 }
 
-                // 8. 检查过期
+                // 检查过期
                 if (tokenInfo.IsExpired)
                 {
+                    _logger.LogDebug("Token expired for user {UserId}", tokenInfo.UserId);
                     return null;
                 }
 
@@ -224,30 +235,47 @@ namespace Atlas.Infrastructure.Security
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Token validation error");
                 return null;
             }
         }
 
         /// <summary>
-        /// 生成HMAC签名（优化版本）
+        /// ✅ 生成完整的HMAC-SHA256签名（使用全部32字节）
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private string GenerateSignature(string data)
         {
+            using var hmac = new HMACSHA256(_secretKeyBytes);
             var dataBytes = Encoding.UTF8.GetBytes(data);
-            var hash = _hmac.Value!.ComputeHash(dataBytes);
+            var hash = hmac.ComputeHash(dataBytes);
 
-            // 只使用前16字节，Base64编码
-            return Convert.ToBase64String(hash, 0, 16)
+            // ✅ 使用完整的32字节签名，提高安全性
+            return Convert.ToBase64String(hash)
                 .Replace('+', '-')
                 .Replace('/', '_')
                 .TrimEnd('=');
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            if (_secretKeyBytes != null)
+                Array.Clear(_secretKeyBytes, 0, _secretKeyBytes.Length);
+
+            if (_cryptoService is IDisposable disposable)
+                disposable.Dispose();
+
+            _disposed = true;
         }
     }
 
     public class TokenOptions
     {
         public string SecretKey { get; set; } = string.Empty;
-        public int ExpirationMinutes { get; set; } = 1440;
+        public int ExpirationMinutes { get; set; } = 1440; // 默认24小时
+        public string CookieName { get; set; } = "lovelypets-auth-token";
     }
 }

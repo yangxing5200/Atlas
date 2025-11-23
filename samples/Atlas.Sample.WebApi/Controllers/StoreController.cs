@@ -1,6 +1,7 @@
 ﻿using Atlas.Models.DTOs;
 using Atlas.Models.Tenant.Responses;
 using Atlas.Services.Abstractions;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Atlas.Sample.WebApi.Controllers
@@ -11,6 +12,7 @@ namespace Atlas.Sample.WebApi.Controllers
     [ApiController]
     [Route("api/[controller]")]
     [Produces("application/json")]
+    [Authorize]
     public class StoreController : ControllerBase
     {
         private readonly IStoreService _storeService;

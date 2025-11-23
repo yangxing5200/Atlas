@@ -2,6 +2,7 @@
 using Atlas.Models.Tenant.Requests;
 using Atlas.Models.Tenant.Responses;
 using Atlas.Services.Abstractions;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Atlas.Sample.WebApi.Controllers
@@ -12,6 +13,7 @@ namespace Atlas.Sample.WebApi.Controllers
     [ApiController]
     [Route("api/[controller]")]
     [Produces("application/json")]
+    [Authorize]
     public class ProductController : ControllerBase
     {
         private readonly IProductService _productService;
