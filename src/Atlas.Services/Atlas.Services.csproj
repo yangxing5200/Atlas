@@ -3,11 +3,13 @@
   <ItemGroup>
     <ProjectReference Include="..\Atlas.Data.Global\Atlas.Data.Global.csproj" />
     <ProjectReference Include="..\Atlas.Data.Tenant\Atlas.Data.Tenant.csproj" />
+    <ProjectReference Include="..\Atlas.Infrastructure.Security\Atlas.Infrastructure.Security.csproj" />
     <ProjectReference Include="..\Atlas.Services.Abstractions\Atlas.Services.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="AutoMapper" Version="12.0.0" />
+    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
     <PackageReference Include="FluentValidation" Version="11.0.0" />
   </ItemGroup>
 

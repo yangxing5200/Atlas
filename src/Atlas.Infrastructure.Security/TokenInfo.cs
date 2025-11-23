@@ -10,19 +10,22 @@ namespace Atlas.Infrastructure.Security
     /// <summary>
     /// Token数据结构（仅存储最小必要信息）
     /// </summary>
-    public class TokenInfo
+    public class TokenInfo : ICurrentIdentity
     {
         private const char DELIMITER = '\x1F';
 
-        public long UserId { get; set; }
-        public string UserName { get; set; }
-        public long StoreId { get; set; }
-        public long TenantId { get; set; }
+        public long? UserId { get; set; }
+        public string? UserName { get; set; }
+        public long? StoreId { get; set; }
+        public long? TenantId { get; set; }
         public long ExpiresAt { get; set; }
         public string SessionId { get; set; }      // ✅ 会话ID
         public int TokenVersion { get; set; } = 1;
 
         public bool IsExpired => DateTimeOffset.UtcNow.ToUnixTimeSeconds() > ExpiresAt;
+
+        public bool IsAuthenticated { get; set; }
+
         /// <summary>
         /// 获取过期时间的DateTime格式
         /// </summary>

@@ -94,7 +94,7 @@ namespace Atlas.Sample.WebApi.Controllers
                     Usage = new UsageInfo
                     {
                         AuthorizationHeader = $"Bearer {token}",
-                        CookieName = "lovelypets-auth-token",
+                        CookieName = "atlas-auth-token",
                         CookieValue = token,
                         QueryString = $"?access_token={token}",
                         CustomHeader = new Dictionary<string, string>
@@ -318,10 +318,10 @@ namespace Atlas.Sample.WebApi.Controllers
 
     public class TokenInfoDto
     {
-        public long TenantId { get; set; }
-        public long StoreId { get; set; }
-        public long UserId { get; set; }
-        public string UserName { get; set; } = string.Empty;
+        public long? TenantId { get; set; }
+        public long? StoreId { get; set; }
+        public long? UserId { get; set; }
+        public string? UserName { get; set; } = string.Empty;
         public string? Extra { get; set; }
     }
 

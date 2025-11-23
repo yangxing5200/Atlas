@@ -57,6 +57,10 @@ namespace Atlas.Services.Abstractions.Base
                 throw;
             }
         }
+        protected async Task CommitAsync(CancellationToken ct = default)
+        {
+            await UnitOfWork.SaveChangesAsync(ct);
+        }
     }
     public abstract class ServiceBase<TEntity, TDto> : ServiceBase, IServiceBase<TEntity, TDto>
     where TEntity : class, IBaseEntity<long>

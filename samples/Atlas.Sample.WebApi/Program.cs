@@ -43,7 +43,7 @@ builder.Services.Configure<TokenOptions>(options =>
     options.SecretKey = builder.Configuration["Security:Token:SecretKey"]
         ?? throw new InvalidOperationException("Token secret key not configured");
     options.ExpirationMinutes = builder.Configuration.GetValue<int>("Security:Token:ExpirationMinutes", 1440);
-    options.CookieName = builder.Configuration["Security:Token:CookieName"] ?? "lovelypets-auth-token";
+    options.CookieName = builder.Configuration["Security:Token:CookieName"] ?? "atlas-auth-token";
 });
 
 // 注册加密服务（Singleton - 性能优化）
@@ -62,7 +62,7 @@ builder.Services.AddAuthentication("CustomToken")
             options.TokenPrefix = "Bearer";
             options.EnableQueryStringToken = true;
             options.EnableCustomHeader = true;
-            options.CookieName = builder.Configuration["Security:Token:CookieName"] ?? "lovelypets-auth-token";
+            options.CookieName = builder.Configuration["Security:Token:CookieName"] ?? "atlas-auth-token";
             options.LoginPath = builder.Configuration["Security:LoginPath"] ?? "/login";
         });
 

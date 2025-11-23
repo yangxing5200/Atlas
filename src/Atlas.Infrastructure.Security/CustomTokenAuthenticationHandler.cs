@@ -15,7 +15,7 @@ namespace Atlas.Infrastructure.Security
         public string TokenPrefix { get; set; } = "Bearer";
         public bool EnableQueryStringToken { get; set; } = true;
         public bool EnableCustomHeader { get; set; } = true;
-        public string CookieName { get; set; } = "lovelypets-auth-token";
+        public string CookieName { get; set; } = "atlas-auth-token";
         public string LoginPath { get; set; } = "/login"; // ✅ 可配置的登录路径
     }
 

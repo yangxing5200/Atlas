@@ -289,6 +289,6 @@ namespace Atlas.Infrastructure.Security
     {
         public string SecretKey { get; set; } = string.Empty;
         public int ExpirationMinutes { get; set; } = 1440; // 默认24小时
-        public string CookieName { get; set; } = "lovelypets-auth-token";
+        public string CookieName { get; set; } = "atlas-auth-token";
     }
 }

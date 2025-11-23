@@ -303,6 +303,8 @@ public static class AtlasCoreServiceExtensions
         services.AddScoped<IStoreRepository, StoreRepository>();
         services.AddScoped<IStoreService, StoreService>();
         services.AddScoped<IProductService, ProductService>();
+        services.AddScoped<IUserService, UserService>();
+        services.AddScoped<IUserLoginLogService, UserLoginLogService>();
         return services;
     }
 
