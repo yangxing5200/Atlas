@@ -84,6 +84,7 @@ namespace Atlas.Integration.Tests.TenantDatabase
     /// </summary>
     public class MockCurrentIdentity : ICurrentIdentity
     {
+        public string? SessionId { get; set; }
         public long? UserId { get; set; }
         public string UserName { get; set; } = string.Empty;
         public long? StoreId { get; set; }

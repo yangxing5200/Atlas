@@ -13,15 +13,6 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
         {
             migrationBuilder.AlterColumn<long>(
                 name: "Id",
-                table: "Stores",
-                type: "bigint",
-                nullable: false,
-                oldClrType: typeof(long),
-                oldType: "bigint")
-                .Annotation("MySql:ValueGenerationStrategy", MySqlValueGenerationStrategy.IdentityColumn);
-
-            migrationBuilder.AlterColumn<long>(
-                name: "Id",
                 table: "Promotions",
                 type: "bigint",
                 nullable: false,

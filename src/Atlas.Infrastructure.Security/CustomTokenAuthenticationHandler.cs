@@ -62,12 +62,6 @@ namespace Atlas.Infrastructure.Security
                     new Claim("token", token),
                 };
 
-                // 添加额外信息
-                if (!string.IsNullOrEmpty(tokenInfo.Extra))
-                {
-                    claims = claims.Append(new Claim("ext", tokenInfo.Extra)).ToArray();
-                }
-
                 var identity = new ClaimsIdentity(claims, Scheme.Name);
                 var principal = new ClaimsPrincipal(identity);
                 var ticket = new AuthenticationTicket(principal, Scheme.Name);

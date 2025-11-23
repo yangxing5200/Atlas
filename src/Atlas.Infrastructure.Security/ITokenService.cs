@@ -9,7 +9,7 @@ namespace Atlas.Infrastructure.Security
 {
     public interface ITokenService
     {
-        string GenerateToken(ICurrentIdentity user, string? extra = null);
+        string GenerateToken(ICurrentIdentity user);
         Task<TokenInfo?> ValidateTokenAsync(string token);
         TokenInfo? ValidateToken(string token);
     }

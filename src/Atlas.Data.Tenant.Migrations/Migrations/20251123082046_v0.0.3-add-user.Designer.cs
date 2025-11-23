@@ -3,6 +3,7 @@ using System;
 using Atlas.Data.Tenant.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,14 +11,120 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Atlas.Data.Tenant.Migrations.Migrations
 {
     [DbContext(typeof(AtlasTenantDbContext))]
-    partial class AtlasTenantDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251123082046_v0.0.3-add-user")]
+    partial class v003adduser
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
                 .HasAnnotation("ProductVersion", "8.0.0")
                 .HasAnnotation("Relational:MaxIdentifierLength", 64);
+
+            modelBuilder.Entity("Atlas.Core.Entities.Tenant.BusinessOperationLog", b =>
+                {
+                    b.Property<long>("Id")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Changes")
+                        .HasMaxLength(4000)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Changes"), "utf8mb4");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Description"), "utf8mb4");
+
+                    b.Property<long?>("EntityId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ErrorMessage"), "utf8mb4");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("IpAddress"), "utf8mb4");
+
+                    b.Property<bool>("IsSuccess")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(true);
+
+                    b.Property<string>("Module")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Module"), "utf8mb4");
+
+                    b.Property<string>("OperationType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("OperationType"), "utf8mb4");
+
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SessionId"), "utf8mb4");
+
+                    b.Property<long?>("StoreId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<long?>("UserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("IX_BusinessOperationLogs_CreatedAt");
+
+                    b.HasIndex("EntityId");
+
+                    b.HasIndex("SessionId")
+                        .HasDatabaseName("IX_BusinessOperationLogs_SessionId")
+                        .HasFilter("[SessionId] IS NOT NULL");
+
+                    b.HasIndex("StoreId");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("IX_BusinessOperationLogs_UserId");
+
+                    b.HasIndex("Module", "EntityId")
+                        .HasDatabaseName("IX_BusinessOperationLogs_Module_EntityId")
+                        .HasFilter("[EntityId] IS NOT NULL");
+
+                    b.HasIndex("TenantId", "UserId")
+                        .HasDatabaseName("IX_BusinessOperationLogs_TenantId_UserId");
+
+                    b.HasIndex("Module", "OperationType", "CreatedAt")
+                        .HasDatabaseName("IX_BusinessOperationLogs_Module_Type_CreatedAt");
+
+                    b.ToTable("BusinessOperationLogs", (string)null);
+                });
 
             modelBuilder.Entity("Atlas.Core.Entities.Tenant.CashierRecord", b =>
                 {
@@ -249,110 +356,6 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
                         .HasDatabaseName("IX_Members_TenantId_StoreId");
 
                     b.ToTable("Members", (string)null);
-                });
-
-            modelBuilder.Entity("Atlas.Core.Entities.Tenant.OperationLog", b =>
-                {
-                    b.Property<long>("Id")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("Changes")
-                        .HasMaxLength(4000)
-                        .HasColumnType("varchar(256)");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Changes"), "utf8mb4");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<string>("Description")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("varchar(256)");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Description"), "utf8mb4");
-
-                    b.Property<long?>("EntityId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasMaxLength(1000)
-                        .HasColumnType("varchar(256)");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ErrorMessage"), "utf8mb4");
-
-                    b.Property<string>("IpAddress")
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(256)");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("IpAddress"), "utf8mb4");
-
-                    b.Property<bool>("IsSuccess")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("tinyint(1)")
-                        .HasDefaultValue(true);
-
-                    b.Property<string>("Module")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(256)");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Module"), "utf8mb4");
-
-                    b.Property<string>("OperationType")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(256)");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("OperationType"), "utf8mb4");
-
-                    b.Property<string>("SessionId")
-                        .HasMaxLength(32)
-                        .HasColumnType("varchar(256)");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SessionId"), "utf8mb4");
-
-                    b.Property<long?>("StoreId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long>("TenantId")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<long?>("UserId")
-                        .HasColumnType("bigint");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedAt")
-                        .HasDatabaseName("IX_BusinessOperationLogs_CreatedAt");
-
-                    b.HasIndex("EntityId");
-
-                    b.HasIndex("SessionId")
-                        .HasDatabaseName("IX_BusinessOperationLogs_SessionId")
-                        .HasFilter("[SessionId] IS NOT NULL");
-
-                    b.HasIndex("StoreId");
-
-                    b.HasIndex("TenantId");
-
-                    b.HasIndex("UserId")
-                        .HasDatabaseName("IX_BusinessOperationLogs_UserId");
-
-                    b.HasIndex("Module", "EntityId")
-                        .HasDatabaseName("IX_BusinessOperationLogs_Module_EntityId")
-                        .HasFilter("[EntityId] IS NOT NULL");
-
-                    b.HasIndex("TenantId", "UserId")
-                        .HasDatabaseName("IX_BusinessOperationLogs_TenantId_UserId");
-
-                    b.HasIndex("Module", "OperationType", "CreatedAt")
-                        .HasDatabaseName("IX_BusinessOperationLogs_Module_Type_CreatedAt");
-
-                    b.ToTable("OperationLogs", (string)null);
                 });
 
             modelBuilder.Entity("Atlas.Core.Entities.Tenant.Order", b =>

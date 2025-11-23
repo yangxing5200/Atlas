@@ -20,7 +20,7 @@ namespace Atlas.Core.Tests.Mocks
         public string UserName => "测试用户";
 
         public bool IsAuthenticated => true;
-
+        public string? SessionId { get; set; }
         /// <summary>
         /// 默认构造函数 - 使用默认值
         /// </summary>

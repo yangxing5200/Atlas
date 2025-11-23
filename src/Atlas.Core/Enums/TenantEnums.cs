@@ -136,3 +136,64 @@ public enum PaymentMethod
     CreditCard = 1,
     MobilePayment = 2,
 }
+
+
+/// <summary>
+/// 用户类型
+/// </summary>
+public enum UserType
+{
+    /// <summary>系统管理员（超级权限）</summary>
+    SystemAdmin = 0,
+
+    /// <summary>租户管理员（租户级别最高权限）</summary>
+    TenantAdmin = 1,
+
+    /// <summary>门店管理员</summary>
+    StoreManager = 2,
+
+    /// <summary>普通员工</summary>
+    Employee = 3,
+
+    /// <summary>收银员</summary>
+    Cashier = 4,
+
+    /// <summary>仓库管理员</summary>
+    WarehouseKeeper = 5,
+
+    /// <summary>API用户（系统对接）</summary>
+    ApiUser = 99
+}
+
+/// <summary>
+/// 用户状态
+/// </summary>
+public enum UserStatus
+{
+    /// <summary>正常</summary>
+    Active = 1,
+
+    /// <summary>禁用</summary>
+    Disabled = 2,
+
+    /// <summary>待审核</summary>
+    Pending = 3,
+
+    /// <summary>已注销</summary>
+    Cancelled = 9
+}
+
+/// <summary>
+/// 性别
+/// </summary>
+public enum Gender
+{
+    /// <summary>未知</summary>
+    Unknown = 0,
+
+    /// <summary>男</summary>
+    Male = 1,
+
+    /// <summary>女</summary>
+    Female = 2
+}

@@ -28,7 +28,7 @@ namespace Atlas.Data.Tenant.Identity
         public long? StoreId => _storeId;
         public long? TenantId => _tenantId;
         public bool IsAuthenticated => _isAuthenticated;
-
+        public string? SessionId { get; set; }
         // ===== 测试辅助方法 =====
 
         /// <summary>

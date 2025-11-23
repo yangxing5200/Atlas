@@ -7,6 +7,7 @@ namespace Atlas.Data.Tests.Mocks
     /// </summary>
     public class MockCurrentUserService : ICurrentIdentity
     {
+        public string? SessionId { get; set; }
         public long? UserId { get; set; }
         public string UserName { get; set; }
         public long? StoreId { get; set; }

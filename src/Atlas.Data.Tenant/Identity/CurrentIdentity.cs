@@ -20,6 +20,8 @@ namespace Atlas.Data.Tenant.Identity
 
         private ClaimsPrincipal? User => _httpContextAccessor.HttpContext?.User;
 
+        public string? SessionId => User?.FindFirst("ssid")?.Value;
+
         public long? UserId =>
             long.TryParse(User?.FindFirst("uid")?.Value, out var id)
                 ? id : null;

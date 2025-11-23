@@ -50,7 +50,7 @@ namespace Atlas.Data.Common
         #endregion
 
         #region 属性
-
+        public string? SessionId { get; set; }
         /// <summary>
         /// 用户ID
         /// </summary>

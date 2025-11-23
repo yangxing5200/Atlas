@@ -71,8 +71,7 @@ namespace Atlas.Sample.WebApi.Controllers
 
                 // 生成Token
                 var token = _tokenService.GenerateToken(
-                    testIdentity,
-                    request.Extra
+                    testIdentity
                 );
 
                 // 计算过期时间
@@ -155,7 +154,6 @@ namespace Atlas.Sample.WebApi.Controllers
                     StoreId = tokenInfo.StoreId,
                     UserId = tokenInfo.UserId,
                     UserName = tokenInfo.UserName,
-                    Extra = tokenInfo.Extra
                 },
                 ExpiresAt = tokenInfo.GetExpiryDateTime(),
                 RemainingSeconds = (int)(tokenInfo.ExpiresAt - DateTimeOffset.UtcNow.ToUnixTimeSeconds())
@@ -194,7 +192,7 @@ namespace Atlas.Sample.WebApi.Controllers
                         UserName = user.UserName
                     };
 
-                    var token = _tokenService.GenerateToken(testIdentity, user.Extra);
+                    var token = _tokenService.GenerateToken(testIdentity);
 
                     tokens.Add(new TokenItem
                     {
@@ -388,7 +386,7 @@ namespace Atlas.Sample.WebApi.Controllers
         public long? UserId { get; set; }
         public string? UserName { get; set; }
         public string? Extra { get; set; }
-
+        public string? SessionId { get; set; }
         public bool IsAuthenticated { get; set; }
     }
 

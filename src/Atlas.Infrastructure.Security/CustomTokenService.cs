@@ -45,12 +45,13 @@ namespace Atlas.Infrastructure.Security
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public string GenerateToken(ICurrentIdentity user, string? extra = null)
+        public string GenerateToken(ICurrentIdentity user)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
 
             // 1. 创建token数据
-            var tokenInfo = TokenInfo.Create(user, _expirationMinutes, extra);
+            var tokenInfo = TokenInfo.Create(user, _expirationMinutes);
+ 
             var serializedData = tokenInfo.ToString();
 
             // 2. 加密数据
@@ -235,6 +236,13 @@ namespace Atlas.Infrastructure.Security
                     _logger.LogDebug("Token expired for user {UserId}", tokenInfo.UserId);
                     return null;
                 }
+
+                //var currentUserVersion = await _userRepository.GetTokenVersionAsync(tokenInfo.UserId);
+                //if (tokenInfo.TokenVersion != currentUserVersion)
+                //{
+                //    _logger.LogWarning("Token version mismatch for user {UserId}", tokenInfo.UserId);
+                //    return null; // Token已被撤销
+                //}
 
                 return tokenInfo;
             }
