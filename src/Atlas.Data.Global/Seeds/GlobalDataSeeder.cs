@@ -1,6 +1,6 @@
-﻿using Atlas.Core.Enums;
+﻿using Atlas.Core.Entities.Global;
+using Atlas.Core.Enums;
 using Atlas.Data.Common;
-using Atlas.Models.Global.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 

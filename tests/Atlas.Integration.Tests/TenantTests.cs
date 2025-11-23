@@ -1,5 +1,4 @@
-﻿// Atlas.Integration.Tests/GlobalDatabase/TenantTests.cs
-using Atlas.Data.Global;
+﻿using Atlas.Data.Global;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Xunit;

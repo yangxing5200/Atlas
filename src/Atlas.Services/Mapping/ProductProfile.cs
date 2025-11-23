@@ -1,12 +1,7 @@
-﻿using Atlas.Models.Tenant.DTOs;
-using Atlas.Models.Tenant.Entities;
+﻿using Atlas.Core.Entities.Tenant;
+using Atlas.Models.DTOs;
 using Atlas.Models.Tenant.Requests;
 using AutoMapper;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Atlas.Services.Mapping
 {
@@ -14,9 +9,20 @@ namespace Atlas.Services.Mapping
     {
         public ProductProfile()
         {
-            CreateMap<Product, ProductDto>();
-            CreateMap<CreateProductRequest, Product>();
-            CreateMap<UpdateProductRequest, Product>();
+            CreateMap<Store, StoreDto>().ReverseMap();
+
+            // Product mappings
+            CreateMap<Product, ProductDto>().ReverseMap();
+
+            CreateMap<CreateProductRequest, Product>()
+                .ForMember(dest => dest.Id, opt => opt.Ignore());
+
+            CreateMap<UpdateProductRequest, Product>()
+                .ForMember(dest => dest.Id, opt => opt.Ignore());
+
+
+            CreateMap<Store, StoreDto>();
+
         }
     }
 }

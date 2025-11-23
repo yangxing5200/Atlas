@@ -4,7 +4,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Text;
 using System.Threading.Tasks;
-using Atlas.Core.Entities;
+using Atlas.Core.Entities.Interfaces;
 
 namespace Atlas.Data.Abstractions
 {
@@ -32,9 +32,9 @@ namespace Atlas.Data.Abstractions
     public interface IRepository<TEntity, TKey> : IRepository
        where TEntity : class, IBaseEntity<TKey>
     {
-        IQueryable<TEntity> Query(Expression<Func<TEntity, bool>> where);
+        IQueryable<TEntity> ReadonlyQuery(Expression<Func<TEntity, bool>> where);
         Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default);
-        IQueryable<TEntity> Tracking(Expression<Func<TEntity, bool>> where);
+        IQueryable<TEntity> QueryWithTracking(Expression<Func<TEntity, bool>> where);
         Task AddAsync(TEntity entity, CancellationToken ct = default);
         Task AddRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default);
         Task RemoveAsync(TEntity entity, CancellationToken ct = default);

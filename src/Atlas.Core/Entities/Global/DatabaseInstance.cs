@@ -1,6 +1,6 @@
-﻿using Atlas.Core.Entities;
+﻿using Atlas.Core.Entities.Base;
 
-namespace Atlas.Models.Global.Entities
+namespace Atlas.Core.Entities.Global
 {
     public class DatabaseInstance:BaseEntity
     {

@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Entities;
+﻿using Atlas.Core.Entities.Interfaces;
 using Atlas.Core.Exceptions;
 using Atlas.Data.Abstractions;
 using Atlas.Models.Tenant.Responses;
@@ -6,7 +6,7 @@ using AutoMapper;
 using Microsoft.EntityFrameworkCore;
 using System.Linq.Expressions;
 
-namespace Atlas.Services.Abstractions
+namespace Atlas.Services.Abstractions.Base
 {
     public abstract class ServiceBase
     {
@@ -58,13 +58,13 @@ namespace Atlas.Services.Abstractions
             }
         }
     }
-    public abstract class DataServiceBase<TEntity, TDto> : ServiceBase
+    public abstract class ServiceBase<TEntity, TDto> : ServiceBase, IServiceBase<TEntity, TDto>
     where TEntity : class, IBaseEntity<long>
     {
         protected readonly IRepository<TEntity> _repository;
         protected readonly IMapper _mapper;
 
-        protected DataServiceBase(
+        protected ServiceBase(
             IRepository<TEntity> repository,
             IUnitOfWork unitOfWork,
             IMapper mapper) : base(unitOfWork)
@@ -89,7 +89,7 @@ namespace Atlas.Services.Abstractions
 
         public virtual async Task UpdateAsync(long id, TDto dto, CancellationToken ct = default)
         {
-            var entity = await _repository.Tracking(e => e.Id == id).FirstOrDefaultAsync();
+            var entity = await _repository.QueryWithTracking(e => e.Id == id).FirstOrDefaultAsync();
             if (entity == null) throw new AtlasException();
 
             _mapper.Map(dto, entity);
@@ -98,7 +98,7 @@ namespace Atlas.Services.Abstractions
         /// <summary>
         /// 删除数据
         /// </summary>
-        public virtual async Task DeleteAsync(long id, CancellationToken ct = default)
+        public virtual async Task RemoveAsync(long id, CancellationToken ct = default)
         {
             var entity = await _repository.GetByIdAsync(id, ct);
             if (entity == null)
@@ -113,16 +113,16 @@ namespace Atlas.Services.Abstractions
         /// </summary>
         public virtual Task<bool> ExistsAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default)
         {
-            return _repository.Query(predicate).AnyAsync(ct);
+            return _repository.ReadonlyQuery(predicate).AnyAsync(ct);
         }
 
 
         /// <summary>
         /// 获取数量
         /// </summary>
-        public virtual Task<int> CountAsync(Expression<Func<TEntity, bool>> predicate = null, CancellationToken ct = default)
+        public virtual Task<int> CountAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default)
         {
-            return  _repository.Query(predicate).CountAsync(ct);
+            return _repository.ReadonlyQuery(predicate).CountAsync(ct);
         }
 
 
@@ -138,7 +138,7 @@ namespace Atlas.Services.Abstractions
             if (pageIndex < 1) pageIndex = 1;
             if (pageSize < 1) pageSize = 10;
 
-            var query = _repository.Query(predicate);
+            var query = _repository.ReadonlyQuery(predicate);
 
             var total = await query.CountAsync(ct);
 

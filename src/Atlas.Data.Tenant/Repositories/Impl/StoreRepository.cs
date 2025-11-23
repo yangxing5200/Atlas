@@ -1,11 +1,7 @@
-﻿using Atlas.Core.Context;
+﻿using Atlas.Core.Entities.Tenant;
 using Atlas.Core.Enums;
-using Atlas.Core.IdGenerators;
-using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Tenant.Context;
-using Atlas.Data.Tenant.Repositories;
-using Atlas.Models.Tenant.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -26,7 +22,7 @@ namespace Atlas.Data.Tenant.Repositories.Impl
         public async Task<List<Store>> GetChildDirectStoresAsync(long parentStoreId, CancellationToken ct = default)
         {
             _logger.LogInformation("Getting child direct stores for parentStoreId: {ParentStoreId}", parentStoreId);
-            return await Query(s => s.ParentStoreId == parentStoreId && s.Type == StoreType.DirectOperated)
+            return await ReadonlyQuery(s => s.ParentStoreId == parentStoreId && s.Type == StoreType.DirectOperated)
                  .ToListAsync(ct);
         }
 
@@ -35,7 +31,7 @@ namespace Atlas.Data.Tenant.Repositories.Impl
             _logger.LogInformation(_logger.IsEnabled(LogLevel.Debug)
                 ? "Getting child store IDs for parentStoreId: {ParentStoreId}"
                 : "Getting child store IDs.");
-            return await Query(s => s.ParentStoreId == parentStoreId)
+            return await ReadonlyQuery(s => s.ParentStoreId == parentStoreId)
                 .Select(s => s.Id)
                 .ToListAsync(ct);
         }
@@ -43,7 +39,7 @@ namespace Atlas.Data.Tenant.Repositories.Impl
         public async Task<List<Store>> GetSiblingDirectStoresAsync(long parentStoreId, CancellationToken ct = default)
         {
             _logger.LogInformation("Getting sibling direct stores for parentStoreId: {ParentStoreId}", parentStoreId);
-            return await Query(s => s.ParentStoreId == parentStoreId && s.Type == StoreType.DirectOperated)
+            return await ReadonlyQuery(s => s.ParentStoreId == parentStoreId && s.Type == StoreType.DirectOperated)
                 .ToListAsync(ct);
         }
     }

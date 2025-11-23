@@ -8,7 +8,20 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.15" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="9.0.0" />
+    <PackageReference Include="Serilog.Settings.Configuration" Version="9.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+
+      <!-- Sinks -->
+      <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+      <PackageReference Include="Serilog.Sinks.Async" Version="1.5.0" />
+      <PackageReference Include="Serilog.Sinks.Seq" Version="6.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Atlas.Data.Tenant\Atlas.Data.Tenant.csproj" />
+    <ProjectReference Include="..\..\src\Atlas.Extensions.DependencyInjection\Atlas.Extensions.DependencyInjection.csproj" />
+    <ProjectReference Include="..\..\src\Atlas.Infrastructure.Logging\Atlas.Infrastructure.Logging.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Entities;
+﻿using Atlas.Core.Entities.Interfaces;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Tenant.Context;
@@ -52,7 +52,7 @@ namespace Atlas.Data.Tenant.Repositories
 
         #region Query
 
-        public IQueryable<TEntity> Query(Expression<Func<TEntity, bool>> where)
+        public IQueryable<TEntity> ReadonlyQuery(Expression<Func<TEntity, bool>> where)
         {
             try
             {
@@ -72,14 +72,14 @@ namespace Atlas.Data.Tenant.Repositories
 
         public async Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default)
         {
-            var db = await _dbFactory.GetDbContextAsync(ct);
+            var db = await _dbFactory.GetReportDbContextAsync(ct);
 
-            return await db.Set<TEntity>().AsTracking()
+            return await db.Set<TEntity>().AsNoTracking()
                            .ApplyScope(_dataScope)
                            .FirstOrDefaultAsync(x => x.Id.Equals(id), ct);
         }
 
-        public IQueryable<TEntity> Tracking(Expression<Func<TEntity, bool>> where)
+        public IQueryable<TEntity> QueryWithTracking(Expression<Func<TEntity, bool>> where)
         {
             try
             {

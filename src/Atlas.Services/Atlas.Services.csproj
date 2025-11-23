@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Atlas.Data.Global\Atlas.Data.Global.csproj" />
     <ProjectReference Include="..\Atlas.Data.Tenant\Atlas.Data.Tenant.csproj" />
+    <ProjectReference Include="..\Atlas.Services.Abstractions\Atlas.Services.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>

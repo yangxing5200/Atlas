@@ -1,7 +1,8 @@
-﻿using Atlas.Core.Entities;
+﻿using Atlas.Core.Entities.Base;
+using Atlas.Core.Entities.Interfaces;
 using Atlas.Core.Enums;
 
-namespace Atlas.Models.Tenant.Entities
+namespace Atlas.Core.Entities.Tenant
 {
     public class Store : VersionedEntity, ITenantEntity,ISnowflakeId
     {

@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using Atlas.Core.Entities;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore;
+using Atlas.Core.Entities.Interfaces;
 
 namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
 {

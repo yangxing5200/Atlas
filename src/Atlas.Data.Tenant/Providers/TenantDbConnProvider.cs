@@ -1,7 +1,7 @@
-﻿using Atlas.Core.Services;
+﻿using Atlas.Core.Entities.Global;
+using Atlas.Core.Services;
 using Atlas.Data.Global;
 using Atlas.Infrastructure.Caching.Abstractions;
-using Atlas.Models.Global.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 

@@ -2,9 +2,9 @@
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Atlas.Core.Services;
-using Atlas.Core.Entities;
 using Atlas.Core.IdGenerators;
 using System.Reflection.Emit;
+using Atlas.Core.Entities.Interfaces;
 
 namespace Atlas.Data.Common.Interceptors
 {

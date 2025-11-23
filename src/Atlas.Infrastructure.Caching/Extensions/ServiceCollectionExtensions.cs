@@ -32,7 +32,7 @@ namespace Atlas.Infrastructure.Caching.Extensions
             services.TryAddSingleton<ICacheSerializer>(sp => new JsonCacheSerializer());
             services.TryAddSingleton<ICacheKeyGenerator>(sp => new CacheKeyGenerator());
             services.TryAddSingleton<ICacheKeyParser>(sp => new CacheKeyParser());
-            services.TryAddSingleton<IScopeContextAccessor, CurrentUserScopeContextAccessor>();
+            services.TryAddScoped<IScopeContextAccessor, CurrentUserScopeContextAccessor>();
 
             // Tag management
             services.TryAddSingleton<ITagVersionStore, TagVersionStore>();
@@ -42,7 +42,7 @@ namespace Atlas.Infrastructure.Caching.Extensions
             services.TryAddSingleton<ICacheInvalidator, CacheInvalidator>();
 
             // Main cache service
-            services.TryAddSingleton<ICacheService, CacheService>();
+            services.TryAddScoped<ICacheService, CacheService>();
 
             return services;
         }

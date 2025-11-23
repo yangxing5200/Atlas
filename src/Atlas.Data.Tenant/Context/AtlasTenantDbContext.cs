@@ -4,7 +4,6 @@ using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Common;
 using Atlas.Data.Common.Extensions;
-using Atlas.Models.Tenant.Entities;
 using Microsoft.EntityFrameworkCore;
 using Pomelo.EntityFrameworkCore.MySql.Internal;
 using System.Reflection;

@@ -3,9 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Atlas.Core.Entities.Interfaces;
 using Atlas.Core.IdGenerators;
 
-namespace Atlas.Core.Entities
+namespace Atlas.Core.Entities.Base
 {
     /// <summary>
     /// 基础实体（默认使用数据库自增ID）

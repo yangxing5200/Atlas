@@ -1,10 +1,10 @@
-﻿using Atlas.Core.Enums;
+﻿using Atlas.Core.Entities.Tenant;
+using Atlas.Core.Enums;
 using Atlas.Core.Extensions;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Tenant.Context;
 using Atlas.Infrastructure.Caching.Abstractions;
-using Atlas.Models.Tenant.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System;

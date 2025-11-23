@@ -12,12 +12,15 @@ using Atlas.Data.Tenant.Repositories;
 using Atlas.Data.Tenant.Repositories.Impl;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Extensions;
+using Atlas.Services;
+using Atlas.Services.Abstractions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using System.Reflection;
 
 namespace Atlas.Extensions.DependencyInjection;
 
@@ -293,12 +296,13 @@ public static class AtlasCoreServiceExtensions
                 dbFactory,
                 logger);
         });
-
+        services.AddAutoMapper(Assembly.GetExecutingAssembly());
         // Repository layer
         services.AddScoped<IUnitOfWork, TenantUnitOfWork>();
         services.AddScoped(typeof(IRepository<>), typeof(RepositoryBase<>));
         services.AddScoped<IStoreRepository, StoreRepository>();
-
+        services.AddScoped<IStoreService, StoreService>();
+        services.AddScoped<IProductService, ProductService>();
         return services;
     }
 

@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Entities;
+﻿using Atlas.Core.Entities.Interfaces;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using System;
