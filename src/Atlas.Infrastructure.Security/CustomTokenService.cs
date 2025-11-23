@@ -97,7 +97,12 @@ namespace Atlas.Infrastructure.Security
             // ✅ 缓存时间缩短到30秒，减少已注销token仍有效的风险
             if (result != null)
             {
-                _cache.Set(cacheKey, result, TimeSpan.FromSeconds(30));
+                var cacheOptions = new MemoryCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30),
+                    Size = 1 // 每个缓存条目占用1个单位
+                };
+                _cache.Set(cacheKey, result, cacheOptions);
             }
 
             return result;

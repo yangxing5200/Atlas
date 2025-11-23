@@ -183,7 +183,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI(options =>
     {
         options.SwaggerEndpoint("/swagger/v1/swagger.json", "Atlas API V1");
-        options.RoutePrefix = string.Empty; // Set Swagger UI at app's root
+        options.RoutePrefix = "swagger"; // Set Swagger UI at app's root
     });
 }
 
