@@ -1,5 +1,5 @@
-﻿using Atlas.Data.Abstractions;
-using Atlas.Models.Tenant.Entities;
+﻿using Atlas.Core.Entities.Tenant;
+using Atlas.Data.Abstractions;
 using System;
 using System.Collections.Generic;
 using System.Linq;

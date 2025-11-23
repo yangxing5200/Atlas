@@ -8,11 +8,74 @@ using Atlas.Infrastructure.Caching.Core.Models;
 namespace Atlas.Infrastructure.Caching.Abstractions
 {
     /// <summary>
-    /// 缓存服务接口（仅支持通过 CacheKeyDefinition 访问）
+    /// 缓存服务接口（支持同步和异步方法）
     /// </summary>
     public interface ICacheService
     {
-        // ========== 基本操作（使用 Definition） ==========
+        // ========== 基础同步方法 ==========
+
+        /// <summary>
+        /// 获取缓存，如果没有缓存返回 null
+        /// </summary>
+        T? Get<T>(string key);
+
+        /// <summary>
+        /// 设置缓存
+        /// </summary>
+        void Set<T>(string key, T value, TimeSpan? expiration = null);
+
+        /// <summary>
+        /// 删除缓存
+        /// </summary>
+        bool Remove(string key);
+
+        /// <summary>
+        /// 检查缓存是否存在
+        /// </summary>
+        bool Exists(string key);
+
+        // ========== Definition 的同步方法 ==========
+
+        /// <summary>
+        /// 【同步】获取缓存值（仅使用本地内存缓存）
+        /// </summary>
+        T? Get<T>(
+            CacheKeyDefinition definition,
+            object? instanceValue = null);
+
+        /// <summary>
+        /// 【同步】设置缓存值（仅使用本地内存缓存）
+        /// </summary>
+        void Set<T>(
+            CacheKeyDefinition definition,
+            T value,
+            object? instanceValue = null,
+            CacheOptions? optionsOverride = null);
+
+        /// <summary>
+        /// 【同步】获取或设置缓存值（仅使用本地内存缓存）
+        /// </summary>
+        CacheResult<T> GetOrSet<T>(
+            CacheKeyDefinition definition,
+            Func<T> factory,
+            object? instanceValue = null,
+            CacheOptions? optionsOverride = null);
+
+        /// <summary>
+        /// 【同步】移除缓存（本地删除 + 通知其他服务器）
+        /// </summary>
+        bool Remove(
+            CacheKeyDefinition definition,
+            object? instanceValue = null);
+
+        /// <summary>
+        /// 【同步】检查缓存是否存在（仅检查本地内存缓存）
+        /// </summary>
+        bool Exists(
+            CacheKeyDefinition definition,
+            object? instanceValue = null);
+
+        // ========== 异步方法（原有的，保持不变） ==========
 
         /// <summary>
         /// 获取缓存值

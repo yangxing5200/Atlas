@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Entities;
+﻿using Atlas.Core.Entities.Base;
 
 namespace Atlas.Data.Tests.TestEntities
 {

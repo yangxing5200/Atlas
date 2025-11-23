@@ -1,11 +1,12 @@
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Core.Models;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 
 namespace Atlas.Infrastructure.Caching.Core
 {
     /// <summary>
-    /// 缓存服务实现
+    /// 缓存服务实现（支持同步方法和分布式缓存失效通知）
     /// </summary>
     public class CacheService : ICacheService
     {
@@ -15,6 +16,7 @@ namespace Atlas.Infrastructure.Caching.Core
         private readonly ICacheKeyGenerator _keyGenerator;
         private readonly IScopeContextAccessor _scopeAccessor;
         private readonly ICacheInvalidator _invalidator;
+        private readonly ICacheInvalidationBus? _invalidationBus; // 可选的分布式失效总线
 
         // 使用固定大小的锁池避免内存泄漏
         private readonly SemaphoreSlim[] _lockPool;
@@ -27,13 +29,18 @@ namespace Atlas.Infrastructure.Caching.Core
         private long _totalMisses;
         private long _totalInvalidations;
 
+        // 本地内存缓存（用于同步方法）
+        private readonly ConcurrentDictionary<string, object> _cache = new();
+        private readonly ConcurrentDictionary<string, DateTime> _expirations = new();
+
         public CacheService(
             ICacheProvider provider,
             ICacheSerializer serializer,
             ITagManager tagManager,
             ICacheKeyGenerator keyGenerator,
             IScopeContextAccessor scopeAccessor,
-            ICacheInvalidator invalidator)
+            ICacheInvalidator invalidator,
+            ICacheInvalidationBus? invalidationBus = null)
         {
             _provider = provider ?? throw new ArgumentNullException(nameof(provider));
             _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
@@ -41,6 +48,7 @@ namespace Atlas.Infrastructure.Caching.Core
             _keyGenerator = keyGenerator ?? throw new ArgumentNullException(nameof(keyGenerator));
             _scopeAccessor = scopeAccessor ?? throw new ArgumentNullException(nameof(scopeAccessor));
             _invalidator = invalidator ?? throw new ArgumentNullException(nameof(invalidator));
+            _invalidationBus = invalidationBus;
 
             // 初始化锁池
             _lockPool = new SemaphoreSlim[LockPoolSize];
@@ -48,7 +56,198 @@ namespace Atlas.Infrastructure.Caching.Core
             {
                 _lockPool[i] = new SemaphoreSlim(1, 1);
             }
+
+            // 订阅分布式缓存失效通知
+            if (_invalidationBus != null)
+            {
+                _invalidationBus.Subscribe(OnCacheInvalidated);
+            }
         }
+
+        // ================= 基础同步接口 =================
+
+        public T? Get<T>(string key)
+        {
+            if (_cache.TryGetValue(key, out var value))
+            {
+                if (_expirations.TryGetValue(key, out var exp) && exp < DateTime.UtcNow)
+                {
+                    _cache.TryRemove(key, out _);
+                    _expirations.TryRemove(key, out _);
+                    return default;
+                }
+
+                return (T)value;
+            }
+
+            return default;
+        }
+
+        public void Set<T>(string key, T value, TimeSpan? expiration = null)
+        {
+            _cache[key] = value!;
+            if (expiration.HasValue)
+            {
+                _expirations[key] = DateTime.UtcNow.Add(expiration.Value);
+            }
+            else
+            {
+                _expirations.TryRemove(key, out _);
+            }
+        }
+
+        public bool Remove(string key)
+        {
+            var removed = _cache.TryRemove(key, out _);
+            _expirations.TryRemove(key, out _);
+
+            // 发布缓存失效通知到其他服务器（Fire-and-forget）
+            if (removed && _invalidationBus != null)
+            {
+                _ = _invalidationBus.PublishInvalidationAsync(key);
+            }
+
+            return removed;
+        }
+
+        public bool Exists(string key)
+        {
+            if (!_cache.ContainsKey(key))
+                return false;
+
+            // 检查是否过期
+            if (_expirations.TryGetValue(key, out var exp) && exp < DateTime.UtcNow)
+            {
+                _cache.TryRemove(key, out _);
+                _expirations.TryRemove(key, out _);
+                return false;
+            }
+
+            return true;
+        }
+
+        // ================= 新增：基于 Definition 的同步方法 =================
+
+        public T? Get<T>(CacheKeyDefinition definition, object? instanceValue = null)
+        {
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+
+            Interlocked.Increment(ref _totalGets);
+
+            var baseKey = definition.BuildKey(instanceValue);
+            var fullKey = GenerateScopedKey(baseKey, definition.Scope);
+
+            // 从本地内存缓存获取
+            var value = Get<T>(fullKey);
+            if (value != null || (definition.AllowNull && Exists(fullKey)))
+            {
+                Interlocked.Increment(ref _totalHits);
+                return value;
+            }
+
+            Interlocked.Increment(ref _totalMisses);
+            return default;
+        }
+
+        public void Set<T>(
+            CacheKeyDefinition definition,
+            T value,
+            object? instanceValue = null,
+            CacheOptions? optionsOverride = null)
+        {
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+
+            if (!definition.AllowNull && value == null)
+                return;
+
+            Interlocked.Increment(ref _totalSets);
+
+            var baseKey = definition.BuildKey(instanceValue);
+            var fullKey = GenerateScopedKey(baseKey, definition.Scope);
+            var options = optionsOverride ?? definition.CreateOptions(_scopeAccessor.Current, instanceValue);
+
+            // 设置到本地内存缓存
+            Set(fullKey, value, options.AbsoluteExpiration);
+        }
+
+        public CacheResult<T> GetOrSet<T>(
+            CacheKeyDefinition definition,
+            Func<T> factory,
+            object? instanceValue = null,
+            CacheOptions? optionsOverride = null)
+        {
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+            if (factory == null)
+                throw new ArgumentNullException(nameof(factory));
+
+            var sw = Stopwatch.StartNew();
+            var baseKey = definition.BuildKey(instanceValue);
+            var fullKey = GenerateScopedKey(baseKey, definition.Scope);
+
+            // 先尝试获取
+            var cachedValue = Get<T>(fullKey);
+            var exists = cachedValue != null || (definition.AllowNull && Exists(fullKey));
+
+            if (exists)
+            {
+                sw.Stop();
+                return CacheResult<T>.Hit(cachedValue!, CacheSource.L1Cache, sw.ElapsedMilliseconds);
+            }
+
+            // 使用锁防止缓存击穿
+            var lockObj = GetLockForKey(fullKey);
+            lockObj.Wait();
+            try
+            {
+                // 双重检查
+                cachedValue = Get<T>(fullKey);
+                exists = cachedValue != null || (definition.AllowNull && Exists(fullKey));
+
+                if (exists)
+                {
+                    sw.Stop();
+                    return CacheResult<T>.Hit(cachedValue!, CacheSource.L1Cache, sw.ElapsedMilliseconds);
+                }
+
+                // 执行工厂方法
+                var value = factory();
+                Set(definition, value, instanceValue, optionsOverride);
+
+                sw.Stop();
+                return CacheResult<T>.Miss(value, CacheSource.Factory, sw.ElapsedMilliseconds);
+            }
+            finally
+            {
+                lockObj.Release();
+            }
+        }
+
+        public bool Remove(CacheKeyDefinition definition, object? instanceValue = null)
+        {
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+
+            var baseKey = definition.BuildKey(instanceValue);
+            var fullKey = GenerateScopedKey(baseKey, definition.Scope);
+
+            return Remove(fullKey); // Remove 方法会自动发布失效通知
+        }
+
+        public bool Exists(CacheKeyDefinition definition, object? instanceValue = null)
+        {
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+
+            var baseKey = definition.BuildKey(instanceValue);
+            var fullKey = GenerateScopedKey(baseKey, definition.Scope);
+
+            return Exists(fullKey);
+        }
+
+        // ================= 异步方法（原有实现，保持不变） =================
 
         public async Task<T?> GetAsync<T>(
             CacheKeyDefinition definition,
@@ -217,7 +416,16 @@ namespace Atlas.Infrastructure.Caching.Core
 
             var baseKey = definition.BuildKey(instanceValue);
             var fullKey = GenerateScopedKey(baseKey, definition.Scope);
-            return await _provider.RemoveAsync(fullKey, cancellationToken);
+
+            var result = await _provider.RemoveAsync(fullKey, cancellationToken);
+
+            // 发布缓存失效通知到其他服务器
+            if (result && _invalidationBus != null)
+            {
+                await _invalidationBus.PublishInvalidationAsync(fullKey);
+            }
+
+            return result;
         }
 
         public async Task<bool> ExistsAsync(
@@ -277,59 +485,45 @@ namespace Atlas.Infrastructure.Caching.Core
                         }
                     }
                 }
-                else
-                {
-                    deserializedCache[kvp.Key] = null;
-                }
             }
 
-            // 一次性批量查询所有tag版本
-            Dictionary<string, long> currentVersions = new();
+            // 批量验证所有tag版本（一次性查询）
+            Dictionary<string, long> currentTagVersions = new();
             if (allTags.Any())
             {
-                currentVersions = (await _tagManager.GetTagVersionsAsync(allTags, cancellationToken))
+                currentTagVersions = (await _tagManager.GetTagVersionsAsync(allTags, cancellationToken))
                     .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             }
 
-            // 第二遍：验证并构建结果
+            // 第二遍：验证并返回结果
             var output = new Dictionary<object, T?>();
-            var keysToRemove = new List<string>();
-
             foreach (var kvp in keyMapping)
             {
                 var fullKey = kvp.Key;
                 var instanceValue = kvp.Value;
 
-                if (deserializedCache.TryGetValue(fullKey, out var cachedValue) && cachedValue != null)
-                {
-                    // 验证Tag版本
-                    bool isValid = true;
-                    if (cachedValue.TagVersions.Any())
-                    {
-                        foreach (var tagKvp in cachedValue.TagVersions)
-                        {
-                            if (!currentVersions.TryGetValue(tagKvp.Key, out var currentVersion) ||
-                                currentVersion != tagKvp.Value)
-                            {
-                                isValid = false;
-                                keysToRemove.Add(fullKey);
-                                break;
-                            }
-                        }
-                    }
-
-                    output[instanceValue] = isValid ? cachedValue.Value : default;
-                }
-                else
+                if (!deserializedCache.TryGetValue(fullKey, out var cachedValue) || cachedValue == null)
                 {
                     output[instanceValue] = default;
+                    continue;
                 }
-            }
 
-            // 异步批量删除失效的缓存
-            if (keysToRemove.Any())
-            {
-                _ = _provider.RemoveManyAsync(keysToRemove, cancellationToken);
+                // 验证tag版本
+                bool isValid = true;
+                if (cachedValue.TagVersions.Any())
+                {
+                    foreach (var tagKvp in cachedValue.TagVersions)
+                    {
+                        if (!currentTagVersions.TryGetValue(tagKvp.Key, out var currentVersion) ||
+                            currentVersion != tagKvp.Value)
+                        {
+                            isValid = false;
+                            break;
+                        }
+                    }
+                }
+
+                output[instanceValue] = isValid ? cachedValue.Value : default;
             }
 
             return output;
@@ -347,9 +541,9 @@ namespace Atlas.Infrastructure.Caching.Core
             if (!items.Any())
                 return;
 
-            var options = optionsOverride ?? definition.CreateOptions(_scopeAccessor.Current);
+            var options = optionsOverride ?? definition.CreateOptions(_scopeAccessor.Current, null);
 
-            // 获取Tag版本（一次性查询）
+            // 批量获取Tag版本（如果有）
             Dictionary<string, long> tagVersions = new();
             if (options.Tags.Any())
             {
@@ -358,9 +552,9 @@ namespace Atlas.Infrastructure.Caching.Core
             }
 
             var serializedItems = new Dictionary<string, byte[]>();
+
             foreach (var kvp in items)
             {
-                // 跳过不允许null的情况
                 if (!definition.AllowNull && kvp.Value == null)
                     continue;
 
@@ -404,7 +598,18 @@ namespace Atlas.Infrastructure.Caching.Core
             if (!fullKeys.Any())
                 return 0;
 
-            return await _provider.RemoveManyAsync(fullKeys, cancellationToken);
+            var count = await _provider.RemoveManyAsync(fullKeys, cancellationToken);
+
+            // 批量发布缓存失效通知
+            if (count > 0 && _invalidationBus != null)
+            {
+                foreach (var key in fullKeys)
+                {
+                    await _invalidationBus.PublishInvalidationAsync(key);
+                }
+            }
+
+            return count;
         }
 
         public async Task InvalidateByTagAsync(string tag, CancellationToken cancellationToken = default)
@@ -462,6 +667,11 @@ namespace Atlas.Infrastructure.Caching.Core
 
         public async Task ClearAsync(CancellationToken cancellationToken = default)
         {
+            // 清空本地内存缓存
+            _cache.Clear();
+            _expirations.Clear();
+
+            // 清空分布式缓存
             await _provider.ClearAsync(cancellationToken);
         }
 
@@ -568,6 +778,17 @@ namespace Atlas.Infrastructure.Caching.Core
             }
 
             return (cachedValue.Value, true, cachedValue.IsNull);
+        }
+
+        /// <summary>
+        /// 处理来自其他服务器的缓存失效通知
+        /// </summary>
+        private void OnCacheInvalidated(string key)
+        {
+            // 从本地内存缓存中删除
+            _cache.TryRemove(key, out _);
+            _expirations.TryRemove(key, out _);
+            _ = _provider.RemoveAsync(key);
         }
     }
 }

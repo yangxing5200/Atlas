@@ -1,7 +1,7 @@
-﻿using Atlas.Core.Entities;
+﻿using Atlas.Core.Entities.Base;
 using Atlas.Core.Enums;
 
-namespace Atlas.Models.Global.Entities;
+namespace Atlas.Core.Entities.Global;
 
 public class Tenant : AuditableEntity
 {

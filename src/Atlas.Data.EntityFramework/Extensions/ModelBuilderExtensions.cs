@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Entities;
+﻿using Atlas.Core.Entities.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using System.Linq.Expressions;
 using System.Reflection;

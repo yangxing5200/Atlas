@@ -4,22 +4,21 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
+using System.Threading.Tasks;
+using Microsoft.Net.Http.Headers;
 
 namespace Atlas.Infrastructure.Security
 {
-    /// <summary>
-    /// 自定义Token认证选项
-    /// </summary>
     public class CustomTokenAuthenticationOptions : AuthenticationSchemeOptions
     {
         public string TokenHeaderName { get; set; } = "Authorization";
         public string TokenPrefix { get; set; } = "Bearer";
-        public bool EnableQueryStringToken { get; set; } = true; // 支持从URL获取token
-        public bool EnableCustomHeader { get; set; } = true; // 支持自定义header
+        public bool EnableQueryStringToken { get; set; } = true;
+        public bool EnableCustomHeader { get; set; } = true;
+        public string CookieName { get; set; } = "lovelypets-auth-token";
+        public string LoginPath { get; set; } = "/login"; // ✅ 可配置的登录路径
     }
-    /// <summary>
-    /// 高性能自定义Token认证处理器
-    /// </summary>
+
     public sealed class CustomTokenAuthenticationHandler : AuthenticationHandler<CustomTokenAuthenticationOptions>
     {
         private readonly ITokenService _tokenService;
@@ -35,71 +34,65 @@ namespace Atlas.Infrastructure.Security
             _tokenService = tokenService;
         }
 
-        /// <summary>
-        /// 认证处理
-        /// </summary>
         protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
         {
-            // 1. 提取Token
             var token = ExtractToken();
             if (string.IsNullOrEmpty(token))
             {
                 return AuthenticateResult.NoResult();
             }
+
             try
             {
-                // 2. 异步验证Token
                 var tokenInfo = await _tokenService.ValidateTokenAsync(token);
                 if (tokenInfo == null)
                 {
+                    Logger.LogDebug("Token validation failed");
                     return AuthenticateResult.Fail("Invalid or expired token");
                 }
 
-                // 3. 创建Claims（最小化claims数量以提升性能）
+                // 创建Claims
                 var claims = new[]
                 {
+                    new Claim(ClaimTypes.NameIdentifier, tokenInfo.UserId.ToString()),
                     new Claim("uid", tokenInfo.UserId.ToString()),
                     new Claim("sid", tokenInfo.StoreId.ToString()),
                     new Claim("tid", tokenInfo.TenantId.ToString()),
-                    new Claim("uname", tokenInfo.UserId.ToString()), 
+                    new Claim("uname", tokenInfo.UserName ?? tokenInfo.UserId.ToString()),
                     new Claim("token", token),
                 };
 
-                // 添加额外信息（如果有）
+                // 添加额外信息
                 if (!string.IsNullOrEmpty(tokenInfo.Extra))
                 {
                     claims = claims.Append(new Claim("ext", tokenInfo.Extra)).ToArray();
                 }
 
-                // 4. 创建身份和票据
                 var identity = new ClaimsIdentity(claims, Scheme.Name);
                 var principal = new ClaimsPrincipal(identity);
                 var ticket = new AuthenticationTicket(principal, Scheme.Name);
 
+                Logger.LogDebug("Authentication successful for user {UserId}", tokenInfo.UserId);
                 return AuthenticateResult.Success(ticket);
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "Authentication failed");
+                Logger.LogError(ex, "Authentication error");
                 return AuthenticateResult.Fail($"Authentication error: {ex.Message}");
             }
         }
 
-        /// <summary>
-        /// 高效提取Token（避免多次字符串操作）
-        /// </summary>
         private string? ExtractToken()
         {
             string? token = null;
 
-            // 1. 优先从Authorization header获取
+            // 1. Authorization header
             if (Request.Headers.TryGetValue(Options.TokenHeaderName, out var authHeader))
             {
-                var authHeaderString = authHeader.FirstOrDefault(); // 获取第一个值
+                var authHeaderString = authHeader.FirstOrDefault();
                 if (!string.IsNullOrEmpty(authHeaderString) &&
                     authHeaderString.StartsWith(Options.TokenPrefix, StringComparison.OrdinalIgnoreCase))
                 {
-                    // 安全地提取token，处理各种格式（Bearer token, Bearer: token等）
                     var prefixLength = Options.TokenPrefix.Length;
                     if (authHeaderString.Length > prefixLength)
                     {
@@ -112,10 +105,10 @@ namespace Atlas.Infrastructure.Security
                 }
             }
 
-            // 2. 从Cookie获取
+            // 2. ✅ Cookie（使用配置的名称）
             if (string.IsNullOrEmpty(token))
             {
-                if (Request.Cookies.TryGetValue("lovelypets-auth-token", out var cookieToken))
+                if (Request.Cookies.TryGetValue(Options.CookieName, out var cookieToken))
                 {
                     if (!string.IsNullOrWhiteSpace(cookieToken))
                     {
@@ -124,7 +117,7 @@ namespace Atlas.Infrastructure.Security
                 }
             }
 
-            // 3. 从查询字符串获取
+            // 3. Query string
             if (string.IsNullOrEmpty(token) && Options.EnableQueryStringToken)
             {
                 if (Request.Query.TryGetValue("access_token", out var queryToken))
@@ -137,7 +130,7 @@ namespace Atlas.Infrastructure.Security
                 }
             }
 
-            // 4. 从自定义header获取
+            // 4. Custom header
             if (string.IsNullOrEmpty(token) && Options.EnableCustomHeader)
             {
                 if (Request.Headers.TryGetValue("X-Access-Token", out var customHeader))
@@ -153,34 +146,42 @@ namespace Atlas.Infrastructure.Security
             return token;
         }
 
-        /// <summary>
-        /// 处理401挑战
-        /// </summary>
         protected override Task HandleChallengeAsync(AuthenticationProperties properties)
         {
-            var isAjax = Request.Headers["X-Requested-With"] == "XMLHttpRequest"
-                    || Request.Headers["Accept"].Any(v => v.Contains("application/json"));
+            // ✅ 改进：检测请求类型
+            var isAjaxOrApi = Request.Headers["X-Requested-With"] == "XMLHttpRequest"
+                || Request.Headers[HeaderNames.Accept].ToString().Contains("application/json", StringComparison.OrdinalIgnoreCase)
+                || Request.Path.StartsWithSegments("/api");
 
-            if (isAjax)
+            if (isAjaxOrApi)
             {
-                Response.StatusCode = 401;
-                Response.ContentType = "application/json";
-                return Response.WriteAsync("{\"code\":401,\"message\":\"Token expired\"}");
+                Response.StatusCode = StatusCodes.Status401Unauthorized;
+                Response.ContentType = "application/json; charset=utf-8";
+                return Response.WriteAsync("{\"code\":401,\"message\":\"Unauthorized - Token missing or expired\"}");
             }
             else
             {
-                Response.StatusCode = 302;
-                Response.Headers["Location"] = "/login";
+                // ✅ 使用配置的登录路径
+                Response.StatusCode = StatusCodes.Status302Found;
+                Response.Headers[HeaderNames.Location] = Options.LoginPath;
                 return Task.CompletedTask;
             }
         }
 
-        /// <summary>
-        /// 处理403禁止访问
-        /// </summary>
         protected override Task HandleForbiddenAsync(AuthenticationProperties properties)
         {
-            Response.StatusCode = 403;
+            var isAjaxOrApi = Request.Headers["X-Requested-With"] == "XMLHttpRequest"
+                || Request.Headers[HeaderNames.Accept].ToString().Contains("application/json", StringComparison.OrdinalIgnoreCase)
+                || Request.Path.StartsWithSegments("/api");
+
+            Response.StatusCode = StatusCodes.Status403Forbidden;
+
+            if (isAjaxOrApi)
+            {
+                Response.ContentType = "application/json; charset=utf-8";
+                return Response.WriteAsync("{\"code\":403,\"message\":\"Forbidden - Insufficient permissions\"}");
+            }
+
             return Task.CompletedTask;
         }
     }

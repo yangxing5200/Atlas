@@ -1,42 +1,64 @@
-﻿using Atlas.Data.Tenant.Context;
+﻿using Atlas.Data.Abstractions;
+using Atlas.Data.Tenant.Providers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using System;
 using System.Threading.Tasks;
 
 namespace Atlas.Data.Tenant.Middleware
 {
     /// <summary>
-    /// 租户连接串预加载中间件
-    /// 在请求开始时异步加载连接串到缓存，后续Repository可同步获取
+    /// Preloads tenant connection strings and data scope into cache during request initialization.
+    /// Enables synchronous repository operations by ensuring required data is cached.
     /// </summary>
     public class TenantConnectionPreloadMiddleware
     {
         private readonly RequestDelegate _next;
+        private readonly ILogger<TenantConnectionPreloadMiddleware> _logger;
 
-        public TenantConnectionPreloadMiddleware(RequestDelegate next)
+        public TenantConnectionPreloadMiddleware(
+            RequestDelegate next,
+            ILogger<TenantConnectionPreloadMiddleware> logger)
         {
             _next = next;
+            _logger = logger;
         }
 
         public async Task InvokeAsync(HttpContext context)
         {
-            // 修正：使用泛型方法获取服务
-            var factory = context.RequestServices.GetService<ITenantDbContextFactory>();
+            var connProvider = context.RequestServices.GetService<ITenantDbConnProvider>();
+            var dataScope = context.RequestServices.GetService<IDataScope>();
 
-            if (factory != null)
+            if (connProvider?.TenantId != null)
             {
                 try
                 {
-                    // 预加载只读库连接串到缓存
-                    // 创建后立即释放，仅为了触发连接串加载
-                    using (var readContext = await factory.CreateReadonlyDbContextAsync(context.RequestAborted))
+                    var ct = context.RequestAborted;
+
+                    // Preload connection strings in parallel
+                    var masterTask = connProvider.GetConnStringAsync(ct);
+                    var readonlyTask = connProvider.GetReadonlyConnStringAsync(ct);
+
+                    await Task.WhenAll(masterTask, readonlyTask);
+
+                    // Preload data scope if store context exists
+                    if (dataScope?.StoreId.HasValue == true)
                     {
-                        // 连接串已缓存，后续可同步获取
+                        await dataScope.PreloadShareStoreIdsAsync(ct);
                     }
+
+                    _logger.LogDebug(
+                        "Preload completed - TenantId: {TenantId}, StoreId: {StoreId}",
+                        connProvider.TenantId,
+                        dataScope?.StoreId);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // 预加载失败不影响请求继续，后续会重新尝试
+                    _logger.LogWarning(ex,
+                        "Preload failed - TenantId: {TenantId}, StoreId: {StoreId}. Request will continue.",
+                        connProvider.TenantId,
+                        dataScope?.StoreId);
                 }
             }
 

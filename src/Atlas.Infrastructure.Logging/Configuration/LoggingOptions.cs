@@ -33,14 +33,19 @@
         public string AuditFilePath { get; set; } = "logs/audit/audit-.log";
 
         /// <summary>
-        /// 日志文件保留天数
+        /// 日志文件保留数量
         /// </summary>
-        public int RetainedFileCountLimit { get; set; } = 30;
+        public int RetainedFileCount { get; set; } = 30;
 
         /// <summary>
-        /// 错误日志保留天数
+        /// 错误日志保留数量
         /// </summary>
-        public int ErrorRetainedFileCountLimit { get; set; } = 90;
+        public int ErrorRetainedFileCount { get; set; } = 90;
+
+        /// <summary>
+        /// 审计日志保留数量
+        /// </summary>
+        public int AuditRetainedFileCount { get; set; } = 365;
 
         /// <summary>
         /// 是否启用 Seq
@@ -73,7 +78,7 @@
         };
 
         /// <summary>
-        /// 最小日志级别
+        /// 最小日志级别 (Information/Debug/Warning/Error)
         /// </summary>
         public string MinimumLevel { get; set; } = "Information";
 
@@ -91,5 +96,15 @@
         /// 慢操作阈值（毫秒）
         /// </summary>
         public int SlowOperationThresholdMs { get; set; } = 1000;
+
+        /// <summary>
+        /// 请求体最大记录长度
+        /// </summary>
+        public int MaxRequestBodyLength { get; set; } = 4096;
+
+        /// <summary>
+        /// 响应体最大记录长度
+        /// </summary>
+        public int MaxResponseBodyLength { get; set; } = 4096;
     }
 }

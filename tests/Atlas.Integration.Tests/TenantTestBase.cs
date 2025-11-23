@@ -53,12 +53,8 @@ namespace Atlas.Integration.Tests
             services.AddSingleton<ICurrentIdentity>(sp =>
             {
                 var httpContextAccessor = sp.GetRequiredService<IHttpContextAccessor>();
-                var lazyCache = new Lazy<ICacheService>(() =>
-                    sp.GetRequiredService<ICacheService>());
-                var lazyStoreRepository = new Lazy<IStoreRepository>(() =>
-                    sp.GetRequiredService<IStoreRepository>());
 
-                return new FakeCurrentIdentity(lazyStoreRepository, lazyCache);
+                return new FakeCurrentIdentity();
             });
 
             ConfigureAdditionalServices(services, configuration);
@@ -88,7 +84,7 @@ namespace Atlas.Integration.Tests
             FakeIdentity = (FakeCurrentIdentity)GetService<ICurrentIdentity>();
             SwitchToTenant(TestTenants.ChainEnterprise, TestUsers.TestUser);
             var factory = ServiceProvider.GetService<ITenantDbContextFactory>();
-            await factory.CreateReadonlyDbContextAsync();
+            await factory.GetReadonlyDbContextAsync();
           
 
         }
@@ -102,7 +98,7 @@ namespace Atlas.Integration.Tests
         protected async Task<AtlasTenantDbContext> GetTenantDbContextAsync()
         {
             var factory = GetService<ITenantDbContextFactory>();
-            return await factory.CreateDbContextAsync();
+            return await factory.GetDbContextAsync();
         }
 
         /// <summary>

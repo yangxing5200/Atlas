@@ -1,117 +1,135 @@
-﻿using System;
-using System.Linq;
-using System.Threading.Tasks;
-using Atlas.Core.Entities;
-using Atlas.Core.IdGenerators;
+﻿using Atlas.Core.Entities.Interfaces;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Tenant.Context;
+using Atlas.Data.Tenant.Providers;
 using Microsoft.EntityFrameworkCore;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Linq.Expressions;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Atlas.Data.Tenant.Repositories
 {
     /// <summary>
-    /// 仓储基类 - 支持读写分离
+    /// Repository 操作的共享基类 - 封装了通用 CRUD 操作
+    /// 子类只需保证 DbContext 工厂正常工作
     /// </summary>
-    public abstract class RepositoryBase<TEntity, TKey> : RepositoryOperationsBase<TEntity, TKey>
-         where TEntity : class, IBaseEntity<TKey>
-         where TKey : IEquatable<TKey>
+    public abstract class RepositoryBase<TEntity, TKey> : IRepository<TEntity, TKey>
+        where TEntity : class, IBaseEntity<TKey>
+        where TKey : IEquatable<TKey>
     {
-        private readonly ITenantDbContextFactory _dbContextFactory;
-        private readonly AccessibleStoreIdsCache _storeIdsCache;
+        protected readonly ITenantDbContextFactory _dbFactory;
+        protected readonly IDataScope _dataScope;
 
-        private AtlasTenantDbContext? _writeContext;
-        private AtlasTenantDbContext? _readContext;
-        private Task<AtlasTenantDbContext>? _writeContextTask;
-
-        protected RepositoryBase(
-            ITenantDbContextFactory dbContextFactory,
-            ICurrentIdentity currentIdentity,
-            IIdGenerator idGenerator)
-            : base(currentIdentity, idGenerator)
+        protected RepositoryBase(ITenantDbContextFactory dbFactory, IDataScope dataScope)
         {
-            _dbContextFactory = dbContextFactory ?? throw new ArgumentNullException(nameof(dbContextFactory));
-            _storeIdsCache = new AccessibleStoreIdsCache(currentIdentity);
+            _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
+            _dataScope = dataScope ?? throw new ArgumentNullException(nameof(dataScope));
         }
 
-        private AtlasTenantDbContext GetReadContextSync()
+        #region Add
+
+        public virtual async Task AddAsync(TEntity entity, CancellationToken ct = default)
         {
-            return _readContext ??= _dbContextFactory.CreateReadonlyDbContextSync();
+            if (entity == null) throw new ArgumentNullException(nameof(entity));
+
+            var db = await _dbFactory.GetDbContextAsync(ct);
+            await db.Set<TEntity>().AddAsync(entity, ct);
         }
 
-        protected override async Task<AtlasTenantDbContext> GetContextAsync()
+        public virtual async Task AddRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default)
         {
-            if (_writeContext != null)
-                return _writeContext;
+            if (entities == null) throw new ArgumentNullException(nameof(entities));
 
-            _writeContextTask ??= _dbContextFactory.CreateDbContextAsync();
-            _writeContext = await _writeContextTask;
-            return _writeContext;
+            var db = await _dbFactory.GetDbContextAsync(ct);
+            await db.Set<TEntity>().AddRangeAsync(entities, ct);
         }
 
-        protected override Task<AtlasTenantDbContext> GetReadContextAsync()
+        #endregion
+
+        #region Query
+
+        public IQueryable<TEntity> ReadonlyQuery(Expression<Func<TEntity, bool>> where)
         {
-            return Task.FromResult(GetReadContextSync());
-        }
-
-        protected override async Task<IQueryable<TEntity>> ApplyStoreScopeFilterAsync(IQueryable<TEntity> query)
-        {
-            var cachedStoreIds = EntityScopeFilter<TEntity>.IsSharedEntity
-                ? await _storeIdsCache.GetAsync()
-                : null;
-
-            return await EntityScopeFilter<TEntity>.ApplyAsync(
-                query,
-                CurrentIdentity,
-                cachedStoreIds);
-        }
-
-        // ========== 同步查询方法 ==========
-
-        public override IQueryable<TEntity> AsReadonlyQueryable()
-        {
-            var query = GetReadContextSync().Set<TEntity>().AsNoTracking();
-            var cachedStoreIds = _storeIdsCache.GetCached();
-
-            if (cachedStoreIds != null || !EntityScopeFilter<TEntity>.IsSharedEntity)
+            try
             {
-                return EntityScopeFilter<TEntity>.Apply(query, CurrentIdentity, cachedStoreIds);
+                return _dbFactory.GetReadonlyDbContext()
+                    .Set<TEntity>()
+                    .Where(where)
+                    .ApplyScope(_dataScope);
             }
-
-            return query;
+            catch (InvalidOperationException)
+            {
+                throw new InvalidOperationException(
+                    "连接字符串未预加载。请确保: " +
+                    "1) 使用了 TenantConnectionPreloadMiddleware, " +
+                    "2) 或先调用异步方法如 GetReadonlyDbContextAsync()");
+            }
         }
 
-        public override IQueryable<TEntity> AsReadonlyQueryableUnfiltered()
+        public async Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default)
         {
-            return GetReadContextSync().Set<TEntity>().AsNoTracking();
+            var db = await _dbFactory.GetReportDbContextAsync(ct);
+
+            return await db.Set<TEntity>().AsNoTracking()
+                           .ApplyScope(_dataScope)
+                           .FirstOrDefaultAsync(x => x.Id.Equals(id), ct);
         }
 
-        // ========== 保存 ==========
-
-        public override async Task<int> SaveChangesAsync(CancellationToken ct = default)
+        public IQueryable<TEntity> QueryWithTracking(Expression<Func<TEntity, bool>> where)
         {
-            var context = await GetContextAsync();
-            return await context.SaveChangesAsync(ct);
+            try
+            {
+                return _dbFactory.GetDbContext()
+               .Set<TEntity>()
+               .ApplyScope(_dataScope)
+               .Where(where);
+            }
+            catch (InvalidOperationException)
+            {
+                throw new InvalidOperationException(
+                    "连接字符串未预加载。请确保: " +
+                    "1) 使用了 TenantConnectionPreloadMiddleware, " +
+                    "2) 或先调用异步方法如 GetReadonlyDbContextAsync()");
+            }
+        }
+        #endregion
+
+        #region Remove
+
+        public async Task RemoveAsync(TEntity entity, CancellationToken ct = default)
+        {
+            if (entity == null) throw new ArgumentNullException(nameof(entity));
+
+            var db = await _dbFactory.GetDbContextAsync(ct);
+            db.Set<TEntity>().Remove(entity);
         }
 
-        public override void Dispose()
+        public async Task RemoveRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default)
         {
-            _writeContext?.Dispose();
-            _readContext?.Dispose();
+            if (entities == null) throw new ArgumentNullException(nameof(entities));
+
+            var db = await _dbFactory.GetDbContextAsync(ct);
+            db.Set<TEntity>().RemoveRange(entities);
         }
+
+        #endregion
     }
 
+
     /// <summary>
-    /// 默认 Repository 实现（使用 long 类型主键）
+    /// 默认 long 主键实现
     /// </summary>
     public class RepositoryBase<TEntity> : RepositoryBase<TEntity, long>, IRepository<TEntity>
         where TEntity : class, IBaseEntity<long>
     {
         public RepositoryBase(
-            ITenantDbContextFactory dbContextFactory,
-            ICurrentIdentity currentIdentity,
-            IIdGenerator idGenerator)
-            : base(dbContextFactory, currentIdentity, idGenerator)
+            ITenantDbContextFactory dbFactory,
+            IDataScope dataScope)
+            : base(dbFactory, dataScope)
         {
         }
     }

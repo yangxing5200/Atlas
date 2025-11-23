@@ -18,6 +18,9 @@ namespace Atlas.Infrastructure.Caching.Extensions
 {
     public static class ServiceCollectionExtensions
     {
+        /// <summary>
+        /// 添加 Atlas 缓存核心服务
+        /// </summary>
         public static IServiceCollection AddAtlasCaching(
             this IServiceCollection services,
             Action<CachingOptionsBuilder>? configure = null)
@@ -29,7 +32,7 @@ namespace Atlas.Infrastructure.Caching.Extensions
             services.TryAddSingleton<ICacheSerializer>(sp => new JsonCacheSerializer());
             services.TryAddSingleton<ICacheKeyGenerator>(sp => new CacheKeyGenerator());
             services.TryAddSingleton<ICacheKeyParser>(sp => new CacheKeyParser());
-            services.TryAddSingleton<IScopeContextAccessor, CurrentUserScopeContextAccessor>();
+            services.TryAddScoped<IScopeContextAccessor, CurrentUserScopeContextAccessor>();
 
             // Tag management
             services.TryAddSingleton<ITagVersionStore, TagVersionStore>();
@@ -39,35 +42,62 @@ namespace Atlas.Infrastructure.Caching.Extensions
             services.TryAddSingleton<ICacheInvalidator, CacheInvalidator>();
 
             // Main cache service
-            services.TryAddSingleton<ICacheService, CacheService>();
+            services.TryAddScoped<ICacheService, CacheService>();
+
             return services;
         }
 
+        /// <summary>
+        /// 添加基于内存的缓存（不支持分布式失效通知）
+        /// </summary>
         public static IServiceCollection AddMemoryCaching(this IServiceCollection services)
         {
             services.AddMemoryCache();
             services.TryAddSingleton<ICacheProvider, MemoryCacheProvider>();
+
+            // 内存缓存不需要 ICacheInvalidationBus
             return services;
         }
 
+        /// <summary>
+        /// 添加基于 Redis 的缓存（支持分布式失效通知）
+        /// </summary>
         public static IServiceCollection AddRedisCaching(
             this IServiceCollection services,
             string connectionString,
-            string? instanceName = null)
+            string? instanceName = null,
+            bool enableInvalidationBus = true)
         {
             var redis = ConnectionMultiplexer.Connect(connectionString);
             services.AddSingleton<IConnectionMultiplexer>(redis);
+
             services.TryAddSingleton<ICacheProvider>(sp =>
                 new RedisCacheProvider(redis, instanceName ?? "atlas"));
+
             services.TryAddSingleton<ITagVersionStore>(sp =>
                 new RedisTagVersionStore(redis));
+
+            // 注册分布式缓存失效总线
+            if (enableInvalidationBus)
+            {
+                services.TryAddSingleton<ICacheInvalidationBus>(sp =>
+                {
+                    var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<RedisInvalidationBus>>();
+                    return new RedisInvalidationBus(redis, logger);
+                });
+            }
+
             return services;
         }
 
+        /// <summary>
+        /// 添加混合缓存（L1: Memory + L2: Redis，支持分布式失效通知）
+        /// </summary>
         public static IServiceCollection AddHybridCaching(
             this IServiceCollection services,
             string redisConnectionString,
-            Action<HybridCacheOptions>? configureOptions = null)
+            Action<HybridCacheOptions>? configureOptions = null,
+            bool enableInvalidationBus = true)
         {
             services.AddMemoryCache();
             var redis = ConnectionMultiplexer.Connect(redisConnectionString);
@@ -84,7 +114,18 @@ namespace Atlas.Infrastructure.Caching.Extensions
                 return new HybridCacheProvider(l1, l2, options);
             });
 
-            services.TryAddSingleton<ITagVersionStore>(sp => new RedisTagVersionStore(redis));
+            services.TryAddSingleton<ITagVersionStore>(sp =>
+                new RedisTagVersionStore(redis));
+
+            // 注册分布式缓存失效总线
+            if (enableInvalidationBus)
+            {
+                services.TryAddSingleton<ICacheInvalidationBus>(sp =>
+                {
+                    var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<RedisInvalidationBus>>();
+                    return new RedisInvalidationBus(redis, logger);
+                });
+            }
 
             return services;
         }

@@ -1,6 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore;
-using Atlas.Models.Tenant.Entities;
+using Atlas.Core.Entities.Tenant;
 
 namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
 {

@@ -1,186 +1,177 @@
-﻿using System;
+﻿using Atlas.Core.Entities.Interfaces;
+using Atlas.Core.Services;
+using Atlas.Data.Abstractions;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
-using Atlas.Core.Entities;
-using Atlas.Core.Services;
+using System.Linq.Expressions;
 
 namespace Atlas.Data.Tenant
 {
     /// <summary>
-    /// 门店范围过滤辅助类 - 封装共享的过滤逻辑
+    /// 统一封装门店/租户范围过滤
     /// </summary>
     internal static class EntityScopeFilter<TEntity>
         where TEntity : class
     {
-        // 静态缓存：避免重复反射
-        private static readonly bool _isStoreOnlyEntity = typeof(IStoreOnlyEntity).IsAssignableFrom(typeof(TEntity));
-        private static readonly bool _isSharedEntity = typeof(ISharedEntity).IsAssignableFrom(typeof(TEntity));
-        private static readonly bool _isTenantEntity = typeof(ITenantEntity).IsAssignableFrom(typeof(TEntity));
-        private static readonly bool _isStoreScopedEntity = _isStoreOnlyEntity || _isSharedEntity;
+        // 用于优化性能（避免每次反射）
+        private static readonly bool IsStoreOnly = typeof(IStoreOnlyEntity).IsAssignableFrom(typeof(TEntity));
+        private static readonly bool IsShared = typeof(ISharedEntity).IsAssignableFrom(typeof(TEntity));
+        private static readonly bool IsTenantScoped = typeof(ITenantEntity).IsAssignableFrom(typeof(TEntity));
+        private static readonly bool IsStoreScoped = IsStoreOnly || IsShared;
 
-        public static bool IsStoreOnlyEntity => _isStoreOnlyEntity;
-        public static bool IsSharedEntity => _isSharedEntity;
-        public static bool IsTenantEntity => _isTenantEntity;
-        public static bool IsStoreScopedEntity => _isStoreScopedEntity;
-
-        /// <summary>
-        /// 异步应用门店范围过滤
-        /// </summary>
-        public static async Task<IQueryable<TEntity>> ApplyAsync(
-            IQueryable<TEntity> query,
-            ICurrentIdentity currentIdentity,
-            List<long>? cachedShareStoreIds = null)
+        static EntityScopeFilter()
         {
-            // 租户过滤
-            if (_isTenantEntity)
+            // 验证接口互斥性
+            if (IsStoreOnly && IsShared)
             {
-                if (!currentIdentity.TenantId.HasValue)
+                throw new InvalidOperationException(
+                    $"Entity {typeof(TEntity).Name} cannot implement both IStoreOnlyEntity and ISharedEntity. " +
+                    "These interfaces are mutually exclusive.");
+            }
+        }
+
+        public static IQueryable<TEntity> Apply(IQueryable<TEntity> query, IDataScope scope)
+        {
+            if (query == null)
+                throw new ArgumentNullException(nameof(query));
+            if (scope == null)
+                throw new ArgumentNullException(nameof(scope));
+
+            // ----------------------------
+            // 租户过滤
+            // ----------------------------
+            if (IsTenantScoped)
+            {
+                if (!scope.TenantId.HasValue)
                 {
+                    // 需要租户过滤但没有 TenantId，安全返回空结果
                     return query.Where(_ => false);
                 }
 
-                var currentTenantId = currentIdentity.TenantId.Value;
-                query = ((IQueryable<ITenantEntity>)query)
-                    .Where(e => e.TenantId == currentTenantId)
-                    .Cast<TEntity>();
+                var tenantId = scope.TenantId.Value;
+
+                // 使用表达式树避免 Cast 问题
+                query = ApplyTenantFilter(query, tenantId);
             }
 
-            // 快速路径：非门店相关实体
-            if (!_isStoreScopedEntity)
+            // ----------------------------
+            // 非门店相关实体
+            // ----------------------------
+            if (!IsStoreScoped)
             {
                 return query;
             }
 
-            // 无门店ID时返回空结果
-            if (!currentIdentity.StoreId.HasValue)
+            // 需要门店过滤但没有 StoreId，安全返回空结果
+            if (!scope.StoreId.HasValue)
             {
                 return query.Where(_ => false);
             }
 
-            var currentStoreId = currentIdentity.StoreId.Value;
+            var storeId = scope.StoreId.Value;
 
-            // IStoreOnlyEntity：仅当前门店
-            if (_isStoreOnlyEntity)
+            // ----------------------------
+            // IStoreOnlyEntity：只能当前门店
+            // ----------------------------
+            if (IsStoreOnly)
             {
-                return ((IQueryable<IStoreOnlyEntity>)query)
-                    .Where(e => e.StoreId == currentStoreId)
-                    .Cast<TEntity>();
+                return ApplyStoreOnlyFilter(query, storeId);
             }
 
-            // ISharedEntity：共享范围门店
-            if (_isSharedEntity)
+            // ----------------------------
+            // ISharedEntity：多个共享门店
+            // ----------------------------
+            if (IsShared)
             {
-                var shareStoreIds = cachedShareStoreIds
-                    ?? await currentIdentity.GetShareStoreIdsAsync();
+                var shareIds = scope.GetShareStoreIds();
 
-                if (shareStoreIds.Count == 0)
+                // 空列表表示没有可访问门店，返回空结果（安全策略）
+                if (shareIds == null || shareIds.Count == 0)
                 {
                     return query.Where(_ => false);
                 }
 
-                return ((IQueryable<ISharedEntity>)query)
-                    .Where(e => shareStoreIds.Contains(e.StoreId))
-                    .Cast<TEntity>();
+                return ApplySharedFilter(query, shareIds);
             }
 
             return query;
         }
 
         /// <summary>
-        /// 同步应用门店范围过滤（仅在门店ID已缓存时使用）
+        /// 应用租户过滤（使用表达式树避免 EF Core Cast 问题）
         /// </summary>
-        public static IQueryable<TEntity> Apply(
-            IQueryable<TEntity> query,
-            ICurrentIdentity currentIdentity,
-            List<long>? cachedShareStoreIds)
+        private static IQueryable<TEntity> ApplyTenantFilter(IQueryable<TEntity> query, long tenantId)
         {
-            // 租户过滤
-            if (_isTenantEntity)
-            {
-                if (!currentIdentity.TenantId.HasValue)
-                {
-                    return query.Where(_ => false);
-                }
+            // 构建表达式: e => e.TenantId == tenantId
+            var parameter = Expression.Parameter(typeof(TEntity), "e");
+            var property = Expression.Property(parameter, "TenantId");
+            var constant = Expression.Constant(tenantId);
+            var equals = Expression.Equal(property, constant);
+            var lambda = Expression.Lambda<Func<TEntity, bool>>(equals, parameter);
 
-                var currentTenantId = currentIdentity.TenantId.Value;
-                query = ((IQueryable<ITenantEntity>)query)
-                    .Where(e => e.TenantId == currentTenantId)
-                    .Cast<TEntity>();
-            }
+            return query.Where(lambda);
+        }
 
-            // 快速路径：非门店相关实体
-            if (!_isStoreScopedEntity || !currentIdentity.StoreId.HasValue)
-            {
-                return query;
-            }
+        /// <summary>
+        /// 应用单门店过滤
+        /// </summary>
+        private static IQueryable<TEntity> ApplyStoreOnlyFilter(IQueryable<TEntity> query, long storeId)
+        {
+            // 构建表达式: e => e.StoreId == storeId
+            var parameter = Expression.Parameter(typeof(TEntity), "e");
+            var property = Expression.Property(parameter, "StoreId");
+            var constant = Expression.Constant(storeId);
+            var equals = Expression.Equal(property, constant);
+            var lambda = Expression.Lambda<Func<TEntity, bool>>(equals, parameter);
 
-            var currentStoreId = currentIdentity.StoreId.Value;
+            return query.Where(lambda);
+        }
 
-            // IStoreOnlyEntity：仅当前门店
-            if (_isStoreOnlyEntity)
-            {
-                return ((IQueryable<IStoreOnlyEntity>)query)
-                    .Where(e => e.StoreId == currentStoreId)
-                    .Cast<TEntity>();
-            }
+        /// <summary>
+        /// 应用共享门店过滤
+        /// </summary>
+        private static IQueryable<TEntity> ApplySharedFilter(IQueryable<TEntity> query, List<long> shareIds)
+        {
+            // 构建表达式: e => shareIds.Contains(e.StoreId)
+            var parameter = Expression.Parameter(typeof(TEntity), "e");
+            var property = Expression.Property(parameter, "StoreId");
 
-            // ISharedEntity：共享范围门店（必须已缓存）
-            if (_isSharedEntity && cachedShareStoreIds != null && cachedShareStoreIds.Count > 0)
-            {
-                return ((IQueryable<ISharedEntity>)query)
-                    .Where(e => cachedShareStoreIds.Contains(e.StoreId))
-                    .Cast<TEntity>();
-            }
+            // 使用 Enumerable.Contains 方法
+            var containsMethod = typeof(Enumerable).GetMethods()
+                .First(m => m.Name == "Contains" && m.GetParameters().Length == 2)
+                .MakeGenericMethod(typeof(long));
 
-            return query;
+            var containsCall = Expression.Call(
+                null,
+                containsMethod,
+                Expression.Constant(shareIds),
+                property);
+
+            var lambda = Expression.Lambda<Func<TEntity, bool>>(containsCall, parameter);
+
+            return query.Where(lambda);
         }
     }
 
-    /// <summary>
-    /// 可访问门店ID缓存管理器
-    /// </summary>
-    internal class AccessibleStoreIdsCache
+    public static class QueryableScopeExtensions
     {
-        private readonly ICurrentIdentity _currentIdentity;
-        private List<long>? _shareStoreIds;
-        private Task<List<long>>? _shareStoreIdsTask;
-        private long? _cachedForStoreId;
-
-        public AccessibleStoreIdsCache(ICurrentIdentity currentIdentity)
-        {
-            _currentIdentity = currentIdentity ?? throw new ArgumentNullException(nameof(currentIdentity));
-        }
-
         /// <summary>
-        /// 获取缓存的门店ID（如果已加载）
+        /// 应用租户/门店范围过滤的扩展方法
         /// </summary>
-        public List<long>? GetCached() => _shareStoreIds;
-
-        /// <summary>
-        /// 异步获取可访问的门店ID列表（带请求级缓存）
-        /// </summary>
-        public async Task<List<long>> GetAsync()
+        /// <remarks>
+        /// 过滤规则：
+        /// - ITenantEntity: 按 TenantId 过滤
+        /// - IStoreOnlyEntity: 仅当前门店
+        /// - ISharedEntity: 当前用户可访问的所有门店
+        /// - 缺少必要的 scope 信息时返回空结果（安全策略）
+        /// </remarks>
+        public static IQueryable<TEntity> ApplyScope<TEntity>(
+            this IQueryable<TEntity> query,
+            IDataScope scope)
+            where TEntity : class
         {
-            var currentStoreId = _currentIdentity.StoreId;
-
-            // 检测 storeId 是否变化，变化则清除缓存
-            if (_cachedForStoreId != currentStoreId)
-            {
-                _shareStoreIds = null;
-                _shareStoreIdsTask = null;
-                _cachedForStoreId = currentStoreId;
-            }
-
-            if (_shareStoreIds != null)
-            {
-                return _shareStoreIds;
-            }
-
-            // 避免并发调用时重复请求
-            _shareStoreIdsTask ??= _currentIdentity.GetShareStoreIdsAsync();
-            _shareStoreIds = await _shareStoreIdsTask;
-            return _shareStoreIds;
+            return EntityScopeFilter<TEntity>.Apply(query, scope);
         }
     }
 }

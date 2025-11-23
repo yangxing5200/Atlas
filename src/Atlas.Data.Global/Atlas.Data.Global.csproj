@@ -4,7 +4,6 @@
     <ProjectReference Include="..\Atlas.Core\Atlas.Core.csproj" />
     <ProjectReference Include="..\Atlas.Data.Abstractions\Atlas.Data.Abstractions.csproj" />
     <ProjectReference Include="..\Atlas.Data.EntityFramework\Atlas.Data.Common.csproj" />
-    <ProjectReference Include="..\Atlas.Models.Global\Atlas.Models.Global.csproj" />
   </ItemGroup>
 
   <ItemGroup>

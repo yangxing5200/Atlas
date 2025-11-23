@@ -35,5 +35,12 @@ namespace Atlas.Data.Tenant
                 .WithExpiration(TimeSpan.FromHours(2))
                 .WithDescription("数据库服务器配置")
                 .Build();
+
+        public static readonly CacheKeyDefinition ShareStoresCacheKey =
+           CacheKeyDefinition.Create("share:stores:{id}")
+           .WithInstanceKey("id")
+           .WithExpiration(CacheExpirations.TwelveHours)
+           .WithScope(CacheScope.Tenant)
+           .Build();
     }
 }

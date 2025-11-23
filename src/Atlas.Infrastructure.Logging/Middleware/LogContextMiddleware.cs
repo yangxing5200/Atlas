@@ -7,6 +7,9 @@ using System.Diagnostics;
 
 namespace Atlas.Infrastructure.Logging.Middleware
 {
+    /// <summary>
+    /// 日志上下文中间件 - 将业务上下文信息推送到日志系统
+    /// </summary>
     public class LogContextMiddleware
     {
         private readonly RequestDelegate _next;
@@ -16,25 +19,41 @@ namespace Atlas.Infrastructure.Logging.Middleware
             _next = next ?? throw new ArgumentNullException(nameof(next));
         }
 
-        public async Task InvokeAsync(HttpContext context, ICurrentIdentity tenantContext)
+        public async Task InvokeAsync(HttpContext context, ICurrentIdentity? currentIdentity = null)
         {
-            // 1. 准备上下文数据
+            // 1. 获取追踪标识
             var correlationId = context.TraceIdentifier;
             var operationId = Activity.Current?.Id ?? Guid.NewGuid().ToString("N");
 
-            // 添加响应头便于前端/网关追踪
-            context.Response.Headers["X-Correlation-Id"] = correlationId;
+            // 2. 添加响应头便于前端/网关追踪
+            context.Response.OnStarting(() =>
+            {
+                context.Response.Headers["X-Correlation-Id"] = correlationId;
+                context.Response.Headers["X-Operation-Id"] = operationId;
+                return Task.CompletedTask;
+            });
 
-            // 2. 仅负责推送上下文属性 (Push Properties)
-            // 这些属性会自动附加到后续 Service/Data 层产生的所有日志中
+            // 3. 推送日志上下文属性
+            // 这些属性会自动附加到后续所有日志中
             using (LogContext.PushProperty(LogContextKeys.CorrelationId, correlationId))
             using (LogContext.PushProperty(LogContextKeys.OperationId, operationId))
-            using (LogContext.PushProperty(LogContextKeys.TenantId, tenantContext.TenantId))
-            using (LogContext.PushProperty(LogContextKeys.StoreId, tenantContext.StoreId))
-            using (LogContext.PushProperty(LogContextKeys.UserId, tenantContext.UserId))
-            // 这里的 RequestPath 和 Method 其实 UseSerilogRequestLogging 默认会记录，可以根据需要决定是否移除
+            using (LogContext.PushProperty(LogContextKeys.RequestPath, context.Request.Path.Value))
+            using (LogContext.PushProperty(LogContextKeys.RequestMethod, context.Request.Method))
             {
-                await _next(context);
+                // 如果存在租户上下文，添加租户信息
+                if (currentIdentity != null)
+                {
+                    using (LogContext.PushProperty(LogContextKeys.TenantId, currentIdentity.TenantId))
+                    using (LogContext.PushProperty(LogContextKeys.StoreId, currentIdentity.StoreId))
+                    using (LogContext.PushProperty(LogContextKeys.UserId, currentIdentity.UserId))
+                    {
+                        await _next(context);
+                    }
+                }
+                else
+                {
+                    await _next(context);
+                }
             }
         }
     }

@@ -18,9 +18,9 @@ public class AtlasException : Exception
 /// </summary>
 public class TenantNotFoundException : AtlasException
 {
-    public Guid TenantId { get; }
+    public long TenantId { get; }
 
-    public TenantNotFoundException(Guid tenantId)
+    public TenantNotFoundException(long tenantId)
         : base($"Tenant with ID '{tenantId}' was not found.")
     {
         TenantId = tenantId;

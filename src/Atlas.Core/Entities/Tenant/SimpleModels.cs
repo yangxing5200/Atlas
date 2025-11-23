@@ -3,10 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using Atlas.Core.Entities;
+using Atlas.Core.Entities.Base;
+using Atlas.Core.Entities.Interfaces;
 using Atlas.Core.Enums;
 
-namespace Atlas.Models.Tenant.Entities
+namespace Atlas.Core.Entities.Tenant
 {
     // 示例1：商品 - 共享数据
     public class Product : SharedVersionedEntity, ISnowflakeId
