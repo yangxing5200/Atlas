@@ -191,12 +191,11 @@ app.UseHttpsRedirection();
 
 app.UseCors("AllowAll");
 
+// ✅ 认证和授权中间件必须按顺序
+app.UseAuthentication();  // 先认证
 // ✅ 中间件顺序很重要！
 app.UseMiddleware<TenantConnectionPreloadMiddleware>();
 app.UseMiddleware<LogContextMiddleware>();
-
-// ✅ 认证和授权中间件必须按顺序
-app.UseAuthentication();  // 先认证
 app.UseAuthorization();   // 后授权
 
 app.UseAtlasLogging();
