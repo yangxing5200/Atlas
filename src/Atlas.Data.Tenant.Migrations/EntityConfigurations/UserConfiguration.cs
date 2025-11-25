@@ -38,9 +38,6 @@ namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
                 .IsRequired()
                 .HasMaxLength(500);
 
-            builder.Property(x => x.PasswordSalt)
-                .HasMaxLength(200);
-
             builder.Property(x => x.RealName)
                 .IsRequired()
                 .HasMaxLength(100);

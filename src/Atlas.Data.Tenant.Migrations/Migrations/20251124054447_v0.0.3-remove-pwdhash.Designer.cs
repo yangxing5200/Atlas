@@ -3,6 +3,7 @@ using System;
 using Atlas.Data.Tenant.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Atlas.Data.Tenant.Migrations.Migrations
 {
     [DbContext(typeof(AtlasTenantDbContext))]
-    partial class AtlasTenantDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251124054447_v0.0.3-remove-pwdhash")]
+    partial class v003removepwdhash
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

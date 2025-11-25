@@ -32,11 +32,6 @@ namespace Atlas.Core.Entities.Tenant
         public string PasswordHash { get; set; } = string.Empty;
 
         /// <summary>
-        /// 密码盐（可选，如果使用BCrypt则已包含在Hash中）
-        /// </summary>
-        public string? PasswordSalt { get; set; }
-
-        /// <summary>
         /// 真实姓名
         /// </summary>
         public string RealName { get; set; } = string.Empty;
