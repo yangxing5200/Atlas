@@ -22,8 +22,9 @@ namespace Atlas.Data.Tenant.Repositories.Impl
         public async Task<List<Store>> GetChildDirectStoresAsync(long parentStoreId, CancellationToken ct = default)
         {
             _logger.LogInformation("Getting child direct stores for parentStoreId: {ParentStoreId}", parentStoreId);
-            return await ReadonlyQuery(s => s.ParentStoreId == parentStoreId && s.Type == StoreType.DirectOperated)
-                 .ToListAsync(ct);
+            var builder = await QueryBuilderAsync();
+            return await builder.Where(s => s.ParentStoreId == parentStoreId && s.Type == StoreType.DirectOperated)
+              .ToListAsync(ct);
         }
 
         public async Task<List<long>> GetChildStoreIdsAsync(long parentStoreId, CancellationToken ct = default)
@@ -31,15 +32,15 @@ namespace Atlas.Data.Tenant.Repositories.Impl
             _logger.LogInformation(_logger.IsEnabled(LogLevel.Debug)
                 ? "Getting child store IDs for parentStoreId: {ParentStoreId}"
                 : "Getting child store IDs.");
-            return await ReadonlyQuery(s => s.ParentStoreId == parentStoreId)
-                .Select(s => s.Id)
-                .ToListAsync(ct);
+            var builder = await QueryBuilderAsync();
+            return await builder.Where(s => s.ParentStoreId == parentStoreId).SelectToListAsync(x => x.Id, ct);
         }
 
         public async Task<List<Store>> GetSiblingDirectStoresAsync(long parentStoreId, CancellationToken ct = default)
         {
             _logger.LogInformation("Getting sibling direct stores for parentStoreId: {ParentStoreId}", parentStoreId);
-            return await ReadonlyQuery(s => s.ParentStoreId == parentStoreId && s.Type == StoreType.DirectOperated)
+            var builder = await QueryBuilderAsync();
+            return await builder.Where(s => s.ParentStoreId == parentStoreId && s.Type == StoreType.DirectOperated)
                 .ToListAsync(ct);
         }
     }

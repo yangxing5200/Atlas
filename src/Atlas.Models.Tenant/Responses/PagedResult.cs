@@ -11,7 +11,7 @@ namespace Atlas.Models.Tenant.Responses
     /// </summary>
     public class PagedResult<T>
     {
-        public PagedResult(int total, List<T> items, int pageIndex, int pageSize)
+        public PagedResult(long total, List<T> items, int pageIndex, int pageSize)
         {
             Total = total;
             Items = items;
@@ -23,7 +23,7 @@ namespace Atlas.Models.Tenant.Responses
         /// <summary>
         /// 总记录数
         /// </summary>
-        public int Total { get; set; }
+        public long Total { get; set; }
 
         /// <summary>
         /// 当前页数据

@@ -268,13 +268,7 @@ namespace Atlas.Data.Tenant.Providers
         /// </summary>
         private string AppendDatabase(string connectionString, string databaseName)
         {
-            if (string.IsNullOrEmpty(databaseName))
-            {
-                return connectionString;
-            }
-
-            var separator = connectionString.EndsWith(";") ? "" : ";";
-            return $"{connectionString}{separator}Database={databaseName}";
+            return connectionString;
         }
     }
 }

@@ -11,7 +11,7 @@ namespace Atlas.Models.Tenant.Responses
         public bool Success { get; set; }
         public string? Message { get; set; }
 
-        public int Total { get; set; }
+        public long Total { get; set; }
         public int PageIndex { get; set; }
         public int PageSize { get; set; }
         public int TotalPages { get; set; }

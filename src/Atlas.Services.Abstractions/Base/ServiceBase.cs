@@ -93,7 +93,9 @@ namespace Atlas.Services.Abstractions.Base
 
         public virtual async Task UpdateAsync(long id, TDto dto, CancellationToken ct = default)
         {
-            var entity = await _repository.QueryWithTracking(e => e.Id == id).FirstOrDefaultAsync();
+            var builder = await _repository.QueryBuilderAsync(useReadonly: false, ct);
+            var entity = await builder.Where(e => e.Id == id).FirstOrDefaultAsync(ct);
+
             if (entity == null) throw new AtlasException();
 
             _mapper.Map(dto, entity);
@@ -115,19 +117,23 @@ namespace Atlas.Services.Abstractions.Base
         /// <summary>
         /// 判断是否存在符合条件的数据
         /// </summary>
-        public virtual Task<bool> ExistsAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default)
+        public virtual async Task<bool> ExistsAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default)
         {
-            return _repository.ReadonlyQuery(predicate).AnyAsync(ct);
+            var builder = await _repository.QueryBuilderAsync(ct: ct);
+            return await builder.Where(predicate).CountAsync(ct) > 0;
         }
 
 
         /// <summary>
         /// 获取数量
         /// </summary>
-        public virtual Task<int> CountAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default)
+        public virtual async Task<int> CountAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default)
         {
-            return _repository.ReadonlyQuery(predicate).CountAsync(ct);
+            var builder = await _repository.QueryBuilderAsync(ct: ct);
+            var count = await builder.Where(predicate).CountAsync(ct);
+            return (int)count;
         }
+
 
 
         /// <summary>
@@ -142,11 +148,13 @@ namespace Atlas.Services.Abstractions.Base
             if (pageIndex < 1) pageIndex = 1;
             if (pageSize < 1) pageSize = 10;
 
-            var query = _repository.ReadonlyQuery(predicate);
+            var builder = await _repository.QueryBuilderAsync(ct: ct);
+            builder = builder.Where(predicate);
 
-            var total = await query.CountAsync(ct);
+            var total = await builder.CountAsync(ct);
 
-            var entities = await query
+            var entities = await builder
+                .OrderBy(e => e.Id) // 你可以根据需求改成其他排序
                 .Skip((pageIndex - 1) * pageSize)
                 .Take(pageSize)
                 .ToListAsync(ct);

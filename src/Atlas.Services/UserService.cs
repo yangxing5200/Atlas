@@ -224,7 +224,7 @@ namespace Atlas.Services
             try
             {
                 var user = await _repository
-                    .QueryWithTracking(u => u.Id == request.Id && !u.IsDeleted)
+                    .QueryAsync(u => u.Id == request.Id && !u.IsDeleted)
                     .FirstOrDefaultAsync();
 
                 if (user == null)
@@ -262,8 +262,9 @@ namespace Atlas.Services
         {
             try
             {
-                var user = await _repository
-                    .QueryWithTracking(u => u.Id == userId && !u.IsDeleted)
+                var builder = await _repository.QueryBuilderAsync();
+                var user = await builder
+                    .Where(u => u.Id == userId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
 
                 if (user == null)

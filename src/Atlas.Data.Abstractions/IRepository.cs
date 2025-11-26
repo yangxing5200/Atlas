@@ -1,43 +1,37 @@
-﻿using System;
+﻿using Atlas.Core.Entities.Interfaces;
+using Atlas.Models.Tenant.Responses;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Text;
 using System.Threading.Tasks;
-using Atlas.Core.Entities.Interfaces;
 
 namespace Atlas.Data.Abstractions
 {
-    /// <summary>
-    /// 仓储基础接口（非泛型）
-    /// </summary>
-    public interface IRepository
-    {
-    }
 
-    /// <summary>
-    /// 仓储接口（使用默认主键类型）
+    /// 最基础的仓储接口（不暴露 IQueryable）
     /// </summary>
-    /// <typeparam name="TEntity">实体类型</typeparam>
-    public interface IRepository<TEntity> : IRepository<TEntity, long>
-        where TEntity : class, IBaseEntity<long>
+    public interface IRepository<TEntity, TKey>
+        where TEntity : class
     {
-    }
-
-    /// <summary>
-    /// 仓储接口
-    /// </summary>
-    /// <typeparam name="TEntity"></typeparam>
-    /// <typeparam name="TKey"></typeparam>
-    public interface IRepository<TEntity, TKey> : IRepository
-       where TEntity : class, IBaseEntity<TKey>
-    {
-        IQueryable<TEntity> ReadonlyQuery(Expression<Func<TEntity, bool>> where);
-        Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default);
-        IQueryable<TEntity> QueryWithTracking(Expression<Func<TEntity, bool>> where);
         Task AddAsync(TEntity entity, CancellationToken ct = default);
         Task AddRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default);
+
+        Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default);
+        Task<TEntity?> FirstOrDefaultAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default);
+        Task<List<TEntity>> ListAsync(Expression<Func<TEntity, bool>>? predicate = null, CancellationToken ct = default);
+   
         Task RemoveAsync(TEntity entity, CancellationToken ct = default);
         Task RemoveRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default);
+        Task<QueryBuilder<TEntity>> QueryBuilderAsync(bool useReadonly = true, CancellationToken ct = default);
     }
+
+    public interface IRepository<TEntity> : IRepository<TEntity, long>
+        where TEntity : class
+    {
+    }
+
+
+
 }
