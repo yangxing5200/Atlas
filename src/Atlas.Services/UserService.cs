@@ -18,22 +18,25 @@ namespace Atlas.Services
     {
         private readonly ILogger<UserService> _logger;
         private readonly ITokenService _tokenService;
+        private readonly ITokenCacheService _tokenCacheService;
         private readonly IRepository<UserLoginLog> _userLoginLogRepository;
         private readonly IRepository<UserStore> _userStoreRepository;
 
         public UserService(
-            IRepository<User> repository,
-            IUnitOfWork unitOfWork,
-            IMapper mapper,
-            ITokenService tokenService,
-            IRepository<UserLoginLog> userLoginLogRepository,
-            IRepository<UserStore> userStoreRepository,
-            ILogger<UserService> logger)
-            : base(repository, unitOfWork, mapper)
+          IRepository<User> repository,
+          IUnitOfWork unitOfWork,
+          IMapper mapper,
+          IRepository<UserLoginLog> userLoginLogRepository,
+          IRepository<UserStore> userStoreRepository,
+          ITokenService tokenService,
+          ITokenCacheService tokenCacheService,
+          ILogger<UserService> logger)
+          : base(repository, unitOfWork, mapper)
         {
-            _tokenService = tokenService;
             _userLoginLogRepository = userLoginLogRepository;
             _userStoreRepository = userStoreRepository;
+            _tokenService = tokenService;
+            _tokenCacheService = tokenCacheService;
             _logger = logger;
         }
 
@@ -125,7 +128,8 @@ namespace Atlas.Services
         {
             try
             {
-                var loginLog = await _userLoginLogRepository.QueryWithTracking(x => x.SessionId == sessionId)
+                var loginLog = await _userLoginLogRepository
+                    .QueryWithTracking(x => x.SessionId == sessionId)
                     .FirstOrDefaultAsync();
 
                 if (loginLog != null)
@@ -133,13 +137,23 @@ namespace Atlas.Services
                     loginLog.LogoutAt = DateTime.UtcNow;
                     loginLog.LogoutType = "Manual";
                     await CommitAsync();
+
+                    // Cache invalidation after DB commit
+                    try
+                    {
+                        _tokenCacheService.InvalidateSession(sessionId);
+                    }
+                    catch (Exception cacheEx)
+                    {
+                        _logger.LogError(cacheEx, "Cache invalidation failed but logout succeeded in DB");
+                    }
                 }
 
                 return OperationResult.Succeed("登出成功");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "登出失败: SessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "Logout failed - SessionId: {SessionId}", sessionId);
                 return OperationResult.Failed("登出失败");
             }
         }
@@ -399,28 +413,25 @@ namespace Atlas.Services
                     .FirstOrDefaultAsync();
 
                 if (user == null)
-                {
                     return OperationResult.Failed("用户不存在");
-                }
 
-                // 验证旧密码
                 if (!BCrypt.Net.BCrypt.Verify(request.OldPassword, user.PasswordHash))
-                {
                     return OperationResult.Failed("旧密码不正确");
-                }
 
-                // 更新密码
                 user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
-                user.TokenVersion++; // 递增版本，使旧Token失效
+                user.TokenVersion++;
                 user.MustChangePassword = false;
 
                 await CommitAsync();
+
+                // Invalidate cache to revoke all tokens
+                _tokenCacheService.InvalidateUserTokens(userId);
 
                 return OperationResult.Succeed("密码修改成功");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "修改密码失败: UserId={UserId}", userId);
+                _logger.LogError(ex, "Change password failed - UserId: {UserId}", userId);
                 return OperationResult.Failed("修改密码失败");
             }
         }
@@ -434,21 +445,22 @@ namespace Atlas.Services
                     .FirstOrDefaultAsync();
 
                 if (user == null)
-                {
                     return OperationResult.Failed("用户不存在");
-                }
 
                 user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
-                user.TokenVersion++; // 使所有旧Token失效
+                user.TokenVersion++;
                 user.MustChangePassword = request.MustChangePassword;
 
                 await CommitAsync();
+
+                // Invalidate cache to revoke all tokens
+                _tokenCacheService.InvalidateUserTokens(request.UserId);
 
                 return OperationResult.Succeed("密码重置成功");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "重置密码失败: UserId={UserId}", request.UserId);
+                _logger.LogError(ex, "Reset password failed - UserId: {UserId}", request.UserId);
                 return OperationResult.Failed("重置密码失败");
             }
         }
@@ -608,14 +620,12 @@ namespace Atlas.Services
                     .FirstOrDefaultAsync();
 
                 if (user == null)
-                {
                     return OperationResult.Failed("用户不存在");
-                }
 
-                // 递增Token版本，使所有旧Token失效
+                // Increment TokenVersion
                 user.InvalidateAllTokens();
 
-                // 标记所有活跃会话为已登出
+                // Mark all active sessions as logged out
                 var activeSessions = await _userLoginLogRepository
                     .QueryWithTracking(l => l.UserId == userId && l.LogoutAt == null)
                     .ToListAsync();
@@ -628,14 +638,30 @@ namespace Atlas.Services
 
                 await CommitAsync();
 
+                // Cache invalidation after DB commit (order: DB → Cache)
+                _tokenCacheService.InvalidateUserTokens(userId);
+
+                foreach (var session in activeSessions)
+                {
+                    try
+                    {
+                        _tokenCacheService.InvalidateSession(session.SessionId);
+                    }
+                    catch (Exception cacheEx)
+                    {
+                        _logger.LogError(cacheEx, "Session cache invalidation failed - SessionId: {SessionId}", session.SessionId);
+                    }
+                }
+
                 return OperationResult.Succeed("已强制用户下线");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "强制下线失败: UserId={UserId}", userId);
+                _logger.LogError(ex, "Force logout failed - UserId: {UserId}", userId);
                 return OperationResult.Failed("操作失败");
             }
         }
+    
 
         public async Task<List<UserLoginLogDto>> GetActiveSessionsAsync(long userId)
         {
