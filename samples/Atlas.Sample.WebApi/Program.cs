@@ -168,7 +168,7 @@ builder.Services.AddCors(options =>
               .AllowAnyHeader();
     });
 });
-
+builder.Services.AddScoped<ITokenCacheService, TokenCacheService>();
 // ============================================
 // 9. Build Application
 // ============================================
@@ -195,6 +195,7 @@ app.UseCors("AllowAll");
 app.UseAuthentication();  // 先认证
 // ✅ 中间件顺序很重要！
 app.UseMiddleware<TenantConnectionPreloadMiddleware>();
+app.UseMiddleware<TokenVersionValidationMiddleware>();
 app.UseMiddleware<LogContextMiddleware>();
 app.UseAuthorization();   // 后授权
 
