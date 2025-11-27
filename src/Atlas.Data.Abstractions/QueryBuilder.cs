@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Query;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -24,11 +25,30 @@ namespace Atlas.Data.Abstractions
             _query = _query.Where(predicate);
             return this;
         }
-
+        /// <summary>
+        /// 保存最近一次 Include 的结果，以便 ThenInclude 使用
+        /// </summary>
         public QueryBuilder<TEntity> Include<TProperty>(Expression<Func<TEntity, TProperty>> navigation)
         {
-            _query = _query.Include(navigation);
+            var includable = _query.Include(navigation);
+            _query = includable;
+            _lastIncludable = includable;
             return this;
+        }
+   
+        private object? _lastIncludable;
+        public QueryBuilder<TEntity> ThenInclude<TPreviousProperty, TProperty>(
+            Expression<Func<TPreviousProperty, TProperty>> navigation)
+        {
+            if (_lastIncludable is IIncludableQueryable<TEntity, TPreviousProperty> includable)
+            {
+                var newIncludable = includable.ThenInclude(navigation);
+                _query = newIncludable;
+                _lastIncludable = newIncludable;
+                return this;
+            }
+
+            throw new InvalidOperationException("ThenInclude must follow Include or ThenInclude");
         }
 
         public QueryBuilder<TEntity> OrderBy<TKey>(Expression<Func<TEntity, TKey>> keySelector)
@@ -77,6 +97,10 @@ namespace Atlas.Data.Abstractions
         public Task<long> CountAsync(CancellationToken ct = default)
         {
             return _query.LongCountAsync(ct);
+        }
+        public Task<bool> AnyAsync(CancellationToken ct = default)
+        {
+            return _query.AnyAsync(ct);
         }
     }
 

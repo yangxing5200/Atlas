@@ -9,6 +9,7 @@ using Atlas.Models.Responses;
 using Atlas.Services.Abstractions;
 using Atlas.Services.Abstractions.Base;
 using AutoMapper;
+using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -45,8 +46,9 @@ namespace Atlas.Services
             try
             {
                 // 查询用户
-                var user = await _repository
-                    .ReadonlyQuery(x => x.UserName == request.UserName && x.IsDeleted == false)
+                var queryBuilder = await _repository.QueryBuilderAsync();
+                var user = await queryBuilder
+                    .Where(x => x.UserName == request.UserName && x.IsDeleted == false)
                     .Include(u => u.DefaultStore)
                     .FirstOrDefaultAsync();
 
@@ -128,8 +130,9 @@ namespace Atlas.Services
         {
             try
             {
-                var loginLog = await _userLoginLogRepository
-                    .QueryWithTracking(x => x.SessionId == sessionId)
+                var queryBuilder = await _userLoginLogRepository.QueryBuilderAsync(false);
+                var loginLog = await queryBuilder
+                    .Where(x => x.SessionId == sessionId)
                     .FirstOrDefaultAsync();
 
                 if (loginLog != null)
@@ -162,9 +165,10 @@ namespace Atlas.Services
         {
             try
             {
+                var queryBuilder = await _repository.QueryBuilderAsync();
                 // 检查用户名是否存在
-                var exists = await _repository
-                        .ReadonlyQuery(x => x.UserName == request.UserName && x.IsDeleted == false)
+                var exists = await queryBuilder
+                        .Where(x => x.UserName == request.UserName && x.IsDeleted == false)
                         .AnyAsync();
 
                 if (exists)
@@ -223,8 +227,9 @@ namespace Atlas.Services
         {
             try
             {
-                var user = await _repository
-                    .QueryAsync(u => u.Id == request.Id && !u.IsDeleted)
+                var queryBuilder = await _repository.QueryBuilderAsync();
+                var user = await queryBuilder
+                    .Where(u => u.Id == request.Id && !u.IsDeleted)
                     .FirstOrDefaultAsync();
 
                 if (user == null)
@@ -288,10 +293,11 @@ namespace Atlas.Services
 
         public async Task<UserDetailDto?> GetUserByIdAsync(long userId)
         {
-            var user = await _repository
-                .ReadonlyQuery(u => u.Id == userId && !u.IsDeleted)
+            var queryBuilder = await _repository.QueryBuilderAsync();
+            var user = await queryBuilder
+                .Where(u => u.Id == userId && !u.IsDeleted)
                 .Include(u => u.DefaultStore)
-                .Include(u => u.UserStores).ThenInclude(us => us.Store)
+                .Include(u => u.UserStores).ThenInclude<UserStore, Store>(us => us.Store)
                 .FirstOrDefaultAsync();
 
             if (user == null) return null;
@@ -337,8 +343,9 @@ namespace Atlas.Services
 
         public async Task<UserDto?> GetUserByUserNameAsync(string userName)
         {
-            var user = await _repository
-                .ReadonlyQuery(u => u.UserName == userName && !u.IsDeleted)
+            var queryBuilder = await _repository.QueryBuilderAsync();
+            var user = await queryBuilder
+                .Where(u => u.UserName == userName && !u.IsDeleted)
                 .Include(u => u.DefaultStore)
                 .FirstOrDefaultAsync();
 
@@ -347,7 +354,8 @@ namespace Atlas.Services
 
         public async Task<UserPagedResponse> GetUsersAsync(UserQueryRequest request)
         {
-            var query = _repository.ReadonlyQuery(u => !u.IsDeleted);
+            var queryBuilder = await _repository.QueryBuilderAsync();
+            var query = queryBuilder.Where(u => !u.IsDeleted);
 
             // 关键字搜索
             if (!string.IsNullOrWhiteSpace(request.Keyword))
@@ -409,8 +417,9 @@ namespace Atlas.Services
         {
             try
             {
-                var user = await _repository
-                    .QueryWithTracking(u => u.Id == userId && !u.IsDeleted)
+                var queryBuilder = await _repository.QueryBuilderAsync(false);
+                var user = await queryBuilder
+                    .Where(u => u.Id == userId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
 
                 if (user == null)
@@ -441,8 +450,9 @@ namespace Atlas.Services
         {
             try
             {
-                var user = await _repository
-                    .QueryWithTracking(u => u.Id == request.UserId && !u.IsDeleted)
+                var queryBuilder = await _repository.QueryBuilderAsync(false);
+                var user = await queryBuilder
+                    .Where(u => u.Id == request.UserId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
 
                 if (user == null)
@@ -470,9 +480,10 @@ namespace Atlas.Services
         {
             try
             {
+                var queryBuilder = await _userStoreRepository.QueryBuilderAsync(false);
                 // 删除旧的门店关联
-                var oldStores = await _userStoreRepository
-                    .QueryWithTracking(us => us.UserId == request.UserId)
+                var oldStores = await queryBuilder
+                    .Where(us => us.UserId == request.UserId)
                     .ToListAsync();
 
                 await _userStoreRepository.RemoveRangeAsync(oldStores);
@@ -504,8 +515,9 @@ namespace Atlas.Services
         {
             try
             {
-                var user = await _repository
-                    .QueryWithTracking(u => u.Id == userId && !u.IsDeleted)
+                var queryBuilder = await _repository.QueryBuilderAsync(false);
+                var user = await queryBuilder
+                    .Where(u => u.Id == userId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
 
                 if (user == null)
@@ -530,8 +542,9 @@ namespace Atlas.Services
         {
             try
             {
-                var user = await _repository
-                    .QueryWithTracking(u => u.Id == userId && !u.IsDeleted)
+                var queryBuilder = await _repository.QueryBuilderAsync(false);
+                var user = await queryBuilder
+                    .Where(u => u.Id == userId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
 
                 if (user == null)
@@ -554,7 +567,8 @@ namespace Atlas.Services
 
         public async Task<LoginLogPagedResponse> GetLoginLogsAsync(LoginLogQueryRequest request)
         {
-            var query = _userLoginLogRepository.ReadonlyQuery(x => true);
+            var queryBuilder = await _userLoginLogRepository.QueryBuilderAsync();
+            var query = queryBuilder.Where(x => true);
 
             if (request.UserId.HasValue)
             {
@@ -616,8 +630,9 @@ namespace Atlas.Services
         {
             try
             {
-                var user = await _repository
-                    .QueryWithTracking(u => u.Id == userId && !u.IsDeleted)
+                var queryBuilder = await _repository.QueryBuilderAsync(false);
+                var user = await queryBuilder
+                    .Where(u => u.Id == userId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
 
                 if (user == null)
@@ -627,8 +642,9 @@ namespace Atlas.Services
                 user.InvalidateAllTokens();
 
                 // Mark all active sessions as logged out
-                var activeSessions = await _userLoginLogRepository
-                    .QueryWithTracking(l => l.UserId == userId && l.LogoutAt == null)
+                var userLoginQueryBuilder = await _userLoginLogRepository.QueryBuilderAsync(false);
+                var activeSessions = await userLoginQueryBuilder
+                    .Where(l => l.UserId == userId && l.LogoutAt == null)
                     .ToListAsync();
 
                 foreach (var session in activeSessions)
@@ -666,8 +682,9 @@ namespace Atlas.Services
 
         public async Task<List<UserLoginLogDto>> GetActiveSessionsAsync(long userId)
         {
-            var sessions = await _userLoginLogRepository
-                .ReadonlyQuery(l => l.UserId == userId &&
+            var userLoginQueryBuilder = await _userLoginLogRepository.QueryBuilderAsync();
+            var sessions = await userLoginQueryBuilder
+                .Where(l => l.UserId == userId &&
                            l.IsSuccess &&
                            l.LogoutAt == null &&
                            l.ExpiresAt > DateTime.UtcNow)

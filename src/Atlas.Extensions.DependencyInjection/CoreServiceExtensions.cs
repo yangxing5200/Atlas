@@ -299,7 +299,6 @@ public static class AtlasCoreServiceExtensions
         services.AddAutoMapper(Assembly.GetExecutingAssembly());
         // Repository layer
         services.AddScoped<IUnitOfWork, TenantUnitOfWork>();
-        services.AddScoped(typeof(IRepository<,>), typeof(RepositoryBase<,>));
         services.AddScoped(typeof(IRepository<>), typeof(RepositoryBase<>));
         services.AddScoped<IStoreRepository, StoreRepository>();
         services.AddScoped<IStoreService, StoreService>();

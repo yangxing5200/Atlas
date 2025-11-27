@@ -132,38 +132,6 @@ namespace Atlas.Data.Tenant.Context
         }
 
         /// <summary>
-        /// Gets readonly context synchronously. Requires connection string to be preloaded.
-        /// </summary>
-        /// <exception cref="InvalidOperationException">Connection string not cached.</exception>
-        public AtlasTenantDbContext GetReadonlyDbContext()
-        {
-            ThrowIfDisposed();
-
-            if (_cachedReadonlyDbContext != null)
-                return _cachedReadonlyDbContext;
-
-            throw new InvalidOperationException(
-                "Readonly DbContext not initialized. Call GetReadonlyDbContextAsync() first " +
-                "or ensure TenantConnectionPreloadMiddleware is configured.");
-        }
-
-        /// <summary>
-        /// Gets master context synchronously. Requires connection string to be preloaded.
-        /// </summary>
-        /// <exception cref="InvalidOperationException">Connection string not cached.</exception>
-        public AtlasTenantDbContext GetDbContext()
-        {
-            ThrowIfDisposed();
-
-            if (_cachedDbContext != null)
-                return _cachedDbContext;
-
-            throw new InvalidOperationException(
-                "Master DbContext not initialized. Call GetDbContextAsync() first " +
-                "or ensure TenantConnectionPreloadMiddleware is configured.");
-        }
-
-        /// <summary>
         /// Creates new DbContext instance with specified connection string.
         /// </summary>
         private AtlasTenantDbContext CreateDbContext(string connectionString, bool isReadonly)
