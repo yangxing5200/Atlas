@@ -8,7 +8,9 @@ using Atlas.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.OpenApi.Models;
 using Serilog;
-
+using System.Text.Json.Serialization;
+using System.Text.Json;
+using Atlas.Core.Converter;
 var builder = WebApplication.CreateBuilder(args);
 
 // ============================================
@@ -91,8 +93,21 @@ builder.Services.AddAtlasLogging(builder.Configuration);
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
-        options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
-        options.JsonSerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+        // Long 转 String（解决雪花算法ID问题）
+        options.JsonSerializerOptions.Converters.Add(new JsonNumberConverter());
+        options.JsonSerializerOptions.Converters.Add(new NullableJsonNumberConverter());
+
+        // 驼峰命名
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+
+        // 忽略 null 值
+        options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+
+        // 允许尾随逗号
+        options.JsonSerializerOptions.AllowTrailingCommas = true;
+
+        // 宽松的属性名称匹配
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
     });
 
 // ============================================
@@ -168,6 +183,7 @@ builder.Services.AddCors(options =>
               .AllowAnyHeader();
     });
 });
+
 builder.Services.AddScoped<ITokenCacheService, TokenCacheService>();
 // ============================================
 // 9. Build Application
