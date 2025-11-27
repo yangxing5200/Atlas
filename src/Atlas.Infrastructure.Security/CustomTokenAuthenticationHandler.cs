@@ -16,7 +16,7 @@ namespace Atlas.Infrastructure.Security
         public bool EnableQueryStringToken { get; set; } = true;
         public bool EnableCustomHeader { get; set; } = true;
         public string CookieName { get; set; } = "atlas-auth-token";
-        public string LoginPath { get; set; } = "/login"; // ✅ 可配置的登录路径
+        public string LoginPath { get; set; } = "/login";
     }
 
     public sealed class CustomTokenAuthenticationHandler : AuthenticationHandler<CustomTokenAuthenticationOptions>
@@ -51,7 +51,7 @@ namespace Atlas.Infrastructure.Security
                     return AuthenticateResult.Fail("Invalid or expired token");
                 }
 
-                // 创建Claims
+                // ✅ 添加TokenVersion和SessionId到Claims
                 var claims = new[]
                 {
                     new Claim(ClaimTypes.NameIdentifier, tokenInfo.UserId.ToString()),
@@ -60,6 +60,8 @@ namespace Atlas.Infrastructure.Security
                     new Claim("tid", tokenInfo.TenantId.ToString()),
                     new Claim("uname", tokenInfo.UserName ?? tokenInfo.UserId.ToString()),
                     new Claim("token", token),
+                    new Claim("token_version", tokenInfo.TokenVersion.ToString()), // ✅ 新增
+                    new Claim("session_id", tokenInfo.SessionId ?? "") // ✅ 新增
                 };
 
                 var identity = new ClaimsIdentity(claims, Scheme.Name);
@@ -99,7 +101,7 @@ namespace Atlas.Infrastructure.Security
                 }
             }
 
-            // 2. ✅ Cookie（使用配置的名称）
+            // 2. Cookie
             if (string.IsNullOrEmpty(token))
             {
                 if (Request.Cookies.TryGetValue(Options.CookieName, out var cookieToken))
@@ -142,7 +144,6 @@ namespace Atlas.Infrastructure.Security
 
         protected override Task HandleChallengeAsync(AuthenticationProperties properties)
         {
-            // ✅ 改进：检测请求类型
             var isAjaxOrApi = Request.Headers["X-Requested-With"] == "XMLHttpRequest"
                 || Request.Headers[HeaderNames.Accept].ToString().Contains("application/json", StringComparison.OrdinalIgnoreCase)
                 || Request.Path.StartsWithSegments("/api");
@@ -155,7 +156,6 @@ namespace Atlas.Infrastructure.Security
             }
             else
             {
-                // ✅ 使用配置的登录路径
                 Response.StatusCode = StatusCodes.Status302Found;
                 Response.Headers[HeaderNames.Location] = Options.LoginPath;
                 return Task.CompletedTask;

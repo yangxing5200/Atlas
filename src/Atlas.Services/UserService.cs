@@ -46,7 +46,6 @@ namespace Atlas.Services
         {
             try
             {
-                // 查询用户
                 var queryBuilder = await _repository.QueryAsync();
                 var user = await queryBuilder
                     .Where(x => x.UserName == request.UserName && x.IsDeleted == false)
@@ -59,7 +58,6 @@ namespace Atlas.Services
                     return new LoginResponse { Success = false, Message = "用户名或密码错误" };
                 }
 
-                // 检查账号状态
                 if (!user.CanLogin())
                 {
                     var reason = GetLoginFailureReason(user);
@@ -67,7 +65,6 @@ namespace Atlas.Services
                     return new LoginResponse { Success = false, Message = reason };
                 }
 
-                // 验证密码
                 if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
                 {
                     user.RecordLoginFailure();
@@ -76,7 +73,6 @@ namespace Atlas.Services
                     return new LoginResponse { Success = false, Message = "用户名或密码错误" };
                 }
 
-                // 检查密码是否过期
                 if (user.IsPasswordExpired())
                 {
                     return new LoginResponse
@@ -86,8 +82,10 @@ namespace Atlas.Services
                     };
                 }
 
-                // 生成Token
-                var expirationMinutes = request.RememberMe ? 10080 : 1440; // 7天或1天
+                // ✅ 登录时缓存当前的TokenVersion
+                _tokenCacheService.SetUserTokenVersion(user.Id, user.TokenVersion);
+
+                var expirationMinutes = request.RememberMe ? 10080 : 1440;
                 var tokenInfo = TokenInfo.Create(
                     new CurrentIdentityImpl
                     {
@@ -102,13 +100,11 @@ namespace Atlas.Services
 
                 var token = _tokenService.GenerateToken(tokenInfo);
 
-                // 更新用户登录信息
                 user.ResetLoginFailedCount();
                 user.LastLoginAt = DateTime.UtcNow;
                 user.LastLoginIp = ipAddress;
                 await CommitAsync();
 
-                // 记录登录成功日志
                 await LogLoginSuccessAsync(user, tokenInfo.SessionId, ipAddress, userAgent, tokenInfo.ExpiresAt);
 
                 return new LoginResponse
@@ -435,10 +431,28 @@ namespace Atlas.Services
 
                 await CommitAsync();
 
-                // Invalidate cache to revoke all tokens
-                _tokenCacheService.InvalidateUserTokens(userId);
+                // ✅ 关键修复：先更新缓存中的TokenVersion，再清除token缓存
+                _tokenCacheService.SetUserTokenVersion(userId, user.TokenVersion);
 
-                return OperationResult.Succeed("密码修改成功");
+                // ✅ 强制所有相关Session失效
+                var userLoginQueryBuilder = await _userLoginLogRepository.QueryTrackingAsync();
+                var activeSessions = await userLoginQueryBuilder
+                    .Where(l => l.UserId == userId && l.LogoutAt == null)
+                    .ToListAsync();
+
+                foreach (var session in activeSessions)
+                {
+                    session.LogoutAt = DateTime.UtcNow;
+                    session.LogoutType = "PasswordChanged";
+                    _tokenCacheService.InvalidateSession(session.SessionId);
+                }
+
+                await CommitAsync();
+
+                _logger.LogInformation("Password changed - UserId: {UserId}, invalidated {Count} sessions",
+                    userId, activeSessions.Count);
+
+                return OperationResult.Succeed("密码修改成功，所有会话已失效，请重新登录");
             }
             catch (Exception ex)
             {
@@ -453,7 +467,7 @@ namespace Atlas.Services
             {
                 var user = await _repository.TrackingFirstOrDefaultAsync(
                     q => q.Where(u => u.Id == request.UserId && !u.IsDeleted),
-                 ct: default);
+                    ct: default);
 
                 if (user == null)
                     return OperationResult.Failed("用户不存在");
@@ -464,8 +478,25 @@ namespace Atlas.Services
 
                 await CommitAsync();
 
-                // Invalidate cache to revoke all tokens
-                _tokenCacheService.InvalidateUserTokens(request.UserId);
+                // ✅ 同样的修复
+                _tokenCacheService.SetUserTokenVersion(request.UserId, user.TokenVersion);
+
+                var userLoginQueryBuilder = await _userLoginLogRepository.QueryTrackingAsync();
+                var activeSessions = await userLoginQueryBuilder
+                    .Where(l => l.UserId == request.UserId && l.LogoutAt == null)
+                    .ToListAsync();
+
+                foreach (var session in activeSessions)
+                {
+                    session.LogoutAt = DateTime.UtcNow;
+                    session.LogoutType = "PasswordReset";
+                    _tokenCacheService.InvalidateSession(session.SessionId);
+                }
+
+                await CommitAsync();
+
+                _logger.LogInformation("Password reset - UserId: {UserId}, invalidated {Count} sessions",
+                    request.UserId, activeSessions.Count);
 
                 return OperationResult.Succeed("密码重置成功");
             }
@@ -475,6 +506,7 @@ namespace Atlas.Services
                 return OperationResult.Failed("重置密码失败");
             }
         }
+
 
         public async Task<OperationResult> AssignStoresAsync(AssignStoresRequest request)
         {
@@ -638,10 +670,12 @@ namespace Atlas.Services
                 if (user == null)
                     return OperationResult.Failed("用户不存在");
 
-                // Increment TokenVersion
                 user.InvalidateAllTokens();
+                await CommitAsync();
 
-                // Mark all active sessions as logged out
+                // ✅ 先更新TokenVersion缓存
+                _tokenCacheService.SetUserTokenVersion(userId, user.TokenVersion);
+
                 var userLoginQueryBuilder = await _userLoginLogRepository.QueryTrackingAsync();
                 var activeSessions = await userLoginQueryBuilder
                     .Where(l => l.UserId == userId && l.LogoutAt == null)
@@ -651,24 +685,13 @@ namespace Atlas.Services
                 {
                     session.LogoutAt = DateTime.UtcNow;
                     session.LogoutType = "ForceLogout";
+                    _tokenCacheService.InvalidateSession(session.SessionId);
                 }
 
                 await CommitAsync();
 
-                // Cache invalidation after DB commit (order: DB → Cache)
-                _tokenCacheService.InvalidateUserTokens(userId);
-
-                foreach (var session in activeSessions)
-                {
-                    try
-                    {
-                        _tokenCacheService.InvalidateSession(session.SessionId);
-                    }
-                    catch (Exception cacheEx)
-                    {
-                        _logger.LogError(cacheEx, "Session cache invalidation failed - SessionId: {SessionId}", session.SessionId);
-                    }
-                }
+                _logger.LogInformation("Force logout - UserId: {UserId}, TokenVersion: {Version}, invalidated {Count} sessions",
+                    userId, user.TokenVersion, activeSessions.Count);
 
                 return OperationResult.Succeed("已强制用户下线");
             }

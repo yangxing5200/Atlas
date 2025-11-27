@@ -1,6 +1,7 @@
 ﻿using Atlas.Core.Security;
 using Atlas.Core.Services;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
@@ -16,12 +17,13 @@ namespace Atlas.Infrastructure.Security
         private readonly ICryptoService _cryptoService;
         private readonly IMemoryCache _cache;
         private readonly ILogger<CustomTokenService> _logger;
+        private readonly ITokenCacheService _tokenCacheService;
         private readonly byte[] _secretKeyBytes;
         private readonly int _expirationMinutes;
         private readonly TokenOptions _options;
+        private readonly IServiceProvider _serviceProvider;
         private bool _disposed;
 
-        // Token格式常量
         private const char TOKEN_SEPARATOR = '.';
         private const string TOKEN_VERSION = "1";
         private const int EXPECTED_TOKEN_PARTS = 4;
@@ -30,18 +32,23 @@ namespace Atlas.Infrastructure.Security
             ICryptoService cryptoService,
             IMemoryCache cache,
             ILogger<CustomTokenService> logger,
-            IOptions<TokenOptions> options)
+            IOptions<TokenOptions> options,
+            IServiceProvider serviceProvider)
         {
             _cryptoService = cryptoService;
             _cache = cache;
             _logger = logger;
             _options = options.Value;
+            _serviceProvider = serviceProvider;
+            using var scope = _serviceProvider.CreateScope();
+            _tokenCacheService = scope.ServiceProvider.GetRequiredService<ITokenCacheService>();
 
             if (string.IsNullOrEmpty(_options.SecretKey))
                 throw new ArgumentException("Token secret key cannot be empty");
 
             _secretKeyBytes = Encoding.UTF8.GetBytes(_options.SecretKey);
             _expirationMinutes = _options.ExpirationMinutes > 0 ? _options.ExpirationMinutes : 1440;
+          
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -49,18 +56,11 @@ namespace Atlas.Infrastructure.Security
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
 
-            // 1. 创建token数据
             var tokenInfo = TokenInfo.Create(user, _expirationMinutes);
- 
             var serializedData = tokenInfo.ToString();
-
-            // 2. 加密数据
             var encryptedData = _cryptoService.Encrypt(serializedData);
-
-            // 3. 生成时间戳（秒级精度）
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
 
-            // 4. 构建待签名数据
             var dataToSign = new StringBuilder(256);
             dataToSign.Append(TOKEN_VERSION);
             dataToSign.Append(TOKEN_SEPARATOR);
@@ -68,10 +68,7 @@ namespace Atlas.Infrastructure.Security
             dataToSign.Append(TOKEN_SEPARATOR);
             dataToSign.Append(encryptedData);
 
-            // 5. 生成签名
             var signature = GenerateSignature(dataToSign.ToString());
-
-            // 6. 组合最终token
             dataToSign.Append(TOKEN_SEPARATOR);
             dataToSign.Append(signature);
 
@@ -82,26 +79,54 @@ namespace Atlas.Infrastructure.Security
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
 
-            // ✅ 使用SHA256作为缓存键，避免HashCode碰撞
             var cacheKey = GetSecureCacheKey(token);
 
+            // ✅ 优化1：使用复合缓存键，包含TokenVersion信息
             if (_cache.TryGetValue<TokenInfo>(cacheKey, out var cachedInfo))
             {
                 if (!cachedInfo.IsExpired)
+                {
+                    // ✅ 优化2：只检查Session黑名单（内存操作，极快）
+                    // TokenVersion已通过缓存键验证
+                    if (!string.IsNullOrEmpty(cachedInfo.SessionId) &&
+                        !_tokenCacheService.IsSessionValid(cachedInfo.SessionId))
+                    {
+                        _cache.Remove(cacheKey);
+                        _logger.LogWarning("Session invalidated - UserId: {UserId}", cachedInfo.UserId);
+                        return null;
+                    }
                     return cachedInfo;
+                }
 
                 _cache.Remove(cacheKey);
             }
 
             var result = await Task.Run(() => ValidateTokenCore(token));
 
-            // ✅ 缓存时间缩短到30秒，减少已注销token仍有效的风险
             if (result != null)
             {
+                // ✅ 优化3：验证前先检查Session
+                if (!string.IsNullOrEmpty(result.SessionId) &&
+                    !_tokenCacheService.IsSessionValid(result.SessionId))
+                {
+                    _logger.LogWarning("Session invalidated - UserId: {UserId}", result.UserId);
+                    return null;
+                }
+
+                // ✅ 优化4：验证TokenVersion（只在首次验证时）
+                var currentVersion = _tokenCacheService.GetUserTokenVersion(result.UserId ?? 0);
+                if (currentVersion.HasValue && currentVersion.Value != result.TokenVersion)
+                {
+                    _logger.LogWarning("TokenVersion mismatch - UserId: {UserId}, Expected: {Expected}, Got: {Got}",
+                        result.UserId, currentVersion.Value, result.TokenVersion);
+                    return null;
+                }
+
+                // ✅ 优化5：缓存包含TokenVersion的验证状态
                 var cacheOptions = new MemoryCacheEntryOptions
                 {
                     AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30),
-                    Size = 1 // 每个缓存条目占用1个单位
+                    Size = 1
                 };
                 _cache.Set(cacheKey, result, cacheOptions);
             }
@@ -119,7 +144,17 @@ namespace Atlas.Infrastructure.Security
             if (_cache.TryGetValue<TokenInfo>(cacheKey, out var cachedInfo))
             {
                 if (!cachedInfo.IsExpired)
+                {
+                    // 只检查Session黑名单
+                    if (!string.IsNullOrEmpty(cachedInfo.SessionId) &&
+                        !_tokenCacheService.IsSessionValid(cachedInfo.SessionId))
+                    {
+                        _cache.Remove(cacheKey);
+                        _logger.LogWarning("Session invalidated - UserId: {UserId}", cachedInfo.UserId);
+                        return null;
+                    }
                     return cachedInfo;
+                }
 
                 _cache.Remove(cacheKey);
             }
@@ -128,20 +163,30 @@ namespace Atlas.Infrastructure.Security
 
             if (result != null)
             {
+                if (!string.IsNullOrEmpty(result.SessionId) &&
+                    !_tokenCacheService.IsSessionValid(result.SessionId))
+                {
+                    _logger.LogWarning("Session invalidated - UserId: {UserId}", result.UserId);
+                    return null;
+                }
+
+                var currentVersion = _tokenCacheService.GetUserTokenVersion(result.UserId ?? 0);
+                if (currentVersion.HasValue && currentVersion.Value != result.TokenVersion)
+                {
+                    _logger.LogWarning("TokenVersion mismatch - UserId: {UserId}", result.UserId);
+                    return null;
+                }
+
                 _cache.Set(cacheKey, result, TimeSpan.FromSeconds(30));
             }
 
             return result;
         }
 
-        /// <summary>
-        /// ✅ 使用SHA256生成安全的缓存键，避免HashCode碰撞
-        /// </summary>
         private static string GetSecureCacheKey(string token)
         {
             using var sha = SHA256.Create();
             var hashBytes = sha.ComputeHash(Encoding.UTF8.GetBytes(token));
-            // 只取前16字节转Base64，减少内存占用
             return $"token_{Convert.ToBase64String(hashBytes, 0, 16)}";
         }
 
@@ -152,7 +197,6 @@ namespace Atlas.Infrastructure.Security
                 if (string.IsNullOrEmpty(token))
                     return null;
 
-                // 使用Span避免字符串分割的内存分配
                 var tokenSpan = token.AsSpan();
                 var separatorCount = 0;
                 var indices = new int[3];
@@ -173,20 +217,17 @@ namespace Atlas.Infrastructure.Security
                     return null;
                 }
 
-                // 提取token部分
                 var version = tokenSpan.Slice(0, indices[0]);
                 var timestamp = tokenSpan.Slice(indices[0] + 1, indices[1] - indices[0] - 1);
                 var encryptedData = tokenSpan.Slice(indices[1] + 1, indices[2] - indices[1] - 1);
                 var signature = tokenSpan.Slice(indices[2] + 1);
 
-                // 验证版本
                 if (!version.SequenceEqual(TOKEN_VERSION.AsSpan()))
                 {
                     _logger.LogWarning("Invalid token version");
                     return null;
                 }
 
-                // 验证时间戳（防重放攻击）
                 if (!long.TryParse(timestamp, out var tokenTimestamp))
                 {
                     _logger.LogWarning("Invalid token timestamp format");
@@ -195,16 +236,14 @@ namespace Atlas.Infrastructure.Security
 
                 var currentTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 var tokenAge = currentTimestamp - tokenTimestamp;
+                var maxTokenAge = _expirationMinutes * 60 + 300;
 
-                // ✅ Token生成超过配置时间则拒绝，且不允许未来时间戳
-                var maxTokenAge = _expirationMinutes * 60 + 300; // 额外5分钟宽限
                 if (tokenAge > maxTokenAge || tokenAge < 0)
                 {
                     _logger.LogWarning("Token timestamp out of valid range: age={TokenAge}s", tokenAge);
                     return null;
                 }
 
-                // ✅ 验证签名（使用完整签名）
                 var dataToVerify = tokenSpan.Slice(0, indices[2]).ToString();
                 var expectedSignature = GenerateSignature(dataToVerify);
 
@@ -214,7 +253,6 @@ namespace Atlas.Infrastructure.Security
                     return null;
                 }
 
-                // 解密数据
                 var decryptedData = _cryptoService.Decrypt(encryptedData.ToString());
                 if (string.IsNullOrEmpty(decryptedData))
                 {
@@ -222,7 +260,6 @@ namespace Atlas.Infrastructure.Security
                     return null;
                 }
 
-                // 解析TokenInfo
                 var tokenInfo = TokenInfo.Parse(decryptedData);
                 if (tokenInfo == null)
                 {
@@ -230,19 +267,11 @@ namespace Atlas.Infrastructure.Security
                     return null;
                 }
 
-                // 检查过期
                 if (tokenInfo.IsExpired)
                 {
                     _logger.LogDebug("Token expired for user {UserId}", tokenInfo.UserId);
                     return null;
                 }
-
-                //var currentUserVersion = await _userRepository.GetTokenVersionAsync(tokenInfo.UserId);
-                //if (tokenInfo.TokenVersion != currentUserVersion)
-                //{
-                //    _logger.LogWarning("Token version mismatch for user {UserId}", tokenInfo.UserId);
-                //    return null; // Token已被撤销
-                //}
 
                 return tokenInfo;
             }
@@ -253,9 +282,6 @@ namespace Atlas.Infrastructure.Security
             }
         }
 
-        /// <summary>
-        /// ✅ 生成完整的HMAC-SHA256签名（使用全部32字节）
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private string GenerateSignature(string data)
         {
@@ -263,7 +289,6 @@ namespace Atlas.Infrastructure.Security
             var dataBytes = Encoding.UTF8.GetBytes(data);
             var hash = hmac.ComputeHash(dataBytes);
 
-            // ✅ 使用完整的32字节签名，提高安全性
             return Convert.ToBase64String(hash)
                 .Replace('+', '-')
                 .Replace('/', '_')
@@ -288,7 +313,7 @@ namespace Atlas.Infrastructure.Security
     public class TokenOptions
     {
         public string SecretKey { get; set; } = string.Empty;
-        public int ExpirationMinutes { get; set; } = 1440; // 默认24小时
+        public int ExpirationMinutes { get; set; } = 1440;
         public string CookieName { get; set; } = "atlas-auth-token";
     }
 }

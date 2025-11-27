@@ -69,7 +69,7 @@ namespace Atlas.Infrastructure.Security
                     }
                 }
 
-                if (fieldIndex < 6) return null;
+                if (fieldIndex < 5) return null;  // ✅ 最少5个字段即可（向后兼容）
 
                 return new TokenInfo
                 {
@@ -78,7 +78,7 @@ namespace Atlas.Infrastructure.Security
                     StoreId = long.Parse(fields[2]),
                     TenantId = long.Parse(fields[3]),
                     ExpiresAt = long.Parse(fields[4]),
-                    SessionId = fields[5],
+                    SessionId = fieldIndex >= 6 ? fields[5] : GenerateSessionId(),
                     TokenVersion = fieldIndex >= 7 ? int.Parse(fields[6]) : 1
                 };
             }
