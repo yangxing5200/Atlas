@@ -2,6 +2,7 @@
 using Atlas.Core.Enums;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
+using Atlas.Data.Common.Extensions;
 using Atlas.Infrastructure.Security;
 using Atlas.Models.DTOs;
 using Atlas.Models.Requests;
@@ -46,7 +47,7 @@ namespace Atlas.Services
             try
             {
                 // 查询用户
-                var queryBuilder = await _repository.QueryBuilderAsync();
+                var queryBuilder = await _repository.QueryAsync();
                 var user = await queryBuilder
                     .Where(x => x.UserName == request.UserName && x.IsDeleted == false)
                     .Include(u => u.DefaultStore)
@@ -130,7 +131,7 @@ namespace Atlas.Services
         {
             try
             {
-                var queryBuilder = await _userLoginLogRepository.QueryBuilderAsync(false);
+                var queryBuilder = await _userLoginLogRepository.QueryTrackingAsync();
                 var loginLog = await queryBuilder
                     .Where(x => x.SessionId == sessionId)
                     .FirstOrDefaultAsync();
@@ -165,7 +166,7 @@ namespace Atlas.Services
         {
             try
             {
-                var queryBuilder = await _repository.QueryBuilderAsync();
+                var queryBuilder = await _repository.QueryAsync();
                 // 检查用户名是否存在
                 var exists = await queryBuilder
                         .Where(x => x.UserName == request.UserName && x.IsDeleted == false)
@@ -227,7 +228,7 @@ namespace Atlas.Services
         {
             try
             {
-                var queryBuilder = await _repository.QueryBuilderAsync();
+                var queryBuilder = await _repository.QueryAsync();
                 var user = await queryBuilder
                     .Where(u => u.Id == request.Id && !u.IsDeleted)
                     .FirstOrDefaultAsync();
@@ -267,7 +268,7 @@ namespace Atlas.Services
         {
             try
             {
-                var builder = await _repository.QueryBuilderAsync();
+                var builder = await _repository.QueryAsync();
                 var user = await builder
                     .Where(u => u.Id == userId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
@@ -293,7 +294,7 @@ namespace Atlas.Services
 
         public async Task<UserDetailDto?> GetUserByIdAsync(long userId)
         {
-            var queryBuilder = await _repository.QueryBuilderAsync();
+            var queryBuilder = await _repository.QueryAsync();
             var user = await queryBuilder
                 .Where(u => u.Id == userId && !u.IsDeleted)
                 .Include(u => u.DefaultStore)
@@ -343,7 +344,7 @@ namespace Atlas.Services
 
         public async Task<UserDto?> GetUserByUserNameAsync(string userName)
         {
-            var queryBuilder = await _repository.QueryBuilderAsync();
+            var queryBuilder = await _repository.QueryAsync();
             var user = await queryBuilder
                 .Where(u => u.UserName == userName && !u.IsDeleted)
                 .Include(u => u.DefaultStore)
@@ -354,7 +355,7 @@ namespace Atlas.Services
 
         public async Task<UserPagedResponse> GetUsersAsync(UserQueryRequest request)
         {
-            var queryBuilder = await _repository.QueryBuilderAsync();
+            var queryBuilder = await _repository.QueryAsync();
             var query = queryBuilder.Where(u => !u.IsDeleted);
 
             // 关键字搜索
@@ -417,7 +418,7 @@ namespace Atlas.Services
         {
             try
             {
-                var queryBuilder = await _repository.QueryBuilderAsync(false);
+                var queryBuilder = await _repository.QueryTrackingAsync();
                 var user = await queryBuilder
                     .Where(u => u.Id == userId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
@@ -450,10 +451,9 @@ namespace Atlas.Services
         {
             try
             {
-                var queryBuilder = await _repository.QueryBuilderAsync(false);
-                var user = await queryBuilder
-                    .Where(u => u.Id == request.UserId && !u.IsDeleted)
-                    .FirstOrDefaultAsync();
+                var user = await _repository.TrackingFirstOrDefaultAsync(
+                    q => q.Where(u => u.Id == request.UserId && !u.IsDeleted),
+                 ct: default);
 
                 if (user == null)
                     return OperationResult.Failed("用户不存在");
@@ -480,7 +480,7 @@ namespace Atlas.Services
         {
             try
             {
-                var queryBuilder = await _userStoreRepository.QueryBuilderAsync(false);
+                var queryBuilder = await _userStoreRepository.QueryTrackingAsync();
                 // 删除旧的门店关联
                 var oldStores = await queryBuilder
                     .Where(us => us.UserId == request.UserId)
@@ -515,7 +515,7 @@ namespace Atlas.Services
         {
             try
             {
-                var queryBuilder = await _repository.QueryBuilderAsync(false);
+                var queryBuilder = await _repository.QueryTrackingAsync();
                 var user = await queryBuilder
                     .Where(u => u.Id == userId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
@@ -542,7 +542,7 @@ namespace Atlas.Services
         {
             try
             {
-                var queryBuilder = await _repository.QueryBuilderAsync(false);
+                var queryBuilder = await _repository.QueryTrackingAsync();
                 var user = await queryBuilder
                     .Where(u => u.Id == userId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
@@ -567,7 +567,7 @@ namespace Atlas.Services
 
         public async Task<LoginLogPagedResponse> GetLoginLogsAsync(LoginLogQueryRequest request)
         {
-            var queryBuilder = await _userLoginLogRepository.QueryBuilderAsync();
+            var queryBuilder = await _userLoginLogRepository.QueryAsync();
             var query = queryBuilder.Where(x => true);
 
             if (request.UserId.HasValue)
@@ -630,7 +630,7 @@ namespace Atlas.Services
         {
             try
             {
-                var queryBuilder = await _repository.QueryBuilderAsync(false);
+                var queryBuilder = await _repository.QueryTrackingAsync();
                 var user = await queryBuilder
                     .Where(u => u.Id == userId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
@@ -642,7 +642,7 @@ namespace Atlas.Services
                 user.InvalidateAllTokens();
 
                 // Mark all active sessions as logged out
-                var userLoginQueryBuilder = await _userLoginLogRepository.QueryBuilderAsync(false);
+                var userLoginQueryBuilder = await _userLoginLogRepository.QueryTrackingAsync();
                 var activeSessions = await userLoginQueryBuilder
                     .Where(l => l.UserId == userId && l.LogoutAt == null)
                     .ToListAsync();
@@ -678,11 +678,11 @@ namespace Atlas.Services
                 return OperationResult.Failed("操作失败");
             }
         }
-    
+
 
         public async Task<List<UserLoginLogDto>> GetActiveSessionsAsync(long userId)
         {
-            var userLoginQueryBuilder = await _userLoginLogRepository.QueryBuilderAsync();
+            var userLoginQueryBuilder = await _userLoginLogRepository.QueryAsync();
             var sessions = await userLoginQueryBuilder
                 .Where(l => l.UserId == userId &&
                            l.IsSuccess &&

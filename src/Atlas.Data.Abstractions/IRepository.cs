@@ -24,7 +24,14 @@ namespace Atlas.Data.Abstractions
    
         Task RemoveAsync(TEntity entity, CancellationToken ct = default);
         Task RemoveRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default);
-        Task<QueryBuilder<TEntity>> QueryBuilderAsync(bool useReadonly = true, CancellationToken ct = default);
+        /// <summary>
+        /// 获取不可追踪查询构建器（用于只读查询）
+        /// </summary>
+        /// <param name="ct"></param>
+        /// <returns></returns>
+        Task<QueryBuilder<TEntity>> QueryAsync(CancellationToken ct = default);
+        Task<QueryBuilder<TEntity>> QueryTrackingAsync(CancellationToken ct = default);
+
     }
 
     public interface IRepository<TEntity> : IRepository<TEntity, long>

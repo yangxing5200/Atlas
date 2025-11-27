@@ -12,21 +12,6 @@ using System.Threading.Tasks;
 
 namespace Atlas.Data.Tenant.Repositories
 {
-
-    /// <summary>
-    /// 一个轻量的 QueryBuilder，允许链式构建，但最终由内部执行 ToList/First/Count
-    /// 不会泄露 IQueryable 或 DbContext 给调用方
-    /// </summary>
-    public interface IQueryBuilder<TEntity>
-    {
-        IQueryBuilder<TEntity> Where(Expression<Func<TEntity, bool>> predicate);
-        IQueryBuilder<TEntity> OrderBy<TKey>(Expression<Func<TEntity, TKey>> keySelector, bool descending = false);
-
-        Task<List<TEntity>> ToListAsync(CancellationToken ct = default);
-        Task<TEntity?> FirstOrDefaultAsync(CancellationToken ct = default);
-        Task<long> CountAsync(CancellationToken ct = default);
-        Task<PagedResult<TEntity>> ToPagedResultAsync(int pageIndex, int pageSize, CancellationToken ct = default);
-    }
     #region RepositoryBase Implementation
 
     public abstract class RepositoryBase<TEntity, TKey> : IRepository<TEntity, TKey>
@@ -62,11 +47,26 @@ namespace Atlas.Data.Tenant.Repositories
 
         #region Query
 
-        public virtual async Task<QueryBuilder<TEntity>> QueryBuilderAsync(bool useReadonly = true, CancellationToken ct = default)
+        /// <summary>
+        /// 获取只读查询构建器（AsNoTracking）
+        /// </summary>
+        public virtual async Task<QueryBuilder<TEntity>> QueryAsync(CancellationToken ct = default)
         {
-            var db = useReadonly ? await _dbFactory.GetReadonlyDbContextAsync(ct)
-                                 : await _dbFactory.GetDbContextAsync(ct);
-            var query = db.Set<TEntity>().AsNoTracking().ApplyScope(_dataScope);
+            var db = await _dbFactory.GetReadonlyDbContextAsync(ct);
+            var query = db.Set<TEntity>()
+                .AsNoTracking()
+                .ApplyScope(_dataScope);
+            return new QueryBuilder<TEntity>(query);
+        }
+
+        /// <summary>
+        /// 获取可追踪查询构建器（用于后续更新）
+        /// </summary>
+        public virtual async Task<QueryBuilder<TEntity>> QueryTrackingAsync(CancellationToken ct = default)
+        {
+            var db = await _dbFactory.GetDbContextAsync(ct);
+            var query = db.Set<TEntity>()
+                .ApplyScope(_dataScope);
             return new QueryBuilder<TEntity>(query);
         }
 
@@ -81,18 +81,19 @@ namespace Atlas.Data.Tenant.Repositories
 
         public virtual async Task<TEntity?> FirstOrDefaultAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default)
         {
-            var builder = await QueryBuilderAsync(useReadonly: true, ct);
+            var builder = await QueryAsync(ct);
             return await builder.Where(predicate).FirstOrDefaultAsync(ct);
         }
 
         public virtual async Task<List<TEntity>> ListAsync(Expression<Func<TEntity, bool>>? predicate = null, CancellationToken ct = default)
         {
-            var builder = await QueryBuilderAsync(useReadonly: true, ct);
-            if (predicate != null) builder.Where(predicate);
+            var builder = await QueryAsync(ct);
+            if (predicate != null)
+                builder = builder.Where(predicate);
             return await builder.ToListAsync(ct);
         }
 
-     
+
         #endregion
 
         #region Remove

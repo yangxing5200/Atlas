@@ -84,7 +84,7 @@ namespace Atlas.Infrastructure.Security
                 {
                     // Step 3: Cache miss - load from database
                     var userRepo = context.RequestServices.GetRequiredService<IRepository<User>>();
-                    var queryBuilder = await userRepo.QueryBuilderAsync();
+                    var queryBuilder = await userRepo.QueryAsync();
                     var user = await queryBuilder
                         .Where(u => u.Id == userId && !u.IsDeleted)
                         .FirstOrDefaultAsync();

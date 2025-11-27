@@ -93,7 +93,7 @@ namespace Atlas.Services.Abstractions.Base
 
         public virtual async Task UpdateAsync(long id, TDto dto, CancellationToken ct = default)
         {
-            var builder = await _repository.QueryBuilderAsync(useReadonly: false, ct);
+            var builder = await _repository.QueryTrackingAsync(ct);
             var entity = await builder.Where(e => e.Id == id).FirstOrDefaultAsync(ct);
 
             if (entity == null) throw new AtlasException();
@@ -119,7 +119,7 @@ namespace Atlas.Services.Abstractions.Base
         /// </summary>
         public virtual async Task<bool> ExistsAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default)
         {
-            var builder = await _repository.QueryBuilderAsync(ct: ct);
+            var builder = await _repository.QueryAsync(ct: ct);
             return await builder.Where(predicate).CountAsync(ct) > 0;
         }
 
@@ -129,7 +129,7 @@ namespace Atlas.Services.Abstractions.Base
         /// </summary>
         public virtual async Task<int> CountAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default)
         {
-            var builder = await _repository.QueryBuilderAsync(ct: ct);
+            var builder = await _repository.QueryAsync(ct: ct);
             var count = await builder.Where(predicate).CountAsync(ct);
             return (int)count;
         }
@@ -148,7 +148,7 @@ namespace Atlas.Services.Abstractions.Base
             if (pageIndex < 1) pageIndex = 1;
             if (pageSize < 1) pageSize = 10;
 
-            var builder = await _repository.QueryBuilderAsync(ct: ct);
+            var builder = await _repository.QueryAsync(ct: ct);
             builder = builder.Where(predicate);
 
             var total = await builder.CountAsync(ct);
