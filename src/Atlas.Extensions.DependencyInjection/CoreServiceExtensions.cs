@@ -4,6 +4,8 @@ using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Common.Interceptors;
 using Atlas.Data.Global;
+using Atlas.Data.Global.Repositories;
+using Atlas.Data.Global.Repositories.Impl;
 using Atlas.Data.Tenant;
 using Atlas.Data.Tenant.Context;
 using Atlas.Data.Tenant.Identity;
@@ -297,6 +299,10 @@ public static class AtlasCoreServiceExtensions
                 logger);
         });
         services.AddAutoMapper(Assembly.GetExecutingAssembly());
+
+        // Global layer
+        services.AddScoped<ITenantRepository,TenantRepository>();
+
         // Repository layer
         services.AddScoped<IUnitOfWork, TenantUnitOfWork>();
         services.AddScoped(typeof(IRepository<>), typeof(RepositoryBase<>));

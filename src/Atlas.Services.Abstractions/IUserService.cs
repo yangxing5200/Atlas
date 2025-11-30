@@ -92,5 +92,15 @@ namespace Atlas.Services.Abstractions
         /// 获取在线用户会话
         /// </summary>
         Task<List<UserLoginLogDto>> GetActiveSessionsAsync(long userId);
+
+        /// <summary>
+        /// 切换门店
+        /// </summary>
+        Task<SwitchStoreResponse> SwitchStoreAsync(long userId, SwitchStoreRequest request);
+
+        /// <summary>
+        /// 获取用户可访问的门店列表
+        /// </summary>
+        Task<List<StoreInfoDto>> GetAccessibleStoresAsync(long userId);
     }
 }

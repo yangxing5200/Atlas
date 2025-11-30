@@ -43,4 +43,18 @@ namespace Atlas.Models.DTOs
         public string District { get; set; }
         public StoreStatus Status { get; set; }
     }
+
+    /// <summary>
+    /// 门店简要信息
+    /// </summary>
+    public class StoreInfoDto
+    {
+        public long Id { get; set; }
+        public string Code { get; set; }
+        public string Name { get; set; }
+        public int Type { get; set; }
+        public string TypeName { get; set; }
+        public long? ParentStoreId { get; set; }
+        public bool IsPrimary { get; set; }
+    }
 }

@@ -14,7 +14,7 @@ namespace Atlas.Infrastructure.Caching.Core.Models
         /// </summary>
         public static readonly CacheKeyDefinition UserTokenVersion = CacheKeyDefinition
             .Create("token_version:{userId}")
-            .WithScope(CacheScope.Tenant)
+            .WithScope(CacheScope.Global)
             .WithInstanceKey("userId")
             .WithExpiration(TimeSpan.FromMinutes(10))
             .WithDescription("User TokenVersion for revocation check")

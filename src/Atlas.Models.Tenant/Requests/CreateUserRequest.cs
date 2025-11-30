@@ -8,6 +8,13 @@ namespace Atlas.Models.Requests
     /// </summary>
     public class LoginRequest
     {
+        /// <summary>
+        /// 租户域名/代码
+        /// </summary>
+        [Required(ErrorMessage = "租户域名不能为空")]
+        [StringLength(100, ErrorMessage = "租户域名长度不能超过100")]
+        public string Domain { get; set; } = string.Empty;
+
         [Required(ErrorMessage = "用户名不能为空")]
         [StringLength(50, ErrorMessage = "用户名长度不能超过50")]
         public string UserName { get; set; } = string.Empty;
@@ -15,6 +22,11 @@ namespace Atlas.Models.Requests
         [Required(ErrorMessage = "密码不能为空")]
         [StringLength(100, MinimumLength = 6, ErrorMessage = "密码长度为6-100位")]
         public string Password { get; set; } = string.Empty;
+
+        /// <summary>
+        /// 登录门店ID（可选，不传则使用默认门店）
+        /// </summary>
+        public long? StoreId { get; set; }
 
         /// <summary>
         /// 记住我（延长Token有效期）

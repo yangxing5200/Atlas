@@ -268,7 +268,7 @@ namespace Atlas.Data.Tenant.Providers
         /// </summary>
         private string AppendDatabase(string connectionString, string databaseName)
         {
-            return connectionString;
+           return connectionString;
         }
     }
 }

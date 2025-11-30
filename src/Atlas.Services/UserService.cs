@@ -1,8 +1,11 @@
-﻿using Atlas.Core.Entities.Tenant;
+﻿using Atlas.Core.Entities.Global;
+using Atlas.Core.Entities.Tenant;
 using Atlas.Core.Enums;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Common.Extensions;
+using Atlas.Data.Global.Repositories;
+using Atlas.Data.Tenant.Repositories;
 using Atlas.Infrastructure.Security;
 using Atlas.Models.DTOs;
 using Atlas.Models.Requests;
@@ -23,6 +26,8 @@ namespace Atlas.Services
         private readonly ITokenCacheService _tokenCacheService;
         private readonly IRepository<UserLoginLog> _userLoginLogRepository;
         private readonly IRepository<UserStore> _userStoreRepository;
+        private readonly IStoreRepository _storeRepository;
+        private readonly ITenantRepository _tenantRepository;
 
         public UserService(
           IRepository<User> repository,
@@ -30,6 +35,8 @@ namespace Atlas.Services
           IMapper mapper,
           IRepository<UserLoginLog> userLoginLogRepository,
           IRepository<UserStore> userStoreRepository,
+          IStoreRepository storeRepository,
+          ITenantRepository tenantRepository,
           ITokenService tokenService,
           ITokenCacheService tokenCacheService,
           ILogger<UserService> logger)
@@ -37,6 +44,8 @@ namespace Atlas.Services
         {
             _userLoginLogRepository = userLoginLogRepository;
             _userStoreRepository = userStoreRepository;
+            _storeRepository = storeRepository;
+            _tenantRepository = tenantRepository;
             _tokenService = tokenService;
             _tokenCacheService = tokenCacheService;
             _logger = logger;
@@ -46,22 +55,33 @@ namespace Atlas.Services
         {
             try
             {
-                var queryBuilder = await _repository.QueryAsync();
-                var user = await queryBuilder
-                    .Where(x => x.UserName == request.UserName && x.IsDeleted == false)
+                // ========== 第一步：租户验证 ==========
+                var tenantResult = await ValidateTenantAsync(request.Domain);
+                if (!tenantResult.Success)
+                {
+                    return new LoginResponse { Success = false, Message = tenantResult.Message };
+                }
+                var tenant = tenantResult.Data!;
+
+                // ========== 第二步：用户验证 ==========
+                var userQueryBuilder = await _repository.QueryAsync();
+                var user = await userQueryBuilder
+                    .Where(x => x.UserName == request.UserName
+                                && x.TenantId == tenant.Id
+                                && x.IsDeleted == false)
                     .Include(u => u.DefaultStore)
                     .FirstOrDefaultAsync();
 
                 if (user == null)
                 {
-                    await LogLoginFailureAsync(0, ipAddress, userAgent, "用户不存在");
+                    await LogLoginFailureAsync(0, tenant.Id, null, ipAddress, userAgent, "用户不存在");
                     return new LoginResponse { Success = false, Message = "用户名或密码错误" };
                 }
 
                 if (!user.CanLogin())
                 {
                     var reason = GetLoginFailureReason(user);
-                    await LogLoginFailureAsync(user.Id, ipAddress, userAgent, reason);
+                    await LogLoginFailureAsync(user.Id, tenant.Id, null, ipAddress, userAgent, reason);
                     return new LoginResponse { Success = false, Message = reason };
                 }
 
@@ -69,20 +89,25 @@ namespace Atlas.Services
                 {
                     user.RecordLoginFailure();
                     await CommitAsync();
-                    await LogLoginFailureAsync(user.Id, ipAddress, userAgent, "密码错误");
+                    await LogLoginFailureAsync(user.Id, tenant.Id, null, ipAddress, userAgent, "密码错误");
                     return new LoginResponse { Success = false, Message = "用户名或密码错误" };
                 }
 
-                if (user.IsPasswordExpired())
+                // ========== 第三步：获取可访问门店列表 ==========
+                var accessibleStores = await GetUserAccessibleStoresAsync(user.Id);
+                if (!accessibleStores.Any())
                 {
-                    return new LoginResponse
-                    {
-                        Success = false,
-                        Message = "密码已过期，请联系管理员重置"
-                    };
+                    return new LoginResponse { Success = false, Message = "用户没有可访问的门店" };
                 }
 
-                // ✅ 登录时缓存当前的TokenVersion
+                // ========== 第四步：确定登录门店 ==========
+                var loginStore = DetermineLoginStore(user, accessibleStores, request.StoreId);
+                if (loginStore == null)
+                {
+                    return new LoginResponse { Success = false, Message = "指定的门店不在可访问范围内" };
+                }
+
+                // ========== 第五步：生成Token ==========
                 _tokenCacheService.SetUserTokenVersion(user.Id, user.TokenVersion);
 
                 var expirationMinutes = request.RememberMe ? 10080 : 1440;
@@ -91,8 +116,8 @@ namespace Atlas.Services
                     {
                         UserId = user.Id,
                         UserName = user.UserName,
-                        TenantId = user.TenantId,
-                        StoreId = user.DefaultStoreId ?? 0
+                        TenantId = tenant.Id,
+                        StoreId = loginStore.Id
                     },
                     expirationMinutes,
                     user.TokenVersion
@@ -100,20 +125,27 @@ namespace Atlas.Services
 
                 var token = _tokenService.GenerateToken(tokenInfo);
 
+                // ========== 第六步：更新用户登录信息 ==========
                 user.ResetLoginFailedCount();
                 user.LastLoginAt = DateTime.UtcNow;
                 user.LastLoginIp = ipAddress;
                 await CommitAsync();
 
-                await LogLoginSuccessAsync(user, tokenInfo.SessionId, ipAddress, userAgent, tokenInfo.ExpiresAt);
+                await LogLoginSuccessAsync(user, loginStore.Id, tokenInfo.SessionId, ipAddress, userAgent, tokenInfo.ExpiresAt);
 
+                // ========== 第七步：返回结果 ==========
                 return new LoginResponse
                 {
                     Success = true,
                     Token = token,
                     User = MapToDto(user),
                     ExpiresIn = expirationMinutes * 60,
-                    ExpiresAt = DateTime.UtcNow.AddMinutes(expirationMinutes)
+                    ExpiresAt = DateTime.UtcNow.AddMinutes(expirationMinutes),
+                    CurrentStore = MapToStoreInfo(loginStore, accessibleStores),
+                    AccessibleStores = accessibleStores
+                    .Select(x => MapToStoreInfo(x.Store, accessibleStores))  // 传入 x.Store
+                    .ToList(),
+                    RequirePasswordChange = user.MustChangePassword || user.IsPasswordExpired()
                 };
             }
             catch (Exception ex)
@@ -123,6 +155,67 @@ namespace Atlas.Services
             }
         }
 
+        public async Task<SwitchStoreResponse> SwitchStoreAsync(long userId, SwitchStoreRequest request)
+        {
+            try
+            {
+                // 获取用户
+                var userQueryBuilder = await _repository.QueryAsync();
+                var user = await userQueryBuilder
+                    .Where(x => x.Id == userId && x.IsDeleted == false)
+                    .FirstOrDefaultAsync();
+
+                if (user == null)
+                {
+                    return new SwitchStoreResponse { Success = false, Message = "用户不存在" };
+                }
+
+                // 验证目标门店访问权限
+                var accessibleStores = await GetUserAccessibleStoresAsync(userId);
+                var targetStore = accessibleStores.FirstOrDefault(s => s.Store.Id == request.StoreId);
+
+                if (targetStore.UserStore==null)
+                {
+                    return new SwitchStoreResponse { Success = false, Message = "您没有权限访问该门店" };
+                }
+
+                // 生成新Token
+                var expirationMinutes = 1440;
+                var tokenInfo = TokenInfo.Create(
+                    new CurrentIdentityImpl
+                    {
+                        UserId = user.Id,
+                        UserName = user.UserName,
+                        TenantId = user.TenantId,
+                        StoreId = targetStore.Store.Id
+                    },
+                    expirationMinutes,
+                    user.TokenVersion
+                );
+
+                var token = _tokenService.GenerateToken(tokenInfo);
+
+                return new SwitchStoreResponse
+                {
+                    Success = true,
+                    Token = token,
+                    ExpiresIn = expirationMinutes * 60,
+                    ExpiresAt = DateTime.UtcNow.AddMinutes(expirationMinutes),
+                    CurrentStore = MapToStoreInfo(targetStore.Store, accessibleStores)
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "切换门店失败: UserId={UserId}, StoreId={StoreId}", userId, request.StoreId);
+                return new SwitchStoreResponse { Success = false, Message = "切换门店失败，请稍后重试" };
+            }
+        }
+
+        public async Task<List<StoreInfoDto>> GetAccessibleStoresAsync(long userId)
+        {
+            var accessibleStores = await GetUserAccessibleStoresAsync(userId);
+            return accessibleStores.Select(s => MapToStoreInfo(s.Store, accessibleStores)).ToList();
+        }
         public async Task<OperationResult> LogoutAsync(string sessionId)
         {
             try
@@ -828,7 +921,155 @@ namespace Atlas.Services
             if (userAgent.Contains("Edge")) return "Edge";
             return "Unknown";
         }
+        /// <summary>
+        /// 验证租户
+        /// </summary>
+        private async Task<OperationResult<Tenant>> ValidateTenantAsync(string domain)
+        {
+            var tenantQueryBuilder = await _tenantRepository.QueryAsync();
+            var tenant = await tenantQueryBuilder
+                .Where(t => t.Domain == domain && t.IsDeleted == false)
+                .FirstOrDefaultAsync();
 
+            if (tenant == null)
+            {
+                return OperationResult<Tenant>.Failed("租户不存在");
+            }
+
+            if (tenant.Status == TenantStatus.Suspended)
+            {
+                return OperationResult<Tenant>.Failed("租户已禁用");
+            }
+
+            // 可根据需要添加更多状态检查
+            if (tenant.Status == TenantStatus.Expired)
+            {
+                return OperationResult<Tenant>.Failed("租户已过期");
+            }
+
+            return OperationResult<Tenant>.Succeed(tenant);
+        }
+
+        /// <summary>
+        /// 获取用户可访问的门店列表
+        /// </summary>
+        private async Task<List<(UserStore UserStore, Store Store)>> GetUserAccessibleStoresAsync(long userId)
+        {
+            var userStoreQueryBuilder = await _userStoreRepository.QueryAsync();
+            var now = DateTime.UtcNow;
+
+            var userStores = await userStoreQueryBuilder
+                .Where(us => us.UserId == userId
+                             && (us.EffectiveFrom == null || us.EffectiveFrom <= now)
+                             && (us.EffectiveTo == null || us.EffectiveTo >= now))
+                .ToListAsync();
+
+            if (!userStores.Any())
+            {
+                return new List<(UserStore, Store)>();
+            }
+
+            var storeIds = userStores.Select(us => us.StoreId).ToList();
+            var storeQueryBuilder = await _storeRepository.QueryAsync();
+            var stores = await storeQueryBuilder
+                .Where(s => storeIds.Contains(s.Id) && s.IsActive)
+                .ToListAsync();
+
+            return userStores
+                .Join(stores, us => us.StoreId, s => s.Id, (us, s) => (us, s))
+                .ToList();
+        }
+
+        /// <summary>
+        /// 确定登录门店
+        /// </summary>
+        private Store? DetermineLoginStore(User user, List<(UserStore UserStore, Store Store)> accessibleStores, long? requestedStoreId)
+        {
+            if (requestedStoreId.HasValue)
+            {
+                // 用户指定了门店
+                var requested = accessibleStores.FirstOrDefault(s => s.Store.Id == requestedStoreId.Value);
+                return requested.Store;
+            }
+
+            // 优先使用主门店
+            var primary = accessibleStores.FirstOrDefault(s => s.UserStore.IsPrimary);
+            if (primary.Store != null)
+            {
+                return primary.Store;
+            }
+
+            // 其次使用默认门店
+            if (user.DefaultStoreId.HasValue)
+            {
+                var defaultStore = accessibleStores.FirstOrDefault(s => s.Store.Id == user.DefaultStoreId.Value);
+                if (defaultStore.Store != null)
+                {
+                    return defaultStore.Store;
+                }
+            }
+
+            // 最后使用第一个可访问的门店
+            return accessibleStores.FirstOrDefault().Store;
+        }
+
+        /// <summary>
+        /// 映射门店信息
+        /// </summary>
+        private StoreInfoDto MapToStoreInfo(Store store, List<(UserStore UserStore, Store Store)> accessibleStores)
+        {
+            var userStore = accessibleStores.FirstOrDefault(s => s.Store.Id == store.Id).UserStore;
+            return new StoreInfoDto
+            {
+                Id = store.Id,
+                Code = store.Code,
+                Name = store.Name,
+                Type = (int)store.Type,
+                TypeName = store.Type.ToString(),
+                ParentStoreId = store.ParentStoreId,
+                IsPrimary = userStore?.IsPrimary ?? false
+            };
+        }
+
+        private async Task LogLoginSuccessAsync(User user, long storeId, string sessionId, string ipAddress, string? userAgent, long expiresAt)
+        {
+            var loginLog = new UserLoginLog
+            {
+                UserId = user.Id,
+                SessionId = sessionId,
+                TokenVersion = user.TokenVersion,
+                IpAddress = ipAddress,
+                UserAgent = userAgent,
+                DeviceType = ParseDeviceType(userAgent),
+                Browser = ParseBrowser(userAgent),
+                StoreId = storeId,
+                LoginMethod = "Password",
+                IsSuccess = true,
+                ExpiresAt = DateTimeOffset.FromUnixTimeSeconds(expiresAt).UtcDateTime
+            };
+
+            await _userLoginLogRepository.AddAsync(loginLog);
+            await CommitAsync();
+        }
+
+        private async Task LogLoginFailureAsync(long userId, long tenantId, long? storeId, string ipAddress, string? userAgent, string reason)
+        {
+            var loginLog = new UserLoginLog
+            {
+                UserId = userId,
+                IpAddress = ipAddress,
+                UserAgent = userAgent,
+                DeviceType = ParseDeviceType(userAgent),
+                Browser = ParseBrowser(userAgent),
+                StoreId = storeId,
+                LoginMethod = "Password",
+                IsSuccess = false,
+                FailureReason = reason
+            };
+
+            await _userLoginLogRepository.AddAsync(loginLog);
+            await CommitAsync();
+        }
         internal class CurrentIdentityImpl : ICurrentIdentity
         {
             public long? UserId { get; set; }

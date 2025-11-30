@@ -14,6 +14,21 @@ namespace Atlas.Models.Responses
         public UserDto? User { get; set; }
         public int ExpiresIn { get; set; }
         public DateTime? ExpiresAt { get; set; }
+
+        /// <summary>
+        /// 当前登录门店
+        /// </summary>
+        public StoreInfoDto? CurrentStore { get; set; }
+
+        /// <summary>
+        /// 用户可访问的门店列表
+        /// </summary>
+        public List<StoreInfoDto>? AccessibleStores { get; set; }
+
+        /// <summary>
+        /// 是否需要修改密码
+        /// </summary>
+        public bool RequirePasswordChange { get; set; }
     }
 
 

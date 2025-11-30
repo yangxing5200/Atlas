@@ -64,7 +64,12 @@ namespace Atlas.Infrastructure.Security
 
                 // ✅ 再更新L1（立即生效）
                 var cacheKey = $"tv_{userId}";
-                _localCache.Set(cacheKey, version, TimeSpan.FromSeconds(5));
+                var cacheOptions = new MemoryCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(5),
+                    Size = 1  // 指定该缓存项占用的大小单位
+                };
+                _localCache.Set(cacheKey, version, cacheOptions);
             }
             catch (Exception ex)
             {
