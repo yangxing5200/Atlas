@@ -57,6 +57,24 @@ namespace Atlas.Infrastructure.Security
             ObjectDisposedException.ThrowIf(_disposed, this);
 
             var tokenInfo = TokenInfo.Create(user, _expirationMinutes);
+            return GenerateTokenCore(tokenInfo);
+        }
+
+        /// <summary>
+        /// Generate token using existing TokenInfo (preserves TokenVersion)
+        /// </summary>
+        public string GenerateToken(TokenInfo tokenInfo)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            if (tokenInfo == null)
+                throw new ArgumentNullException(nameof(tokenInfo));
+
+            return GenerateTokenCore(tokenInfo);
+        }
+
+        private string GenerateTokenCore(TokenInfo tokenInfo)
+        {
             var serializedData = tokenInfo.ToString();
             var encryptedData = _cryptoService.Encrypt(serializedData);
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();

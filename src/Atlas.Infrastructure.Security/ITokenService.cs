@@ -10,6 +10,10 @@ namespace Atlas.Infrastructure.Security
     public interface ITokenService
     {
         string GenerateToken(ICurrentIdentity user);
+        /// <summary>
+        /// Generate token using existing TokenInfo (preserves TokenVersion)
+        /// </summary>
+        string GenerateToken(TokenInfo tokenInfo);
         Task<TokenInfo?> ValidateTokenAsync(string token);
         TokenInfo? ValidateToken(string token);
     }
