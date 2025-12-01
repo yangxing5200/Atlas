@@ -1,4 +1,5 @@
-﻿using Atlas.Models.DTOs;
+﻿using Atlas.Core.Services;
+using Atlas.Models.DTOs;
 using Atlas.Models.Requests;
 using Atlas.Models.Responses;
 using Atlas.Services.Abstractions;
@@ -16,13 +17,16 @@ namespace Atlas.Sample.WebApi.Controllers
     public class UserController : ControllerBase
     {
         private readonly IUserService _userService;
+        private readonly ICurrentIdentity _currentIdentity;
         private readonly ILogger<UserController> _logger;
 
         public UserController(
             IUserService userService,
+            ICurrentIdentity currentIdentity,
             ILogger<UserController> logger)
         {
             _userService = userService;
+            _currentIdentity = currentIdentity;
             _logger = logger;
         }
 
@@ -67,22 +71,27 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <summary>
         /// User logout
         /// </summary>
-        /// <param name="sessionId">Session ID</param>
         /// <returns>Operation result</returns>
         [HttpPost("logout")]
         [Authorize]
         [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<ActionResult<OperationResult>> Logout([FromBody] string sessionId)
+        public async Task<ActionResult<OperationResult>> Logout()
         {
             try
             {
+                var sessionId = _currentIdentity.SessionId;
+                if (string.IsNullOrEmpty(sessionId))
+                {
+                    return BadRequest(new { message = "Session ID not found in token" });
+                }
+
                 var result = await _userService.LogoutAsync(sessionId);
                 return Ok(result);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error during logout for session {SessionId}", sessionId);
+                _logger.LogError(ex, "Error during logout for session {SessionId}", _currentIdentity.SessionId);
                 return StatusCode(500, new { message = "An error occurred during logout" });
             }
         }
@@ -271,15 +280,13 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <summary>
         /// Change user password
         /// </summary>
-        /// <param name="userId">User ID</param>
         /// <param name="request">Password change request</param>
         /// <returns>Operation result</returns>
-        [HttpPost("{userId}/change-password")]
+        [HttpPost("change-password")]
         [Authorize]
         [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<ActionResult<OperationResult>> ChangePassword(
-            [FromRoute] long userId,
             [FromBody] ChangePasswordRequest request)
         {
             try
@@ -289,7 +296,13 @@ namespace Atlas.Sample.WebApi.Controllers
                     return BadRequest(ModelState);
                 }
 
-                var result = await _userService.ChangePasswordAsync(userId, request);
+                var userId = _currentIdentity.UserId;
+                if (!userId.HasValue)
+                {
+                    return BadRequest(new { message = "User ID not found in token" });
+                }
+
+                var result = await _userService.ChangePasswordAsync(userId.Value, request);
 
                 if (!result.Success)
                 {
@@ -300,7 +313,7 @@ namespace Atlas.Sample.WebApi.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error changing password for user {UserId}", userId);
+                _logger.LogError(ex, "Error changing password for user {UserId}", _currentIdentity.UserId);
                 return StatusCode(500, new { message = "An error occurred while changing password" });
             }
         }
