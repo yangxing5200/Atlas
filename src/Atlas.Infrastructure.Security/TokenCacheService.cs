@@ -42,8 +42,8 @@ namespace Atlas.Infrastructure.Security
 
                 if (version.HasValue)
                 {
-                    // 缓存到本地，5秒过期
-                    _localCache.Set(cacheKey, version, TimeSpan.FromSeconds(5));
+                    // 缓存到本地，30秒过期
+                    _localCache.Set(cacheKey, version, TimeSpan.FromSeconds(30));
                 }
 
                 return version;
@@ -66,7 +66,7 @@ namespace Atlas.Infrastructure.Security
                 var cacheKey = $"tv_{userId}";
                 var cacheOptions = new MemoryCacheEntryOptions
                 {
-                    AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(5),
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30),
                     Size = 1  // 指定该缓存项占用的大小单位
                 };
                 _localCache.Set(cacheKey, version, cacheOptions);
