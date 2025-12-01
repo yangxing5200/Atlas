@@ -4,6 +4,7 @@ using Atlas.Data.Tenant.Providers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -30,6 +31,12 @@ namespace Atlas.Data.Tenant.Context
         private AtlasTenantDbContext? _cachedDbContext;
         private AtlasTenantDbContext? _cachedReadonlyDbContext;
         private AtlasTenantDbContext? _cachedReportDbContext;
+        
+        // Caches for explicit tenantId DbContext instances (used in login scenarios)
+        private readonly ConcurrentDictionary<long, AtlasTenantDbContext> _explicitTenantContexts = new();
+        private readonly ConcurrentDictionary<long, AtlasTenantDbContext> _explicitReadonlyTenantContexts = new();
+        private readonly ConcurrentDictionary<long, AtlasTenantDbContext> _explicitReportTenantContexts = new();
+        
         private bool _disposed;
 
         public TenantDbContextFactory(
@@ -132,45 +139,99 @@ namespace Atlas.Data.Tenant.Context
         }
 
         /// <summary>
-        /// Creates master database context with explicit tenantId.
-        /// Does not use caching since login scenarios may involve different tenants.
+        /// Gets or creates master database context with explicit tenantId.
+        /// Returns cached instance within same scope for the same tenantId.
         /// </summary>
         /// <param name="tenantId">The tenant identifier</param>
         /// <param name="ct">Cancellation token</param>
         public async Task<AtlasTenantDbContext> GetDbContextAsync(long tenantId, CancellationToken ct = default)
         {
             ThrowIfDisposed();
-            var connString = await _connProvider.GetConnStringAsync(tenantId, ct);
-            _logger.LogDebug("Created master DbContext for explicit TenantId: {TenantId}", tenantId);
-            return CreateDbContext(connString, isReadonly: false);
+            
+            if (_explicitTenantContexts.TryGetValue(tenantId, out var cached))
+                return cached;
+                
+            await _lock.WaitAsync(ct);
+            try
+            {
+                if (_explicitTenantContexts.TryGetValue(tenantId, out cached))
+                    return cached;
+                    
+                var connString = await _connProvider.GetConnStringAsync(tenantId, ct);
+                var context = CreateDbContext(connString, isReadonly: false);
+                _explicitTenantContexts.TryAdd(tenantId, context);
+                
+                _logger.LogDebug("Created master DbContext for explicit TenantId: {TenantId}", tenantId);
+                return context;
+            }
+            finally
+            {
+                _lock.Release();
+            }
         }
 
         /// <summary>
-        /// Creates readonly database context with explicit tenantId.
-        /// Does not use caching since login scenarios may involve different tenants.
+        /// Gets or creates readonly database context with explicit tenantId.
+        /// Returns cached instance within same scope for the same tenantId.
         /// </summary>
         /// <param name="tenantId">The tenant identifier</param>
         /// <param name="ct">Cancellation token</param>
         public async Task<AtlasTenantDbContext> GetReadonlyDbContextAsync(long tenantId, CancellationToken ct = default)
         {
             ThrowIfDisposed();
-            var connString = await _connProvider.GetReadonlyConnStringAsync(tenantId, ct);
-            _logger.LogDebug("Created readonly DbContext for explicit TenantId: {TenantId}", tenantId);
-            return CreateDbContext(connString, isReadonly: true);
+            
+            if (_explicitReadonlyTenantContexts.TryGetValue(tenantId, out var cached))
+                return cached;
+                
+            await _lock.WaitAsync(ct);
+            try
+            {
+                if (_explicitReadonlyTenantContexts.TryGetValue(tenantId, out cached))
+                    return cached;
+                    
+                var connString = await _connProvider.GetReadonlyConnStringAsync(tenantId, ct);
+                var context = CreateDbContext(connString, isReadonly: true);
+                _explicitReadonlyTenantContexts.TryAdd(tenantId, context);
+                
+                _logger.LogDebug("Created readonly DbContext for explicit TenantId: {TenantId}", tenantId);
+                return context;
+            }
+            finally
+            {
+                _lock.Release();
+            }
         }
 
         /// <summary>
-        /// Creates report database context with explicit tenantId.
-        /// Does not use caching since login scenarios may involve different tenants.
+        /// Gets or creates report database context with explicit tenantId.
+        /// Returns cached instance within same scope for the same tenantId.
         /// </summary>
         /// <param name="tenantId">The tenant identifier</param>
         /// <param name="ct">Cancellation token</param>
         public async Task<AtlasTenantDbContext> GetReportDbContextAsync(long tenantId, CancellationToken ct = default)
         {
             ThrowIfDisposed();
-            var connString = await _connProvider.GetReportConnStringAsync(tenantId, ct);
-            _logger.LogDebug("Created report DbContext for explicit TenantId: {TenantId}", tenantId);
-            return CreateDbContext(connString, isReadonly: true);
+            
+            if (_explicitReportTenantContexts.TryGetValue(tenantId, out var cached))
+                return cached;
+                
+            await _lock.WaitAsync(ct);
+            try
+            {
+                if (_explicitReportTenantContexts.TryGetValue(tenantId, out cached))
+                    return cached;
+                    
+                var connString = await _connProvider.GetReportConnStringAsync(tenantId, ct);
+                var context = CreateDbContext(connString, isReadonly: true);
+                _explicitReportTenantContexts.TryAdd(tenantId, context);
+                
+                _logger.LogDebug("Created report DbContext for explicit TenantId: {TenantId}", tenantId);
+                return context;
+            }
+            finally
+            {
+                _lock.Release();
+            }
         }
 
         /// <summary>
@@ -230,6 +291,25 @@ namespace Atlas.Data.Tenant.Context
                 await _cachedReportDbContext.DisposeAsync();
                 _cachedReportDbContext = null;
             }
+            
+            // Dispose all explicit tenantId DbContext instances
+            foreach (var context in _explicitTenantContexts.Values)
+            {
+                await context.DisposeAsync();
+            }
+            _explicitTenantContexts.Clear();
+            
+            foreach (var context in _explicitReadonlyTenantContexts.Values)
+            {
+                await context.DisposeAsync();
+            }
+            _explicitReadonlyTenantContexts.Clear();
+            
+            foreach (var context in _explicitReportTenantContexts.Values)
+            {
+                await context.DisposeAsync();
+            }
+            _explicitReportTenantContexts.Clear();
 
             _lock.Dispose();
             _disposed = true;

@@ -62,12 +62,6 @@ namespace Atlas.Data.Abstractions
         /// </summary>
         Task RemoveRangeAsync(IEnumerable<TEntity> entities, long tenantId, CancellationToken ct = default);
 
-        /// <summary>
-        /// 保存更改（显式传入 tenantId，用于登录等场景）
-        /// 直接调用 DbContext.SaveChangesAsync，不依赖 UnitOfWork
-        /// </summary>
-        Task<int> SaveChangesAsync(long tenantId, CancellationToken ct = default);
-
     }
 
     public interface IRepository<TEntity> : IRepository<TEntity, long>
