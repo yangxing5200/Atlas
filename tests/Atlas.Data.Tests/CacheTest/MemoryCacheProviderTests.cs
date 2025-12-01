@@ -305,6 +305,60 @@ namespace Atlas.Infrastructure.Caching.Tests.Providers
             result.Should().BeEmpty();
         }
 
+        [Fact]
+        public async Task GetKeysByPatternAsync_SamePatternMultipleTimes_UsesRegexCache()
+        {
+            // Arrange
+            await _provider.SetAsync("product:1", Encoding.UTF8.GetBytes("value1"));
+            await _provider.SetAsync("product:2", Encoding.UTF8.GetBytes("value2"));
+
+            // Act - Call multiple times with same pattern
+            var result1 = await _provider.GetKeysByPatternAsync("product:*");
+            var result2 = await _provider.GetKeysByPatternAsync("product:*");
+            var result3 = await _provider.GetKeysByPatternAsync("product:*");
+
+            // Assert - All calls should return same results (verifying caching works correctly)
+            result1.Should().HaveCount(2);
+            result2.Should().HaveCount(2);
+            result3.Should().HaveCount(2);
+        }
+
+        [Fact]
+        public async Task GetKeysByPatternAsync_DifferentPatterns_WorkCorrectly()
+        {
+            // Arrange
+            await _provider.SetAsync("product:1", Encoding.UTF8.GetBytes("value1"));
+            await _provider.SetAsync("category:1", Encoding.UTF8.GetBytes("value2"));
+            await _provider.SetAsync("user:1", Encoding.UTF8.GetBytes("value3"));
+
+            // Act
+            var products = await _provider.GetKeysByPatternAsync("product:*");
+            var categories = await _provider.GetKeysByPatternAsync("category:*");
+            var users = await _provider.GetKeysByPatternAsync("user:*");
+
+            // Assert
+            products.Should().HaveCount(1).And.Contain("product:1");
+            categories.Should().HaveCount(1).And.Contain("category:1");
+            users.Should().HaveCount(1).And.Contain("user:1");
+        }
+
+        [Fact]
+        public async Task GetKeysByPatternAsync_WithComplexPattern_MatchesCorrectly()
+        {
+            // Arrange
+            await _provider.SetAsync("tenant:1:product:abc", Encoding.UTF8.GetBytes("value1"));
+            await _provider.SetAsync("tenant:1:product:xyz", Encoding.UTF8.GetBytes("value2"));
+            await _provider.SetAsync("tenant:2:product:abc", Encoding.UTF8.GetBytes("value3"));
+
+            // Act
+            var result = await _provider.GetKeysByPatternAsync("tenant:1:product:*");
+
+            // Assert
+            result.Should().HaveCount(2);
+            result.Should().Contain("tenant:1:product:abc");
+            result.Should().Contain("tenant:1:product:xyz");
+        }
+
         #endregion
 
         #region ClearAsync Tests

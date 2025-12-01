@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace Atlas.Data.Abstractions
 {
-    public interface IUnitOfWork : IDisposable
+    public interface IUnitOfWork : IDisposable, IAsyncDisposable
     {
         /// <summary>
         /// 开启事务
