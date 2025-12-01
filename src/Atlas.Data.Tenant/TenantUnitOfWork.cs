@@ -64,6 +64,17 @@ namespace Atlas.Data.Tenant
         }
 
         /// <summary>
+        /// Persists tracked changes for explicit tenantId.
+        /// Used in login scenarios where there is no identity context.
+        /// </summary>
+        public async Task<int> SaveChangesAsync(long tenantId, CancellationToken ct = default)
+        {
+            ThrowIfDisposed();
+            var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
+            return await db.SaveChangesAsync(ct);
+        }
+
+        /// <summary>
         /// Commits the active transaction and persists all staged changes.
         /// Automatically rolls back on failure.
         /// </summary>

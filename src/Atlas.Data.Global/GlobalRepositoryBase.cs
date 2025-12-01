@@ -140,14 +140,6 @@ namespace Atlas.Data.Global
         {
             throw new NotSupportedException(TenantQueryNotSupportedMessage);
         }
-
-        /// <summary>
-        /// 全局仓储不支持基于 tenantId 的操作（全局数据库不区分租户）
-        /// </summary>
-        public virtual Task<int> SaveChangesAsync(long tenantId, CancellationToken ct = default)
-        {
-            throw new NotSupportedException(TenantQueryNotSupportedMessage);
-        }
     }
 
     /// <summary>

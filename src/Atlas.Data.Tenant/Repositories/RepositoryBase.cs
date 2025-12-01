@@ -177,16 +177,6 @@ namespace Atlas.Data.Tenant.Repositories
             db.Set<TEntity>().RemoveRange(entities);
         }
 
-        /// <summary>
-        /// 保存更改（显式传入 tenantId，用于登录等场景）
-        /// 直接调用 DbContext.SaveChangesAsync，不依赖 UnitOfWork
-        /// </summary>
-        public virtual async Task<int> SaveChangesAsync(long tenantId, CancellationToken ct = default)
-        {
-            var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
-            return await db.SaveChangesAsync(ct);
-        }
-
         #endregion
     }
 

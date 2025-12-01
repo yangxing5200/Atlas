@@ -91,7 +91,7 @@ namespace Atlas.Services
                 if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
                 {
                     user.RecordLoginFailure();
-                    await _repository.SaveChangesAsync(tenant.Id);
+                    await UnitOfWork.SaveChangesAsync(tenant.Id);
                     await LogLoginFailureAsync(user.Id, tenant.Id, null, ipAddress, userAgent, "密码错误");
                     return new LoginResponse { Success = false, Message = "用户名或密码错误" };
                 }
@@ -132,7 +132,7 @@ namespace Atlas.Services
                 user.ResetLoginFailedCount();
                 user.LastLoginAt = DateTime.UtcNow;
                 user.LastLoginIp = ipAddress;
-                await _repository.SaveChangesAsync(tenant.Id);
+                await UnitOfWork.SaveChangesAsync(tenant.Id);
 
                 await LogLoginSuccessAsync(user, tenant.Id, loginStore.Id, tokenInfo.SessionId, ipAddress, userAgent, tokenInfo.ExpiresAt);
 
@@ -1166,7 +1166,7 @@ namespace Atlas.Services
             };
 
             await _userLoginLogRepository.AddAsync(loginLog, tenantId);
-            await _userLoginLogRepository.SaveChangesAsync(tenantId);
+            await UnitOfWork.SaveChangesAsync(tenantId);
         }
 
         private async Task LogLoginFailureAsync(long userId, long tenantId, long? storeId, string ipAddress, string? userAgent, string reason)
@@ -1185,7 +1185,7 @@ namespace Atlas.Services
             };
 
             await _userLoginLogRepository.AddAsync(loginLog, tenantId);
-            await _userLoginLogRepository.SaveChangesAsync(tenantId);
+            await UnitOfWork.SaveChangesAsync(tenantId);
         }
         internal class CurrentIdentityImpl : ICurrentIdentity
         {

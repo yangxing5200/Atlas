@@ -30,6 +30,11 @@ namespace Atlas.Data.Abstractions
         Task<int> SaveChangesAsync(CancellationToken ct = default);
 
         /// <summary>
+        /// 保存更改（显式传入 tenantId，用于登录等无身份上下文的场景）
+        /// </summary>
+        Task<int> SaveChangesAsync(long tenantId, CancellationToken ct = default);
+
+        /// <summary>
         /// 是否在事务中
         /// </summary>
         bool HasActiveTransaction { get; }

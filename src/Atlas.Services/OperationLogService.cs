@@ -9,13 +9,16 @@ namespace Atlas.Services
     public class OperationLogService : IOperationLogService
     {
         private readonly IRepository<OperationLog> _repository;
+        private readonly IUnitOfWork _unitOfWork;
         private readonly ILogger<OperationLogService> _logger;
 
         public OperationLogService(
             IRepository<OperationLog> repository,
+            IUnitOfWork unitOfWork,
             ILogger<OperationLogService> logger)
         {
             _repository = repository;
+            _unitOfWork = unitOfWork;
             _logger = logger;
         }
 
@@ -40,7 +43,7 @@ namespace Atlas.Services
                 };
 
                 await _repository.AddAsync(log, request.TenantId);
-                await _repository.SaveChangesAsync(request.TenantId);
+                await _unitOfWork.SaveChangesAsync(request.TenantId);
             }
             catch (Exception ex)
             {
