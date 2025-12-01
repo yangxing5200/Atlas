@@ -1152,6 +1152,7 @@ namespace Atlas.Services
         {
             var loginLog = new UserLoginLog
             {
+                TenantId = tenantId,
                 UserId = user.Id,
                 SessionId = sessionId,
                 TokenVersion = user.TokenVersion,
@@ -1173,6 +1174,7 @@ namespace Atlas.Services
         {
             var loginLog = new UserLoginLog
             {
+                TenantId = tenantId,
                 UserId = userId,
                 IpAddress = ipAddress,
                 UserAgent = userAgent,
