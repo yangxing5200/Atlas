@@ -531,10 +531,11 @@ namespace Atlas.Services
         }
         public async Task<OperationResult> ChangePasswordAsync(long userId, ChangePasswordRequest request)
         {
+            User? user = null;
             try
             {
                 var queryBuilder = await _repository.QueryTrackingAsync();
-                var user = await queryBuilder
+                user = await queryBuilder
                     .Where(u => u.Id == userId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
 
@@ -588,15 +589,33 @@ namespace Atlas.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Change password failed - UserId: {UserId}", userId);
+
+                // 记录失败的操作日志
+                if (user != null)
+                {
+                    await _operationLogService.LogOperationAsync(
+                        tenantId: user.TenantId,
+                        userId: userId,
+                        storeId: null,
+                        sessionId: null,
+                        module: "User",
+                        operationType: "ChangePassword",
+                        description: $"用户 {user.UserName} 修改密码失败",
+                        entityId: userId,
+                        isSuccess: false,
+                        errorMessage: ex.Message);
+                }
+
                 return OperationResult.Failed("修改密码失败");
             }
         }
 
         public async Task<OperationResult> ResetPasswordAsync(ResetPasswordRequest request)
         {
+            User? user = null;
             try
             {
-                var user = await _repository.TrackingFirstOrDefaultAsync(
+                user = await _repository.TrackingFirstOrDefaultAsync(
                     q => q.Where(u => u.Id == request.UserId && !u.IsDeleted),
                     ct: default);
 
@@ -646,6 +665,23 @@ namespace Atlas.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Reset password failed - UserId: {UserId}", request.UserId);
+
+                // 记录失败的操作日志
+                if (user != null)
+                {
+                    await _operationLogService.LogOperationAsync(
+                        tenantId: user.TenantId,
+                        userId: request.UserId,
+                        storeId: null,
+                        sessionId: null,
+                        module: "User",
+                        operationType: "ResetPassword",
+                        description: $"用户 {user.UserName} 的密码重置失败",
+                        entityId: request.UserId,
+                        isSuccess: false,
+                        errorMessage: ex.Message);
+                }
+
                 return OperationResult.Failed("重置密码失败");
             }
         }
@@ -803,10 +839,11 @@ namespace Atlas.Services
 
         public async Task<OperationResult> ForceLogoutAllAsync(long userId)
         {
+            User? user = null;
             try
             {
                 var queryBuilder = await _repository.QueryTrackingAsync();
-                var user = await queryBuilder
+                user = await queryBuilder
                     .Where(u => u.Id == userId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
 
@@ -853,6 +890,23 @@ namespace Atlas.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Force logout failed - UserId: {UserId}", userId);
+
+                // 记录失败的操作日志
+                if (user != null)
+                {
+                    await _operationLogService.LogOperationAsync(
+                        tenantId: user.TenantId,
+                        userId: userId,
+                        storeId: null,
+                        sessionId: null,
+                        module: "User",
+                        operationType: "ForceLogout",
+                        description: $"用户 {user.UserName} 强制下线失败",
+                        entityId: userId,
+                        isSuccess: false,
+                        errorMessage: ex.Message);
+                }
+
                 return OperationResult.Failed("操作失败");
             }
         }
