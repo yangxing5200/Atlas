@@ -1,4 +1,4 @@
-using Atlas.Core.Entities.Tenant;
+using Atlas.Models.Requests;
 
 namespace Atlas.Services.Abstractions
 {
@@ -7,18 +7,6 @@ namespace Atlas.Services.Abstractions
         /// <summary>
         /// 记录操作日志
         /// </summary>
-        Task LogOperationAsync(
-            long tenantId,
-            long? userId,
-            long? storeId,
-            string? sessionId,
-            string module,
-            string operationType,
-            string description,
-            long? entityId = null,
-            string? changes = null,
-            string? ipAddress = null,
-            bool isSuccess = true,
-            string? errorMessage = null);
+        Task LogOperationAsync(LogOperationRequest request);
     }
 }

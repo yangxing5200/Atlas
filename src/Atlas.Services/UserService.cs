@@ -199,16 +199,17 @@ namespace Atlas.Services
                 var token = _tokenService.GenerateToken(tokenInfo);
 
                 // 记录操作日志
-                await _operationLogService.LogOperationAsync(
-                    tenantId: user.TenantId,
-                    userId: userId,
-                    storeId: targetStore.Store.Id,
-                    sessionId: null,
-                    module: "User",
-                    operationType: "SwitchStore",
-                    description: $"用户 {user.UserName} 切换到门店 {targetStore.Store.Name}",
-                    entityId: targetStore.Store.Id,
-                    isSuccess: true);
+                await _operationLogService.LogOperationAsync(new LogOperationRequest
+                {
+                    TenantId = user.TenantId,
+                    UserId = userId,
+                    StoreId = targetStore.Store.Id,
+                    Module = "User",
+                    OperationType = "SwitchStore",
+                    Description = $"用户 {user.UserName} 切换到门店 {targetStore.Store.Name}",
+                    EntityId = targetStore.Store.Id,
+                    IsSuccess = true
+                });
 
                 return new SwitchStoreResponse
                 {
@@ -570,16 +571,16 @@ namespace Atlas.Services
                 await CommitAsync();
 
                 // 记录操作日志
-                await _operationLogService.LogOperationAsync(
-                    tenantId: user.TenantId,
-                    userId: userId,
-                    storeId: null,
-                    sessionId: null,
-                    module: "User",
-                    operationType: "ChangePassword",
-                    description: $"用户 {user.UserName} 修改了密码",
-                    entityId: userId,
-                    isSuccess: true);
+                await _operationLogService.LogOperationAsync(new LogOperationRequest
+                {
+                    TenantId = user.TenantId,
+                    UserId = userId,
+                    Module = "User",
+                    OperationType = "ChangePassword",
+                    Description = $"用户 {user.UserName} 修改了密码",
+                    EntityId = userId,
+                    IsSuccess = true
+                });
 
                 _logger.LogInformation("Password changed - UserId: {UserId}, invalidated {Count} sessions",
                     userId, activeSessions.Count);
@@ -593,17 +594,17 @@ namespace Atlas.Services
                 // 记录失败的操作日志
                 if (user != null)
                 {
-                    await _operationLogService.LogOperationAsync(
-                        tenantId: user.TenantId,
-                        userId: userId,
-                        storeId: null,
-                        sessionId: null,
-                        module: "User",
-                        operationType: "ChangePassword",
-                        description: $"用户 {user.UserName} 修改密码失败",
-                        entityId: userId,
-                        isSuccess: false,
-                        errorMessage: ex.Message);
+                    await _operationLogService.LogOperationAsync(new LogOperationRequest
+                    {
+                        TenantId = user.TenantId,
+                        UserId = userId,
+                        Module = "User",
+                        OperationType = "ChangePassword",
+                        Description = $"用户 {user.UserName} 修改密码失败",
+                        EntityId = userId,
+                        IsSuccess = false,
+                        ErrorMessage = ex.Message
+                    });
                 }
 
                 return OperationResult.Failed("修改密码失败");
@@ -646,16 +647,16 @@ namespace Atlas.Services
                 await CommitAsync();
 
                 // 记录操作日志
-                await _operationLogService.LogOperationAsync(
-                    tenantId: user.TenantId,
-                    userId: request.UserId,
-                    storeId: null,
-                    sessionId: null,
-                    module: "User",
-                    operationType: "ResetPassword",
-                    description: $"用户 {user.UserName} 的密码被重置",
-                    entityId: request.UserId,
-                    isSuccess: true);
+                await _operationLogService.LogOperationAsync(new LogOperationRequest
+                {
+                    TenantId = user.TenantId,
+                    UserId = request.UserId,
+                    Module = "User",
+                    OperationType = "ResetPassword",
+                    Description = $"用户 {user.UserName} 的密码被重置",
+                    EntityId = request.UserId,
+                    IsSuccess = true
+                });
 
                 _logger.LogInformation("Password reset - UserId: {UserId}, invalidated {Count} sessions",
                     request.UserId, activeSessions.Count);
@@ -669,17 +670,17 @@ namespace Atlas.Services
                 // 记录失败的操作日志
                 if (user != null)
                 {
-                    await _operationLogService.LogOperationAsync(
-                        tenantId: user.TenantId,
-                        userId: request.UserId,
-                        storeId: null,
-                        sessionId: null,
-                        module: "User",
-                        operationType: "ResetPassword",
-                        description: $"用户 {user.UserName} 的密码重置失败",
-                        entityId: request.UserId,
-                        isSuccess: false,
-                        errorMessage: ex.Message);
+                    await _operationLogService.LogOperationAsync(new LogOperationRequest
+                    {
+                        TenantId = user.TenantId,
+                        UserId = request.UserId,
+                        Module = "User",
+                        OperationType = "ResetPassword",
+                        Description = $"用户 {user.UserName} 的密码重置失败",
+                        EntityId = request.UserId,
+                        IsSuccess = false,
+                        ErrorMessage = ex.Message
+                    });
                 }
 
                 return OperationResult.Failed("重置密码失败");
@@ -871,16 +872,16 @@ namespace Atlas.Services
                 await CommitAsync();
 
                 // 记录操作日志
-                await _operationLogService.LogOperationAsync(
-                    tenantId: user.TenantId,
-                    userId: userId,
-                    storeId: null,
-                    sessionId: null,
-                    module: "User",
-                    operationType: "ForceLogout",
-                    description: $"用户 {user.UserName} 被强制下线",
-                    entityId: userId,
-                    isSuccess: true);
+                await _operationLogService.LogOperationAsync(new LogOperationRequest
+                {
+                    TenantId = user.TenantId,
+                    UserId = userId,
+                    Module = "User",
+                    OperationType = "ForceLogout",
+                    Description = $"用户 {user.UserName} 被强制下线",
+                    EntityId = userId,
+                    IsSuccess = true
+                });
 
                 _logger.LogInformation("Force logout - UserId: {UserId}, TokenVersion: {Version}, invalidated {Count} sessions",
                     userId, user.TokenVersion, activeSessions.Count);
@@ -894,17 +895,17 @@ namespace Atlas.Services
                 // 记录失败的操作日志
                 if (user != null)
                 {
-                    await _operationLogService.LogOperationAsync(
-                        tenantId: user.TenantId,
-                        userId: userId,
-                        storeId: null,
-                        sessionId: null,
-                        module: "User",
-                        operationType: "ForceLogout",
-                        description: $"用户 {user.UserName} 强制下线失败",
-                        entityId: userId,
-                        isSuccess: false,
-                        errorMessage: ex.Message);
+                    await _operationLogService.LogOperationAsync(new LogOperationRequest
+                    {
+                        TenantId = user.TenantId,
+                        UserId = userId,
+                        Module = "User",
+                        OperationType = "ForceLogout",
+                        Description = $"用户 {user.UserName} 强制下线失败",
+                        EntityId = userId,
+                        IsSuccess = false,
+                        ErrorMessage = ex.Message
+                    });
                 }
 
                 return OperationResult.Failed("操作失败");

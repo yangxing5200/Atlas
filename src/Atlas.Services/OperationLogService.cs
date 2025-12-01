@@ -1,5 +1,6 @@
 using Atlas.Core.Entities.Tenant;
 using Atlas.Data.Abstractions;
+using Atlas.Models.Requests;
 using Atlas.Services.Abstractions;
 using Microsoft.Extensions.Logging;
 
@@ -18,44 +19,32 @@ namespace Atlas.Services
             _logger = logger;
         }
 
-        public async Task LogOperationAsync(
-            long tenantId,
-            long? userId,
-            long? storeId,
-            string? sessionId,
-            string module,
-            string operationType,
-            string description,
-            long? entityId = null,
-            string? changes = null,
-            string? ipAddress = null,
-            bool isSuccess = true,
-            string? errorMessage = null)
+        public async Task LogOperationAsync(LogOperationRequest request)
         {
             try
             {
                 var log = new OperationLog
                 {
-                    TenantId = tenantId,
-                    UserId = userId,
-                    StoreId = storeId,
-                    SessionId = sessionId,
-                    Module = module,
-                    OperationType = operationType,
-                    Description = description,
-                    EntityId = entityId,
-                    Changes = changes,
-                    IpAddress = ipAddress,
-                    IsSuccess = isSuccess,
-                    ErrorMessage = errorMessage
+                    TenantId = request.TenantId,
+                    UserId = request.UserId,
+                    StoreId = request.StoreId,
+                    SessionId = request.SessionId,
+                    Module = request.Module,
+                    OperationType = request.OperationType,
+                    Description = request.Description,
+                    EntityId = request.EntityId,
+                    Changes = request.Changes,
+                    IpAddress = request.IpAddress,
+                    IsSuccess = request.IsSuccess,
+                    ErrorMessage = request.ErrorMessage
                 };
 
-                await _repository.AddAsync(log, tenantId);
-                await _repository.SaveChangesAsync(tenantId);
+                await _repository.AddAsync(log, request.TenantId);
+                await _repository.SaveChangesAsync(request.TenantId);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to log operation: {Module}/{OperationType}", module, operationType);
+                _logger.LogError(ex, "Failed to log operation: {Module}/{OperationType}", request.Module, request.OperationType);
             }
         }
     }
