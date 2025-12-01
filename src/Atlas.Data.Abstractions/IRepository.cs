@@ -42,6 +42,32 @@ namespace Atlas.Data.Abstractions
         /// </summary>
         Task<QueryBuilder<TEntity>> QueryTrackingAsync(long tenantId, CancellationToken ct = default);
 
+        /// <summary>
+        /// 添加实体（显式传入 tenantId，用于登录等场景）
+        /// </summary>
+        Task AddAsync(TEntity entity, long tenantId, CancellationToken ct = default);
+
+        /// <summary>
+        /// 批量添加实体（显式传入 tenantId，用于登录等场景）
+        /// </summary>
+        Task AddRangeAsync(IEnumerable<TEntity> entities, long tenantId, CancellationToken ct = default);
+
+        /// <summary>
+        /// 删除实体（显式传入 tenantId，用于登录等场景）
+        /// </summary>
+        Task RemoveAsync(TEntity entity, long tenantId, CancellationToken ct = default);
+
+        /// <summary>
+        /// 批量删除实体（显式传入 tenantId，用于登录等场景）
+        /// </summary>
+        Task RemoveRangeAsync(IEnumerable<TEntity> entities, long tenantId, CancellationToken ct = default);
+
+        /// <summary>
+        /// 保存更改（显式传入 tenantId，用于登录等场景）
+        /// 直接调用 DbContext.SaveChangesAsync，不依赖 UnitOfWork
+        /// </summary>
+        Task<int> SaveChangesAsync(long tenantId, CancellationToken ct = default);
+
     }
 
     public interface IRepository<TEntity> : IRepository<TEntity, long>
