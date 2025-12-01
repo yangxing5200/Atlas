@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Atlas.Core.Entities.Tenant;
 using Atlas.Data.Abstractions;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,6 +22,17 @@ namespace Atlas.Infrastructure.Security
     {
         private readonly RequestDelegate _next;
         private readonly ILogger<TokenVersionValidationMiddleware> _logger;
+        
+        // 默认跳过验证的路径前缀
+        private static readonly string[] DefaultSkipPaths = new[]
+        {
+            "/api/user/login",
+            "/api/user/register", 
+            "/api/test/",
+            "/swagger",
+            "/health",
+            "/.well-known"
+        };
 
         public TokenVersionValidationMiddleware(
             RequestDelegate next,
@@ -32,6 +44,13 @@ namespace Atlas.Infrastructure.Security
 
         public async Task InvokeAsync(HttpContext context)
         {
+            // Step 0: 检查是否应该跳过验证
+            if (ShouldSkipValidation(context))
+            {
+                await _next(context);
+                return;
+            }
+
             if (context.User?.Identity?.IsAuthenticated != true)
             {
                 await _next(context);
@@ -92,7 +111,7 @@ namespace Atlas.Infrastructure.Security
                         .FirstOrDefaultAsync();
                     if (user == null)
                     {
-                        _logger.LogWarning("User not found or deleted - UserId: {UserId}", userId);
+                        _logger.LogWarning("User not found or deleted - UserId: {UserId}, TenantId: {TenantId}", userId, tenantId);
                         await HandleInvalidToken(context);
                         return;
                     }
@@ -123,6 +142,37 @@ namespace Atlas.Infrastructure.Security
             }
 
             await _next(context);
+        }
+
+        /// <summary>
+        /// 检查是否应该跳过 Token 版本验证
+        /// </summary>
+        private bool ShouldSkipValidation(HttpContext context)
+        {
+            // 1. 检查端点是否标记了 [AllowAnonymous]
+            var endpoint = context.GetEndpoint();
+            if (endpoint != null)
+            {
+                var allowAnonymous = endpoint.Metadata.GetMetadata<IAllowAnonymous>();
+                if (allowAnonymous != null)
+                {
+                    _logger.LogDebug("Skipping token validation for anonymous endpoint: {Path}", context.Request.Path);
+                    return true;
+                }
+            }
+
+            // 2. 检查路径白名单
+            var path = context.Request.Path.Value?.ToLowerInvariant() ?? "";
+            foreach (var skipPath in DefaultSkipPaths)
+            {
+                if (path.StartsWith(skipPath.ToLowerInvariant()))
+                {
+                    _logger.LogDebug("Skipping token validation for whitelisted path: {Path}", context.Request.Path);
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static async Task HandleInvalidToken(HttpContext context)
