@@ -15,15 +15,15 @@ using Microsoft.Net.Http.Headers;
 namespace Atlas.Infrastructure.Security
 {
     /// <summary>
-    /// Token 版本验证中间件
-    /// 必须在 TenantConnectionPreloadMiddleware 之后注册
+    /// Token version validation middleware.
+    /// Must be registered after TenantConnectionPreloadMiddleware.
     /// </summary>
     public class TokenVersionValidationMiddleware
     {
         private readonly RequestDelegate _next;
         private readonly ILogger<TokenVersionValidationMiddleware> _logger;
         
-        // 默认跳过验证的路径前缀
+        // Default path prefixes to skip token validation
         private static readonly string[] DefaultSkipPaths = new[]
         {
             "/api/user/login",
@@ -44,7 +44,7 @@ namespace Atlas.Infrastructure.Security
 
         public async Task InvokeAsync(HttpContext context)
         {
-            // Step 0: 检查是否应该跳过验证
+            // Step 0: Check if validation should be skipped
             if (ShouldSkipValidation(context))
             {
                 await _next(context);
@@ -145,11 +145,11 @@ namespace Atlas.Infrastructure.Security
         }
 
         /// <summary>
-        /// 检查是否应该跳过 Token 版本验证
+        /// Checks if token version validation should be skipped for this request.
         /// </summary>
         private bool ShouldSkipValidation(HttpContext context)
         {
-            // 1. 检查端点是否标记了 [AllowAnonymous]
+            // 1. Check if endpoint is marked with [AllowAnonymous]
             var endpoint = context.GetEndpoint();
             if (endpoint != null)
             {
@@ -161,11 +161,11 @@ namespace Atlas.Infrastructure.Security
                 }
             }
 
-            // 2. 检查路径白名单
+            // 2. Check path whitelist
             var path = context.Request.Path.Value?.ToLowerInvariant() ?? "";
             foreach (var skipPath in DefaultSkipPaths)
             {
-                if (path.StartsWith(skipPath.ToLowerInvariant()))
+                if (path.StartsWith(skipPath, StringComparison.OrdinalIgnoreCase))
                 {
                     _logger.LogDebug("Skipping token validation for whitelisted path: {Path}", context.Request.Path);
                     return true;
