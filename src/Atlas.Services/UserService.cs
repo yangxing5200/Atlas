@@ -28,6 +28,7 @@ namespace Atlas.Services
         private readonly IRepository<UserStore> _userStoreRepository;
         private readonly IStoreRepository _storeRepository;
         private readonly ITenantRepository _tenantRepository;
+        private readonly IOperationLogService _operationLogService;
 
         public UserService(
           IRepository<User> repository,
@@ -39,6 +40,7 @@ namespace Atlas.Services
           ITenantRepository tenantRepository,
           ITokenService tokenService,
           ITokenCacheService tokenCacheService,
+          IOperationLogService operationLogService,
           ILogger<UserService> logger)
           : base(repository, unitOfWork, mapper)
         {
@@ -48,6 +50,7 @@ namespace Atlas.Services
             _tenantRepository = tenantRepository;
             _tokenService = tokenService;
             _tokenCacheService = tokenCacheService;
+            _operationLogService = operationLogService;
             _logger = logger;
         }
 
@@ -194,6 +197,18 @@ namespace Atlas.Services
                 );
 
                 var token = _tokenService.GenerateToken(tokenInfo);
+
+                // 记录操作日志
+                await _operationLogService.LogOperationAsync(
+                    tenantId: user.TenantId,
+                    userId: userId,
+                    storeId: targetStore.Store.Id,
+                    sessionId: null,
+                    module: "User",
+                    operationType: "SwitchStore",
+                    description: $"用户 {user.UserName} 切换到门店 {targetStore.Store.Name}",
+                    entityId: targetStore.Store.Id,
+                    isSuccess: true);
 
                 return new SwitchStoreResponse
                 {
@@ -553,6 +568,18 @@ namespace Atlas.Services
 
                 await CommitAsync();
 
+                // 记录操作日志
+                await _operationLogService.LogOperationAsync(
+                    tenantId: user.TenantId,
+                    userId: userId,
+                    storeId: null,
+                    sessionId: null,
+                    module: "User",
+                    operationType: "ChangePassword",
+                    description: $"用户 {user.UserName} 修改了密码",
+                    entityId: userId,
+                    isSuccess: true);
+
                 _logger.LogInformation("Password changed - UserId: {UserId}, invalidated {Count} sessions",
                     userId, activeSessions.Count);
 
@@ -598,6 +625,18 @@ namespace Atlas.Services
                 }
 
                 await CommitAsync();
+
+                // 记录操作日志
+                await _operationLogService.LogOperationAsync(
+                    tenantId: user.TenantId,
+                    userId: request.UserId,
+                    storeId: null,
+                    sessionId: null,
+                    module: "User",
+                    operationType: "ResetPassword",
+                    description: $"用户 {user.UserName} 的密码被重置",
+                    entityId: request.UserId,
+                    isSuccess: true);
 
                 _logger.LogInformation("Password reset - UserId: {UserId}, invalidated {Count} sessions",
                     request.UserId, activeSessions.Count);
@@ -793,6 +832,18 @@ namespace Atlas.Services
                 }
 
                 await CommitAsync();
+
+                // 记录操作日志
+                await _operationLogService.LogOperationAsync(
+                    tenantId: user.TenantId,
+                    userId: userId,
+                    storeId: null,
+                    sessionId: null,
+                    module: "User",
+                    operationType: "ForceLogout",
+                    description: $"用户 {user.UserName} 被强制下线",
+                    entityId: userId,
+                    isSuccess: true);
 
                 _logger.LogInformation("Force logout - UserId: {UserId}, TokenVersion: {Version}, invalidated {Count} sessions",
                     userId, user.TokenVersion, activeSessions.Count);

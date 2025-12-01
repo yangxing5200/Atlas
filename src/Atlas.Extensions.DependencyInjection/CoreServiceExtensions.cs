@@ -307,10 +307,12 @@ public static class AtlasCoreServiceExtensions
         services.AddScoped<IUnitOfWork, TenantUnitOfWork>();
         services.AddScoped(typeof(IRepository<>), typeof(RepositoryBase<>));
         services.AddScoped<IStoreRepository, StoreRepository>();
+        services.AddScoped<IOperationLogRepository, OperationLogRepository>();
         services.AddScoped<IStoreService, StoreService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IUserLoginLogService, UserLoginLogService>();
+        services.AddScoped<IOperationLogService, OperationLogService>();
         return services;
     }
 
