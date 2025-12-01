@@ -41,9 +41,11 @@ namespace Atlas.Infrastructure.Security
             var userIdClaim = context.User.FindFirst("uid")?.Value;
             var tokenVersionClaim = context.User.FindFirst("token_version")?.Value;
             var sessionIdClaim = context.User.FindFirst("session_id")?.Value;
+            var tenantIdClaim = context.User.FindFirst("tid")?.Value;
 
             if (!long.TryParse(userIdClaim, out var userId) ||
-                !int.TryParse(tokenVersionClaim, out var tokenVersion))
+                !int.TryParse(tokenVersionClaim, out var tokenVersion) ||
+                !long.TryParse(tenantIdClaim, out var tenantId))
             {
                 await _next(context);
                 return;
@@ -84,7 +86,7 @@ namespace Atlas.Infrastructure.Security
                 {
                     // Step 3: Cache miss - load from database
                     var userRepo = context.RequestServices.GetRequiredService<IRepository<User>>();
-                    var queryBuilder = await userRepo.QueryAsync();
+                    var queryBuilder = await userRepo.QueryAsync(tenantId);
                     var user = await queryBuilder
                         .Where(u => u.Id == userId && !u.IsDeleted)
                         .FirstOrDefaultAsync();
