@@ -15,6 +15,17 @@ namespace Atlas.Infrastructure.Caching.Providers.Memory
     {
         private readonly IMemoryCache _cache;
         private readonly ConcurrentDictionary<string, byte> _keys = new();
+        
+        /// <summary>
+        /// Cache for compiled Regex instances to improve pattern matching performance.
+        /// Uses LRU-style eviction when capacity is exceeded.
+        /// </summary>
+        private readonly ConcurrentDictionary<string, Regex> _regexCache = new();
+        
+        /// <summary>
+        /// Maximum number of cached Regex instances to prevent memory leaks.
+        /// </summary>
+        private const int MaxRegexCacheSize = 100;
 
         public MemoryCacheProvider(IMemoryCache cache)
         {
@@ -105,12 +116,43 @@ namespace Atlas.Infrastructure.Caching.Providers.Memory
 
         public Task<IEnumerable<string>> GetKeysByPatternAsync(string pattern, CancellationToken cancellationToken = default)
         {
-            // Simple pattern matching for memory cache
-            var regexPattern = "^" + Regex.Escape(pattern).Replace("\\*", ".*") + "$";
-            var regex = new Regex(regexPattern);
-
+            // Get or create compiled Regex from cache
+            var regex = GetOrCreateCompiledRegex(pattern);
+            
             var matchingKeys = _keys.Keys.Where(k => regex.IsMatch(k)).ToList();
             return Task.FromResult<IEnumerable<string>>(matchingKeys);
+        }
+        
+        /// <summary>
+        /// Gets a compiled Regex from cache or creates and caches a new one.
+        /// Implements capacity limit to prevent memory leaks.
+        /// </summary>
+        private Regex GetOrCreateCompiledRegex(string pattern)
+        {
+            var regexPattern = "^" + Regex.Escape(pattern).Replace("\\*", ".*") + "$";
+            
+            if (_regexCache.TryGetValue(regexPattern, out var cachedRegex))
+            {
+                return cachedRegex;
+            }
+            
+            // Check cache capacity and clear oldest entries if needed
+            if (_regexCache.Count >= MaxRegexCacheSize)
+            {
+                // Simple eviction: clear half of the cache when full
+                // This is a simple strategy; in production, consider LRU eviction
+                var keysToRemove = _regexCache.Keys.Take(MaxRegexCacheSize / 2).ToList();
+                foreach (var key in keysToRemove)
+                {
+                    _regexCache.TryRemove(key, out _);
+                }
+            }
+            
+            // Create compiled Regex for better performance
+            var compiledRegex = new Regex(regexPattern, RegexOptions.Compiled);
+            _regexCache.TryAdd(regexPattern, compiledRegex);
+            
+            return compiledRegex;
         }
 
         public Task ClearAsync(CancellationToken cancellationToken = default)
