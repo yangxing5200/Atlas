@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Atlas.Core.Entities.Tenant;
 using Atlas.Data.Abstractions;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,13 +15,24 @@ using Microsoft.Net.Http.Headers;
 namespace Atlas.Infrastructure.Security
 {
     /// <summary>
-    /// Token 版本验证中间件
-    /// 必须在 TenantConnectionPreloadMiddleware 之后注册
+    /// Token version validation middleware.
+    /// Must be registered after TenantConnectionPreloadMiddleware.
     /// </summary>
     public class TokenVersionValidationMiddleware
     {
         private readonly RequestDelegate _next;
         private readonly ILogger<TokenVersionValidationMiddleware> _logger;
+        
+        // Default path prefixes to skip token validation
+        private static readonly string[] DefaultSkipPaths = new[]
+        {
+            "/api/user/login",
+            "/api/user/register", 
+            "/api/test/",
+            "/swagger",
+            "/health",
+            "/.well-known"
+        };
 
         public TokenVersionValidationMiddleware(
             RequestDelegate next,
@@ -32,6 +44,13 @@ namespace Atlas.Infrastructure.Security
 
         public async Task InvokeAsync(HttpContext context)
         {
+            // Step 0: Check if validation should be skipped
+            if (ShouldSkipValidation(context))
+            {
+                await _next(context);
+                return;
+            }
+
             if (context.User?.Identity?.IsAuthenticated != true)
             {
                 await _next(context);
@@ -92,7 +111,7 @@ namespace Atlas.Infrastructure.Security
                         .FirstOrDefaultAsync();
                     if (user == null)
                     {
-                        _logger.LogWarning("User not found or deleted - UserId: {UserId}", userId);
+                        _logger.LogWarning("User not found or deleted - UserId: {UserId}, TenantId: {TenantId}", userId, tenantId);
                         await HandleInvalidToken(context);
                         return;
                     }
@@ -123,6 +142,37 @@ namespace Atlas.Infrastructure.Security
             }
 
             await _next(context);
+        }
+
+        /// <summary>
+        /// Checks if token version validation should be skipped for this request.
+        /// </summary>
+        private bool ShouldSkipValidation(HttpContext context)
+        {
+            // 1. Check if endpoint is marked with [AllowAnonymous]
+            var endpoint = context.GetEndpoint();
+            if (endpoint != null)
+            {
+                var allowAnonymous = endpoint.Metadata.GetMetadata<IAllowAnonymous>();
+                if (allowAnonymous != null)
+                {
+                    _logger.LogDebug("Skipping token validation for anonymous endpoint: {Path}", context.Request.Path);
+                    return true;
+                }
+            }
+
+            // 2. Check path whitelist
+            var path = context.Request.Path.Value?.ToLowerInvariant() ?? "";
+            foreach (var skipPath in DefaultSkipPaths)
+            {
+                if (path.StartsWith(skipPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogDebug("Skipping token validation for whitelisted path: {Path}", context.Request.Path);
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static async Task HandleInvalidToken(HttpContext context)
