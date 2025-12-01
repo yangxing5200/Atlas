@@ -40,7 +40,7 @@ namespace Atlas.Data.Tenant
         }
 
         /// <summary>
-        /// 应用过滤器
+        /// 应用数据范围过滤器（支持显式参数优先级）
         /// </summary>
         /// <param name="query">查询</param>
         /// <param name="scope">数据范围</param>
