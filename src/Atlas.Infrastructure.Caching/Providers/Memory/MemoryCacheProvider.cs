@@ -136,11 +136,13 @@ namespace Atlas.Infrastructure.Caching.Providers.Memory
                 return cachedRegex;
             }
             
-            // Check cache capacity and clear oldest entries if needed
+            // Check cache capacity - simple eviction when full
+            // Note: For production use with high pattern diversity, consider implementing
+            // a proper LRU cache. For typical use cases with limited pattern variety,
+            // this simple approach provides good performance.
             if (_regexCache.Count >= MaxRegexCacheSize)
             {
-                // Simple eviction: clear half of the cache when full
-                // This is a simple strategy; in production, consider LRU eviction
+                // Clear half of the cache to make room for new patterns
                 var keysToRemove = _regexCache.Keys.Take(MaxRegexCacheSize / 2).ToList();
                 foreach (var key in keysToRemove)
                 {

@@ -6,6 +6,7 @@ using Atlas.Data.Common.Interceptors;
 using Atlas.Data.Global;
 using Atlas.Data.Global.Repositories;
 using Atlas.Data.Global.Repositories.Impl;
+using Atlas.Data.Global.UnitOfWork;
 using Atlas.Data.Tenant;
 using Atlas.Data.Tenant.Context;
 using Atlas.Data.Tenant.Identity;
@@ -14,6 +15,7 @@ using Atlas.Data.Tenant.Repositories;
 using Atlas.Data.Tenant.Repositories.Impl;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Extensions;
+using Atlas.Infrastructure.Caching.Locking;
 using Atlas.Services;
 using Atlas.Services.Abstractions;
 using Microsoft.AspNetCore.Http;
@@ -122,6 +124,9 @@ public static class AtlasCoreServiceExtensions
             ?? DefaultCacheProvider;
 
         services.AddAtlasCaching();
+        
+        // Register distributed lock provider (memory-based for single instance)
+        services.TryAddSingleton<IDistributedLockProvider, MemoryDistributedLockProvider>();
 
         return provider switch
         {
@@ -302,6 +307,7 @@ public static class AtlasCoreServiceExtensions
 
         // Global layer
         services.AddScoped<ITenantRepository,TenantRepository>();
+        services.AddScoped<IGlobalUnitOfWork, GlobalUnitOfWork>();
 
         // Repository layer
         services.AddScoped<IUnitOfWork, TenantUnitOfWork>();

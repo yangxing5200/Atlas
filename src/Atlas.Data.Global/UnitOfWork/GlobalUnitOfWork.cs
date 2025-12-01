@@ -17,7 +17,7 @@ namespace Atlas.Data.Global.UnitOfWork
     /// - Do NOT share instances across threads or concurrent tasks.
     /// - Use one instance per logical unit of work (typically per HTTP request).
     /// </remarks>
-    public class GlobalUnitOfWork : IUnitOfWork, IAsyncDisposable
+    public class GlobalUnitOfWork : IGlobalUnitOfWork
     {
         private readonly AtlasGlobalDbContext _dbContext;
         private IDbContextTransaction? _transaction;
@@ -53,17 +53,6 @@ namespace Atlas.Data.Global.UnitOfWork
         {
             ThrowIfDisposed();
             return await _dbContext.SaveChangesAsync(ct);
-        }
-
-        /// <summary>
-        /// Persists tracked changes for explicit tenantId.
-        /// For GlobalUnitOfWork, this is the same as SaveChangesAsync since global context
-        /// is tenant-agnostic.
-        /// </summary>
-        public Task<int> SaveChangesAsync(long tenantId, CancellationToken ct = default)
-        {
-            // Global context is tenant-agnostic, just call SaveChangesAsync
-            return SaveChangesAsync(ct);
         }
 
         /// <summary>
@@ -140,9 +129,10 @@ namespace Atlas.Data.Global.UnitOfWork
                     {
                         _transaction.Rollback();
                     }
-                    catch
+                    catch (Exception)
                     {
-                        // Log but don't throw during dispose
+                        // Rollback may fail if connection is already closed.
+                        // This is acceptable during dispose - we're cleaning up resources.
                     }
                 }
                 _transaction.Dispose();

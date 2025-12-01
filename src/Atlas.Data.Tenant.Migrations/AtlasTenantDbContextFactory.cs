@@ -71,9 +71,10 @@ namespace Atlas.Data.Tenant.Migrations
                     return configConnectionString;
                 }
             }
-            catch
+            catch (Exception)
             {
-                // Ignore configuration errors in design-time scenario
+                // Configuration files may not exist in design-time scenario (EF migrations).
+                // This is expected - fall through to default connection string.
             }
             
             // 3. Fall back to default for local development

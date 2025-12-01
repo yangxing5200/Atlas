@@ -46,12 +46,10 @@ namespace Atlas.Infrastructure.Caching.Locking
             {
                 _expiryTimer?.Dispose();
                 _semaphore.Release();
-
-                // Clean up the semaphore from store if no waiters
-                if (_semaphore.CurrentCount == 1)
-                {
-                    _lockStore.TryRemove(Resource, out _);
-                }
+                
+                // Note: We don't remove the semaphore from the store to avoid race conditions.
+                // The semaphore will be reused for subsequent lock requests on the same resource.
+                // This is a safe tradeoff as the memory overhead is minimal.
             }
 
             await Task.CompletedTask;
