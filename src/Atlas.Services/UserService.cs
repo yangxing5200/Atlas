@@ -88,13 +88,13 @@ namespace Atlas.Services
                 if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
                 {
                     user.RecordLoginFailure();
-                    await CommitAsync();
+                    await _repository.SaveChangesAsync(tenant.Id);
                     await LogLoginFailureAsync(user.Id, tenant.Id, null, ipAddress, userAgent, "密码错误");
                     return new LoginResponse { Success = false, Message = "用户名或密码错误" };
                 }
 
                 // ========== 第三步：获取可访问门店列表 ==========
-                var accessibleStores = await GetUserAccessibleStoresAsync(user.Id);
+                var accessibleStores = await GetUserAccessibleStoresAsync(user.Id, tenant.Id);
                 if (!accessibleStores.Any())
                 {
                     return new LoginResponse { Success = false, Message = "用户没有可访问的门店" };
@@ -129,9 +129,9 @@ namespace Atlas.Services
                 user.ResetLoginFailedCount();
                 user.LastLoginAt = DateTime.UtcNow;
                 user.LastLoginIp = ipAddress;
-                await CommitAsync();
+                await _repository.SaveChangesAsync(tenant.Id);
 
-                await LogLoginSuccessAsync(user, loginStore.Id, tokenInfo.SessionId, ipAddress, userAgent, tokenInfo.ExpiresAt);
+                await LogLoginSuccessAsync(user, tenant.Id, loginStore.Id, tokenInfo.SessionId, ipAddress, userAgent, tokenInfo.ExpiresAt);
 
                 // ========== 第七步：返回结果 ==========
                 return new LoginResponse
@@ -171,7 +171,7 @@ namespace Atlas.Services
                 }
 
                 // 验证目标门店访问权限
-                var accessibleStores = await GetUserAccessibleStoresAsync(userId);
+                var accessibleStores = await GetUserAccessibleStoresAsync(userId, user.TenantId);
                 var targetStore = accessibleStores.FirstOrDefault(s => s.Store.Id == request.StoreId);
 
                 if (targetStore.UserStore==null)
@@ -213,7 +213,18 @@ namespace Atlas.Services
 
         public async Task<List<StoreInfoDto>> GetAccessibleStoresAsync(long userId)
         {
-            var accessibleStores = await GetUserAccessibleStoresAsync(userId);
+            // Get user to retrieve tenantId
+            var userQueryBuilder = await _repository.QueryAsync();
+            var user = await userQueryBuilder
+                .Where(x => x.Id == userId && x.IsDeleted == false)
+                .FirstOrDefaultAsync();
+            
+            if (user == null)
+            {
+                return new List<StoreInfoDto>();
+            }
+            
+            var accessibleStores = await GetUserAccessibleStoresAsync(userId, user.TenantId);
             return accessibleStores.Select(s => MapToStoreInfo(s.Store, accessibleStores)).ToList();
         }
         public async Task<OperationResult> LogoutAsync(string sessionId)
@@ -953,9 +964,9 @@ namespace Atlas.Services
         /// <summary>
         /// 获取用户可访问的门店列表
         /// </summary>
-        private async Task<List<(UserStore UserStore, Store Store)>> GetUserAccessibleStoresAsync(long userId)
+        private async Task<List<(UserStore UserStore, Store Store)>> GetUserAccessibleStoresAsync(long userId, long tenantId)
         {
-            var userStoreQueryBuilder = await _userStoreRepository.QueryAsync();
+            var userStoreQueryBuilder = await _userStoreRepository.QueryAsync(tenantId);
             var now = DateTime.UtcNow;
 
             var userStores = await userStoreQueryBuilder
@@ -970,7 +981,7 @@ namespace Atlas.Services
             }
 
             var storeIds = userStores.Select(us => us.StoreId).ToList();
-            var storeQueryBuilder = await _storeRepository.QueryAsync();
+            var storeQueryBuilder = await _storeRepository.QueryAsync(tenantId);
             var stores = await storeQueryBuilder
                 .Where(s => storeIds.Contains(s.Id) && s.IsActive)
                 .ToListAsync();
@@ -1031,7 +1042,7 @@ namespace Atlas.Services
             };
         }
 
-        private async Task LogLoginSuccessAsync(User user, long storeId, string sessionId, string ipAddress, string? userAgent, long expiresAt)
+        private async Task LogLoginSuccessAsync(User user, long tenantId, long storeId, string sessionId, string ipAddress, string? userAgent, long expiresAt)
         {
             var loginLog = new UserLoginLog
             {
@@ -1048,8 +1059,8 @@ namespace Atlas.Services
                 ExpiresAt = DateTimeOffset.FromUnixTimeSeconds(expiresAt).UtcDateTime
             };
 
-            await _userLoginLogRepository.AddAsync(loginLog);
-            await CommitAsync();
+            await _userLoginLogRepository.AddAsync(loginLog, tenantId);
+            await _userLoginLogRepository.SaveChangesAsync(tenantId);
         }
 
         private async Task LogLoginFailureAsync(long userId, long tenantId, long? storeId, string ipAddress, string? userAgent, string reason)
@@ -1067,8 +1078,8 @@ namespace Atlas.Services
                 FailureReason = reason
             };
 
-            await _userLoginLogRepository.AddAsync(loginLog);
-            await CommitAsync();
+            await _userLoginLogRepository.AddAsync(loginLog, tenantId);
+            await _userLoginLogRepository.SaveChangesAsync(tenantId);
         }
         internal class CurrentIdentityImpl : ICurrentIdentity
         {

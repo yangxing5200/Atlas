@@ -43,6 +43,26 @@ namespace Atlas.Data.Tenant.Repositories
             await db.Set<TEntity>().AddRangeAsync(entities, ct);
         }
 
+        /// <summary>
+        /// 添加实体（显式传入 tenantId，用于登录等场景）
+        /// </summary>
+        public virtual async Task AddAsync(TEntity entity, long tenantId, CancellationToken ct = default)
+        {
+            if (entity == null) throw new ArgumentNullException(nameof(entity));
+            var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
+            await db.Set<TEntity>().AddAsync(entity, ct);
+        }
+
+        /// <summary>
+        /// 批量添加实体（显式传入 tenantId，用于登录等场景）
+        /// </summary>
+        public virtual async Task AddRangeAsync(IEnumerable<TEntity> entities, long tenantId, CancellationToken ct = default)
+        {
+            if (entities == null) throw new ArgumentNullException(nameof(entities));
+            var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
+            await db.Set<TEntity>().AddRangeAsync(entities, ct);
+        }
+
         #endregion
 
         #region Query
@@ -133,6 +153,36 @@ namespace Atlas.Data.Tenant.Repositories
             if (entities == null) throw new ArgumentNullException(nameof(entities));
             var db = await _dbFactory.GetDbContextAsync(ct);
             db.Set<TEntity>().RemoveRange(entities);
+        }
+
+        /// <summary>
+        /// 删除实体（显式传入 tenantId，用于登录等场景）
+        /// </summary>
+        public virtual async Task RemoveAsync(TEntity entity, long tenantId, CancellationToken ct = default)
+        {
+            if (entity == null) throw new ArgumentNullException(nameof(entity));
+            var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
+            db.Set<TEntity>().Remove(entity);
+        }
+
+        /// <summary>
+        /// 批量删除实体（显式传入 tenantId，用于登录等场景）
+        /// </summary>
+        public virtual async Task RemoveRangeAsync(IEnumerable<TEntity> entities, long tenantId, CancellationToken ct = default)
+        {
+            if (entities == null) throw new ArgumentNullException(nameof(entities));
+            var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
+            db.Set<TEntity>().RemoveRange(entities);
+        }
+
+        /// <summary>
+        /// 保存更改（显式传入 tenantId，用于登录等场景）
+        /// 直接调用 DbContext.SaveChangesAsync，不依赖 UnitOfWork
+        /// </summary>
+        public virtual async Task<int> SaveChangesAsync(long tenantId, CancellationToken ct = default)
+        {
+            var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
+            return await db.SaveChangesAsync(ct);
         }
 
         #endregion
