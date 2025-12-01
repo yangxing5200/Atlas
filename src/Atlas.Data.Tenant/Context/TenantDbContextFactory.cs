@@ -135,6 +135,8 @@ namespace Atlas.Data.Tenant.Context
         /// Creates master database context with explicit tenantId.
         /// Does not use caching since login scenarios may involve different tenants.
         /// </summary>
+        /// <param name="tenantId">The tenant identifier</param>
+        /// <param name="ct">Cancellation token</param>
         public async Task<AtlasTenantDbContext> GetDbContextAsync(long tenantId, CancellationToken ct = default)
         {
             ThrowIfDisposed();
@@ -147,6 +149,8 @@ namespace Atlas.Data.Tenant.Context
         /// Creates readonly database context with explicit tenantId.
         /// Does not use caching since login scenarios may involve different tenants.
         /// </summary>
+        /// <param name="tenantId">The tenant identifier</param>
+        /// <param name="ct">Cancellation token</param>
         public async Task<AtlasTenantDbContext> GetReadonlyDbContextAsync(long tenantId, CancellationToken ct = default)
         {
             ThrowIfDisposed();
@@ -159,6 +163,8 @@ namespace Atlas.Data.Tenant.Context
         /// Creates report database context with explicit tenantId.
         /// Does not use caching since login scenarios may involve different tenants.
         /// </summary>
+        /// <param name="tenantId">The tenant identifier</param>
+        /// <param name="ct">Cancellation token</param>
         public async Task<AtlasTenantDbContext> GetReportDbContextAsync(long tenantId, CancellationToken ct = default)
         {
             ThrowIfDisposed();

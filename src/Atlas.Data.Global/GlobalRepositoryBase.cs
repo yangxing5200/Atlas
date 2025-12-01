@@ -18,6 +18,8 @@ namespace Atlas.Data.Global
     public class GlobalRepositoryBase<TEntity, TKey> : IRepository<TEntity, TKey>
         where TEntity : class
     {
+        private const string TenantQueryNotSupportedMessage = "全局仓储不支持基于 tenantId 的查询";
+
         protected readonly AtlasGlobalDbContext _context;
         protected readonly DbSet<TEntity> _dbSet;
 
@@ -96,7 +98,7 @@ namespace Atlas.Data.Global
         /// </summary>
         public virtual Task<QueryBuilder<TEntity>> QueryAsync(long tenantId, CancellationToken ct = default)
         {
-            throw new NotSupportedException("全局仓储不支持基于 tenantId 的查询");
+            throw new NotSupportedException(TenantQueryNotSupportedMessage);
         }
 
         /// <summary>
@@ -104,7 +106,7 @@ namespace Atlas.Data.Global
         /// </summary>
         public virtual Task<QueryBuilder<TEntity>> QueryTrackingAsync(long tenantId, CancellationToken ct = default)
         {
-            throw new NotSupportedException("全局仓储不支持基于 tenantId 的查询");
+            throw new NotSupportedException(TenantQueryNotSupportedMessage);
         }
     }
 
