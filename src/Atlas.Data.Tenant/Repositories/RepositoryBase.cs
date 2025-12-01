@@ -70,6 +70,29 @@ namespace Atlas.Data.Tenant.Repositories
             return new QueryBuilder<TEntity>(query);
         }
 
+        /// <summary>
+        /// 获取只读查询构建器（AsNoTracking）- 显式传入 tenantId
+        /// </summary>
+        public virtual async Task<QueryBuilder<TEntity>> QueryAsync(long tenantId, CancellationToken ct = default)
+        {
+            var db = await _dbFactory.GetReadonlyDbContextAsync(tenantId, ct);
+            var query = db.Set<TEntity>()
+                .AsNoTracking()
+                .ApplyScope(_dataScope);
+            return new QueryBuilder<TEntity>(query);
+        }
+
+        /// <summary>
+        /// 获取可追踪查询构建器（用于后续更新）- 显式传入 tenantId
+        /// </summary>
+        public virtual async Task<QueryBuilder<TEntity>> QueryTrackingAsync(long tenantId, CancellationToken ct = default)
+        {
+            var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
+            var query = db.Set<TEntity>()
+                .ApplyScope(_dataScope);
+            return new QueryBuilder<TEntity>(query);
+        }
+
         public virtual async Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default)
         {
             var db = await _dbFactory.GetReportDbContextAsync(ct);

@@ -132,6 +132,42 @@ namespace Atlas.Data.Tenant.Context
         }
 
         /// <summary>
+        /// Creates master database context with explicit tenantId.
+        /// Does not use caching since login scenarios may involve different tenants.
+        /// </summary>
+        public async Task<AtlasTenantDbContext> GetDbContextAsync(long tenantId, CancellationToken ct = default)
+        {
+            ThrowIfDisposed();
+            var connString = await _connProvider.GetConnStringAsync(tenantId, ct);
+            _logger.LogDebug("Created master DbContext for explicit TenantId: {TenantId}", tenantId);
+            return CreateDbContext(connString, isReadonly: false);
+        }
+
+        /// <summary>
+        /// Creates readonly database context with explicit tenantId.
+        /// Does not use caching since login scenarios may involve different tenants.
+        /// </summary>
+        public async Task<AtlasTenantDbContext> GetReadonlyDbContextAsync(long tenantId, CancellationToken ct = default)
+        {
+            ThrowIfDisposed();
+            var connString = await _connProvider.GetReadonlyConnStringAsync(tenantId, ct);
+            _logger.LogDebug("Created readonly DbContext for explicit TenantId: {TenantId}", tenantId);
+            return CreateDbContext(connString, isReadonly: true);
+        }
+
+        /// <summary>
+        /// Creates report database context with explicit tenantId.
+        /// Does not use caching since login scenarios may involve different tenants.
+        /// </summary>
+        public async Task<AtlasTenantDbContext> GetReportDbContextAsync(long tenantId, CancellationToken ct = default)
+        {
+            ThrowIfDisposed();
+            var connString = await _connProvider.GetReportConnStringAsync(tenantId, ct);
+            _logger.LogDebug("Created report DbContext for explicit TenantId: {TenantId}", tenantId);
+            return CreateDbContext(connString, isReadonly: true);
+        }
+
+        /// <summary>
         /// Creates new DbContext instance with specified connection string.
         /// </summary>
         private AtlasTenantDbContext CreateDbContext(string connectionString, bool isReadonly)

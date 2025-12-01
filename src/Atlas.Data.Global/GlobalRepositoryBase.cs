@@ -90,6 +90,22 @@ namespace Atlas.Data.Global
             var query = _dbSet.AsQueryable();
             return Task.FromResult(new QueryBuilder<TEntity>(query));
         }
+
+        /// <summary>
+        /// 全局仓储不支持基于 tenantId 的查询（全局数据库不区分租户）
+        /// </summary>
+        public virtual Task<QueryBuilder<TEntity>> QueryAsync(long tenantId, CancellationToken ct = default)
+        {
+            throw new NotSupportedException("全局仓储不支持基于 tenantId 的查询");
+        }
+
+        /// <summary>
+        /// 全局仓储不支持基于 tenantId 的查询（全局数据库不区分租户）
+        /// </summary>
+        public virtual Task<QueryBuilder<TEntity>> QueryTrackingAsync(long tenantId, CancellationToken ct = default)
+        {
+            throw new NotSupportedException("全局仓储不支持基于 tenantId 的查询");
+        }
     }
 
     /// <summary>

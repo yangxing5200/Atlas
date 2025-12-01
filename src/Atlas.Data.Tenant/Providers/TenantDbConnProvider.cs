@@ -85,6 +85,50 @@ namespace Atlas.Data.Tenant.Providers
         }
 
         /// <summary>
+        /// 获取主库连接字符串（读写）- 显式传入 tenantId
+        /// </summary>
+        public async Task<string> GetConnStringAsync(long tenantId, CancellationToken cancellationToken = default)
+        {
+            var connInfo = await GetTenantConnectionInfoAsync(tenantId, cancellationToken);
+            return connInfo.MasterConnectionString;
+        }
+
+        /// <summary>
+        /// 获取只读库连接字符串 - 显式传入 tenantId
+        /// </summary>
+        public async Task<string> GetReadonlyConnStringAsync(long tenantId, CancellationToken cancellationToken = default)
+        {
+            var connInfo = await GetTenantConnectionInfoAsync(tenantId, cancellationToken);
+
+            var readonlyServers = connInfo.ReadonlyServers
+                .Where(s => !s.IsReport)
+                .ToList();
+
+            if (readonlyServers.Any())
+            {
+                return readonlyServers[Random.Shared.Next(readonlyServers.Count)].ConnectionString;
+            }
+
+            return connInfo.MasterConnectionString;
+        }
+
+        /// <summary>
+        /// 获取报表库连接字符串 - 显式传入 tenantId
+        /// </summary>
+        public async Task<string> GetReportConnStringAsync(long tenantId, CancellationToken cancellationToken = default)
+        {
+            var connInfo = await GetTenantConnectionInfoAsync(tenantId, cancellationToken);
+
+            var reportServers = connInfo.ReportServers;
+            if (reportServers.Any())
+            {
+                return reportServers[Random.Shared.Next(reportServers.Count)].ConnectionString;
+            }
+
+            return await GetReadonlyConnStringAsync(tenantId, cancellationToken);
+        }
+
+        /// <summary>
         /// 获取租户连接信息(带缓存)
         /// </summary>
         private async Task<TenantConnectionInfo> GetTenantConnectionInfoAsync(
