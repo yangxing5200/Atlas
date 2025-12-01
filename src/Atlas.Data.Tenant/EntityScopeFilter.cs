@@ -31,28 +31,49 @@ namespace Atlas.Data.Tenant
             }
         }
 
+        /// <summary>
+        /// 应用过滤器（使用 IDataScope 中的值）
+        /// </summary>
         public static IQueryable<TEntity> Apply(IQueryable<TEntity> query, IDataScope scope)
+        {
+            return Apply(query, scope, explicitTenantId: null, explicitStoreId: null);
+        }
+
+        /// <summary>
+        /// 应用数据范围过滤器（支持显式参数优先级）
+        /// </summary>
+        /// <param name="query">查询</param>
+        /// <param name="scope">数据范围</param>
+        /// <param name="explicitTenantId">显式租户ID，优先于 scope.TenantId</param>
+        /// <param name="explicitStoreId">显式门店ID，优先于 scope.StoreId</param>
+        public static IQueryable<TEntity> Apply(
+            IQueryable<TEntity> query,
+            IDataScope scope,
+            long? explicitTenantId,
+            long? explicitStoreId)
         {
             if (query == null)
                 throw new ArgumentNullException(nameof(query));
             if (scope == null)
                 throw new ArgumentNullException(nameof(scope));
 
+            // 优先使用显式传入的值，否则使用 scope 中的值
+            var tenantId = explicitTenantId ?? scope.TenantId;
+            var storeId = explicitStoreId ?? scope.StoreId;
+
             // ----------------------------
             // 租户过滤
             // ----------------------------
             if (IsTenantScoped)
             {
-                if (!scope.TenantId.HasValue)
+                if (!tenantId.HasValue)
                 {
                     // 需要租户过滤但没有 TenantId，安全返回空结果
                     return query.Where(_ => false);
                 }
 
-                var tenantId = scope.TenantId.Value;
-
                 // 使用表达式树避免 Cast 问题
-                query = ApplyTenantFilter(query, tenantId);
+                query = ApplyTenantFilter(query, tenantId.Value);
             }
 
             // ----------------------------
@@ -63,20 +84,17 @@ namespace Atlas.Data.Tenant
                 return query;
             }
 
-            // 需要门店过滤但没有 StoreId，安全返回空结果
-            if (!scope.StoreId.HasValue)
-            {
-                return query.Where(_ => false);
-            }
-
-            var storeId = scope.StoreId.Value;
-
             // ----------------------------
             // IStoreOnlyEntity：只能当前门店
             // ----------------------------
             if (IsStoreOnly)
             {
-                return ApplyStoreOnlyFilter(query, storeId);
+                if (!storeId.HasValue)
+                {
+                    return query.Where(_ => false);
+                }
+
+                return ApplyStoreOnlyFilter(query, storeId.Value);
             }
 
             // ----------------------------
@@ -84,6 +102,12 @@ namespace Atlas.Data.Tenant
             // ----------------------------
             if (IsShared)
             {
+                // 如果有显式的 storeId，只过滤该门店
+                if (explicitStoreId.HasValue)
+                {
+                    return ApplyStoreOnlyFilter(query, explicitStoreId.Value);
+                }
+
                 var shareIds = scope.GetShareStoreIds();
 
                 // 空列表表示没有可访问门店，返回空结果（安全策略）
@@ -157,7 +181,7 @@ namespace Atlas.Data.Tenant
     public static class QueryableScopeExtensions
     {
         /// <summary>
-        /// 应用租户/门店范围过滤的扩展方法
+        /// 应用租户/门店范围过滤的扩展方法（使用 IDataScope 中的值）
         /// </summary>
         /// <remarks>
         /// 过滤规则：
@@ -172,6 +196,24 @@ namespace Atlas.Data.Tenant
             where TEntity : class
         {
             return EntityScopeFilter<TEntity>.Apply(query, scope);
+        }
+
+        /// <summary>
+        /// 应用租户/门店范围过滤的扩展方法（支持显式传入 tenantId 和 storeId）
+        /// 用于登录等无 Token 上下文的场景
+        /// </summary>
+        /// <param name="query">查询</param>
+        /// <param name="scope">数据范围（用于获取门店列表等）</param>
+        /// <param name="explicitTenantId">显式传入的租户ID，优先于 scope.TenantId</param>
+        /// <param name="explicitStoreId">显式传入的门店ID，优先于 scope.StoreId</param>
+        public static IQueryable<TEntity> ApplyScope<TEntity>(
+            this IQueryable<TEntity> query,
+            IDataScope scope,
+            long? explicitTenantId,
+            long? explicitStoreId = null)
+            where TEntity : class
+        {
+            return EntityScopeFilter<TEntity>.Apply(query, scope, explicitTenantId, explicitStoreId);
         }
     }
 }

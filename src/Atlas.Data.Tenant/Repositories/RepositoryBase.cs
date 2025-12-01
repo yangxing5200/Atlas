@@ -92,24 +92,26 @@ namespace Atlas.Data.Tenant.Repositories
 
         /// <summary>
         /// 获取只读查询构建器（AsNoTracking）- 显式传入 tenantId
+        /// 用于登录等无 Token 上下文的场景
         /// </summary>
         public virtual async Task<QueryBuilder<TEntity>> QueryAsync(long tenantId, CancellationToken ct = default)
         {
             var db = await _dbFactory.GetReadonlyDbContextAsync(tenantId, ct);
             var query = db.Set<TEntity>()
                 .AsNoTracking()
-                .ApplyScope(_dataScope);
+                .ApplyScope(_dataScope, explicitTenantId: tenantId);
             return new QueryBuilder<TEntity>(query);
         }
 
         /// <summary>
         /// 获取可追踪查询构建器（用于后续更新）- 显式传入 tenantId
+        /// 用于登录等无 Token 上下文的场景
         /// </summary>
         public virtual async Task<QueryBuilder<TEntity>> QueryTrackingAsync(long tenantId, CancellationToken ct = default)
         {
             var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
             var query = db.Set<TEntity>()
-                .ApplyScope(_dataScope);
+                .ApplyScope(_dataScope, explicitTenantId: tenantId);
             return new QueryBuilder<TEntity>(query);
         }
 
