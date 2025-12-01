@@ -28,6 +28,7 @@ namespace Atlas.Services
         private readonly IRepository<UserStore> _userStoreRepository;
         private readonly IStoreRepository _storeRepository;
         private readonly ITenantRepository _tenantRepository;
+        private readonly IOperationLogService _operationLogService;
 
         public UserService(
           IRepository<User> repository,
@@ -39,6 +40,7 @@ namespace Atlas.Services
           ITenantRepository tenantRepository,
           ITokenService tokenService,
           ITokenCacheService tokenCacheService,
+          IOperationLogService operationLogService,
           ILogger<UserService> logger)
           : base(repository, unitOfWork, mapper)
         {
@@ -48,6 +50,7 @@ namespace Atlas.Services
             _tenantRepository = tenantRepository;
             _tokenService = tokenService;
             _tokenCacheService = tokenCacheService;
+            _operationLogService = operationLogService;
             _logger = logger;
         }
 
@@ -194,6 +197,19 @@ namespace Atlas.Services
                 );
 
                 var token = _tokenService.GenerateToken(tokenInfo);
+
+                // 记录操作日志
+                await _operationLogService.LogOperationAsync(new LogOperationRequest
+                {
+                    TenantId = user.TenantId,
+                    UserId = userId,
+                    StoreId = targetStore.Store.Id,
+                    Module = "User",
+                    OperationType = "SwitchStore",
+                    Description = $"用户 {user.UserName} 切换到门店 {targetStore.Store.Name}",
+                    EntityId = targetStore.Store.Id,
+                    IsSuccess = true
+                });
 
                 return new SwitchStoreResponse
                 {
@@ -516,10 +532,11 @@ namespace Atlas.Services
         }
         public async Task<OperationResult> ChangePasswordAsync(long userId, ChangePasswordRequest request)
         {
+            User? user = null;
             try
             {
                 var queryBuilder = await _repository.QueryTrackingAsync();
-                var user = await queryBuilder
+                user = await queryBuilder
                     .Where(u => u.Id == userId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
 
@@ -553,6 +570,18 @@ namespace Atlas.Services
 
                 await CommitAsync();
 
+                // 记录操作日志
+                await _operationLogService.LogOperationAsync(new LogOperationRequest
+                {
+                    TenantId = user.TenantId,
+                    UserId = userId,
+                    Module = "User",
+                    OperationType = "ChangePassword",
+                    Description = $"用户 {user.UserName} 修改了密码",
+                    EntityId = userId,
+                    IsSuccess = true
+                });
+
                 _logger.LogInformation("Password changed - UserId: {UserId}, invalidated {Count} sessions",
                     userId, activeSessions.Count);
 
@@ -561,15 +590,33 @@ namespace Atlas.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Change password failed - UserId: {UserId}", userId);
+
+                // 记录失败的操作日志
+                if (user != null)
+                {
+                    await _operationLogService.LogOperationAsync(new LogOperationRequest
+                    {
+                        TenantId = user.TenantId,
+                        UserId = userId,
+                        Module = "User",
+                        OperationType = "ChangePassword",
+                        Description = $"用户 {user.UserName} 修改密码失败",
+                        EntityId = userId,
+                        IsSuccess = false,
+                        ErrorMessage = ex.Message
+                    });
+                }
+
                 return OperationResult.Failed("修改密码失败");
             }
         }
 
         public async Task<OperationResult> ResetPasswordAsync(ResetPasswordRequest request)
         {
+            User? user = null;
             try
             {
-                var user = await _repository.TrackingFirstOrDefaultAsync(
+                user = await _repository.TrackingFirstOrDefaultAsync(
                     q => q.Where(u => u.Id == request.UserId && !u.IsDeleted),
                     ct: default);
 
@@ -599,6 +646,18 @@ namespace Atlas.Services
 
                 await CommitAsync();
 
+                // 记录操作日志
+                await _operationLogService.LogOperationAsync(new LogOperationRequest
+                {
+                    TenantId = user.TenantId,
+                    UserId = request.UserId,
+                    Module = "User",
+                    OperationType = "ResetPassword",
+                    Description = $"用户 {user.UserName} 的密码被重置",
+                    EntityId = request.UserId,
+                    IsSuccess = true
+                });
+
                 _logger.LogInformation("Password reset - UserId: {UserId}, invalidated {Count} sessions",
                     request.UserId, activeSessions.Count);
 
@@ -607,6 +666,23 @@ namespace Atlas.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Reset password failed - UserId: {UserId}", request.UserId);
+
+                // 记录失败的操作日志
+                if (user != null)
+                {
+                    await _operationLogService.LogOperationAsync(new LogOperationRequest
+                    {
+                        TenantId = user.TenantId,
+                        UserId = request.UserId,
+                        Module = "User",
+                        OperationType = "ResetPassword",
+                        Description = $"用户 {user.UserName} 的密码重置失败",
+                        EntityId = request.UserId,
+                        IsSuccess = false,
+                        ErrorMessage = ex.Message
+                    });
+                }
+
                 return OperationResult.Failed("重置密码失败");
             }
         }
@@ -764,10 +840,11 @@ namespace Atlas.Services
 
         public async Task<OperationResult> ForceLogoutAllAsync(long userId)
         {
+            User? user = null;
             try
             {
                 var queryBuilder = await _repository.QueryTrackingAsync();
-                var user = await queryBuilder
+                user = await queryBuilder
                     .Where(u => u.Id == userId && !u.IsDeleted)
                     .FirstOrDefaultAsync();
 
@@ -794,6 +871,18 @@ namespace Atlas.Services
 
                 await CommitAsync();
 
+                // 记录操作日志
+                await _operationLogService.LogOperationAsync(new LogOperationRequest
+                {
+                    TenantId = user.TenantId,
+                    UserId = userId,
+                    Module = "User",
+                    OperationType = "ForceLogout",
+                    Description = $"用户 {user.UserName} 被强制下线",
+                    EntityId = userId,
+                    IsSuccess = true
+                });
+
                 _logger.LogInformation("Force logout - UserId: {UserId}, TokenVersion: {Version}, invalidated {Count} sessions",
                     userId, user.TokenVersion, activeSessions.Count);
 
@@ -802,6 +891,23 @@ namespace Atlas.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Force logout failed - UserId: {UserId}", userId);
+
+                // 记录失败的操作日志
+                if (user != null)
+                {
+                    await _operationLogService.LogOperationAsync(new LogOperationRequest
+                    {
+                        TenantId = user.TenantId,
+                        UserId = userId,
+                        Module = "User",
+                        OperationType = "ForceLogout",
+                        Description = $"用户 {user.UserName} 强制下线失败",
+                        EntityId = userId,
+                        IsSuccess = false,
+                        ErrorMessage = ex.Message
+                    });
+                }
+
                 return OperationResult.Failed("操作失败");
             }
         }
