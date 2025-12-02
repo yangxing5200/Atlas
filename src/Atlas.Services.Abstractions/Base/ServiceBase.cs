@@ -88,6 +88,7 @@ namespace Atlas.Services.Abstractions.Base
         {
             var entity = _mapper.Map<TEntity>(dto);
             await _repository.AddAsync(entity, ct);
+            await UnitOfWork.SaveChangesAsync(ct);
             return _mapper.Map<TDto>(entity);
         }
 
@@ -95,22 +96,17 @@ namespace Atlas.Services.Abstractions.Base
         {
             var builder = await _repository.QueryTrackingAsync(ct);
             var entity = await builder.Where(e => e.Id == id).FirstOrDefaultAsync(ct);
-
             if (entity == null) throw new AtlasException();
-
             _mapper.Map(dto, entity);
+            await UnitOfWork.SaveChangesAsync(ct);
         }
 
-        /// <summary>
-        /// 删除数据
-        /// </summary>
         public virtual async Task RemoveAsync(long id, CancellationToken ct = default)
         {
             var entity = await _repository.GetByIdAsync(id, ct);
-            if (entity == null)
-                throw new AtlasException($"实体不存在: {id}");
-
+            if (entity == null) throw new AtlasException($"实体不存在: {id}");
             await _repository.RemoveAsync(entity);
+            await UnitOfWork.SaveChangesAsync(ct);
         }
 
 
