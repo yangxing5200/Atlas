@@ -35,14 +35,26 @@ namespace Atlas.Data.Abstractions
             _lastIncludable = includable;
             return this;
         }
-   
+
         private object? _lastIncludable;
+
         public QueryBuilder<TEntity> ThenInclude<TPreviousProperty, TProperty>(
             Expression<Func<TPreviousProperty, TProperty>> navigation)
+            where TPreviousProperty : class
         {
-            if (_lastIncludable is IIncludableQueryable<TEntity, TPreviousProperty> includable)
+            // 先尝试匹配集合类型 (ICollection<T>, IEnumerable<T>, List<T> 等)
+            if (_lastIncludable is IIncludableQueryable<TEntity, IEnumerable<TPreviousProperty>> collectionIncludable)
             {
-                var newIncludable = includable.ThenInclude(navigation);
+                var newIncludable = collectionIncludable.ThenInclude(navigation);
+                _query = newIncludable;
+                _lastIncludable = newIncludable;
+                return this;
+            }
+
+            // 再尝试匹配单个引用类型
+            if (_lastIncludable is IIncludableQueryable<TEntity, TPreviousProperty> singleIncludable)
+            {
+                var newIncludable = singleIncludable.ThenInclude(navigation);
                 _query = newIncludable;
                 _lastIncludable = newIncludable;
                 return this;
