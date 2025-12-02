@@ -97,6 +97,10 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.Converters.Add(new JsonNumberConverter());
         options.JsonSerializerOptions.Converters.Add(new NullableJsonNumberConverter());
 
+        // ISO 8601 日期时间格式
+        options.JsonSerializerOptions.Converters.Add(new Iso8601DateTimeConverter());
+        options.JsonSerializerOptions.Converters.Add(new NullableIso8601DateTimeConverter());
+
         // 驼峰命名
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
 

@@ -1,4 +1,6 @@
-﻿namespace Atlas.Core.Extensions;
+﻿using System.Globalization;
+
+namespace Atlas.Core.Extensions;
 
 /// <summary>
 /// 日期时间扩展方法
@@ -34,4 +36,16 @@ public static class DateTimeExtensions
     /// </summary>
     public static DateTime EndOfDay(this DateTime dateTime)
         => dateTime.Date.AddDays(1).AddMilliseconds(-1);
+
+    /// <summary>
+    /// 转换为 ISO 8601 格式字符串 (yyyy-MM-ddTHH:mm:ss.fffZ)
+    /// </summary>
+    public static string ToIso8601String(this DateTime dateTime)
+        => dateTime.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// 转换为 ISO 8601 格式字符串 (带时区偏移量)
+    /// </summary>
+    public static string ToIso8601OffsetString(this DateTimeOffset dateTimeOffset)
+        => dateTimeOffset.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz", CultureInfo.InvariantCulture);
 }
