@@ -2,7 +2,6 @@
 using Atlas.Data.Abstractions;
 using Atlas.Models.DTOs;
 using Atlas.Services.Abstractions;
-using Atlas.Services.Abstractions.Base;
 using AutoMapper;
 using System;
 using System.Collections.Generic;

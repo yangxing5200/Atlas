@@ -11,7 +11,6 @@ using Atlas.Models.DTOs;
 using Atlas.Models.Requests;
 using Atlas.Models.Responses;
 using Atlas.Services.Abstractions;
-using Atlas.Services.Abstractions.Base;
 using AutoMapper;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.EntityFrameworkCore;

@@ -2,11 +2,12 @@
 using Atlas.Core.Exceptions;
 using Atlas.Data.Abstractions;
 using Atlas.Models.Tenant.Responses;
+using Atlas.Services.Abstractions.Base;
 using AutoMapper;
 using Microsoft.EntityFrameworkCore;
 using System.Linq.Expressions;
 
-namespace Atlas.Services.Abstractions.Base
+namespace Atlas.Services
 {
     public abstract class ServiceBase
     {
