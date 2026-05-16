@@ -147,14 +147,17 @@ namespace Atlas.Data.Tenant.Repositories
         {
             if (entity == null) throw new ArgumentNullException(nameof(entity));
             var db = await _dbFactory.GetDbContextAsync(ct);
-            db.Set<TEntity>().Remove(entity);
+            MarkForDeletion(db, entity);
         }
 
         public virtual async Task RemoveRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default)
         {
             if (entities == null) throw new ArgumentNullException(nameof(entities));
             var db = await _dbFactory.GetDbContextAsync(ct);
-            db.Set<TEntity>().RemoveRange(entities);
+            foreach (var entity in entities)
+            {
+                MarkForDeletion(db, entity);
+            }
         }
 
         /// <summary>
@@ -164,7 +167,7 @@ namespace Atlas.Data.Tenant.Repositories
         {
             if (entity == null) throw new ArgumentNullException(nameof(entity));
             var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
-            db.Set<TEntity>().Remove(entity);
+            MarkForDeletion(db, entity);
         }
 
         /// <summary>
@@ -174,7 +177,29 @@ namespace Atlas.Data.Tenant.Repositories
         {
             if (entities == null) throw new ArgumentNullException(nameof(entities));
             var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
-            db.Set<TEntity>().RemoveRange(entities);
+            foreach (var entity in entities)
+            {
+                MarkForDeletion(db, entity);
+            }
+        }
+
+        private static void MarkForDeletion(DbContext db, TEntity entity)
+        {
+            if (entity is not ISoftDelete softDelete)
+            {
+                db.Set<TEntity>().Remove(entity);
+                return;
+            }
+
+            var entry = db.Entry(entity);
+            if (entry.State == EntityState.Detached)
+            {
+                db.Set<TEntity>().Attach(entity);
+            }
+
+            softDelete.IsDeleted = true;
+            softDelete.DeletedAt ??= DateTime.UtcNow;
+            db.Entry(entity).State = EntityState.Modified;
         }
 
         #endregion

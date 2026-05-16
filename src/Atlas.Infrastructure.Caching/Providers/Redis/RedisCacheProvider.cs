@@ -80,16 +80,43 @@ namespace Atlas.Infrastructure.Caching.Providers.Redis
 
         public async Task<IEnumerable<string>> GetKeysByPatternAsync(string pattern, CancellationToken cancellationToken = default)
         {
-            var server = _redis.GetServer(_redis.GetEndPoints().First());
-            var keys = server.Keys(pattern: GetFullKey(pattern));
+            var keys = new HashSet<string>();
+            foreach (var endpoint in _redis.GetEndPoints())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
 
-            return await Task.FromResult(keys.Select(k => StripInstanceName(k.ToString())));
+                var server = _redis.GetServer(endpoint);
+                if (!server.IsConnected)
+                    continue;
+
+                foreach (var key in server.Keys(database: Database.Database, pattern: GetFullKey(pattern), pageSize: 1000))
+                {
+                    keys.Add(StripInstanceName(key.ToString()));
+                }
+            }
+
+            return await Task.FromResult(keys);
         }
 
         public async Task ClearAsync(CancellationToken cancellationToken = default)
         {
-            var server = _redis.GetServer(_redis.GetEndPoints().First());
-            await server.FlushDatabaseAsync();
+            if (!string.IsNullOrEmpty(_instanceName))
+            {
+                var keys = await GetKeysByPatternAsync("*", cancellationToken);
+                await RemoveManyAsync(keys, cancellationToken);
+                return;
+            }
+
+            foreach (var endpoint in _redis.GetEndPoints())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var server = _redis.GetServer(endpoint);
+                if (server.IsConnected)
+                {
+                    await server.FlushDatabaseAsync(Database.Database);
+                }
+            }
         }
 
         private string GetFullKey(string key)

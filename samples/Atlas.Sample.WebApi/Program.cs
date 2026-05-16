@@ -10,6 +10,8 @@ using Serilog;
 using System.Text.Json.Serialization;
 using System.Text.Json;
 using Atlas.Core.Converter;
+using Atlas.Sample.WebApi.Security;
+using Microsoft.AspNetCore.Authorization;
 var builder = WebApplication.CreateBuilder(args);
 
 // ============================================
@@ -74,10 +76,14 @@ builder.Services.AddAuthorization(options =>
         .RequireAuthenticatedUser()
         .Build();
 
-    // 可以添加更多自定义策略
-    options.AddPolicy("RequireAdminRole", policy =>
-        policy.RequireClaim("role", "admin"));
+    options.AddPolicy(AuthorizationPolicies.RequireTenantAdmin, policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.AddRequirements(new TenantAdminRequirement());
+    });
 });
+
+builder.Services.AddScoped<IAuthorizationHandler, TenantAdminAuthorizationHandler>();
 
 // ============================================
 // 4. Add Atlas Core Services

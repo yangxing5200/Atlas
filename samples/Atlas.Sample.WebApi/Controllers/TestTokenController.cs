@@ -15,11 +15,16 @@ namespace Atlas.Sample.WebApi.Controllers
     {
         private readonly ITokenService _tokenService;
         private readonly IConfiguration _configuration;
+        private readonly IHostEnvironment _environment;
 
-        public TestTokenController(ITokenService tokenService, IConfiguration configuration)
+        public TestTokenController(
+            ITokenService tokenService,
+            IConfiguration configuration,
+            IHostEnvironment environment)
         {
             _tokenService = tokenService;
             _configuration = configuration;
+            _environment = environment;
         }
 
         /// <summary>
@@ -47,14 +52,12 @@ namespace Atlas.Sample.WebApi.Controllers
         [ProducesResponseType(typeof(ErrorResponse), 403)]
         public IActionResult GenerateToken([FromBody] GenerateTokenRequest request)
         {
-            // ✅ 安全检查：仅允许非生产环境调用
-            var environment = _configuration["ASPNETCORE_ENVIRONMENT"] ?? "Production";
-            if (environment.Equals("Production", StringComparison.OrdinalIgnoreCase))
+            if (!IsTestTokenEndpointEnabled())
             {
                 return StatusCode(403, new ErrorResponse
                 {
                     Code = 403,
-                    Message = "此接口仅在开发/测试环境可用"
+                    Message = "此接口仅在显式启用的开发/测试环境可用"
                 });
             }
 
@@ -123,13 +126,12 @@ namespace Atlas.Sample.WebApi.Controllers
         [ProducesResponseType(typeof(ValidateTokenResponse), 200)]
         public async Task<IActionResult> ValidateToken([FromBody] ValidateTokenRequest request)
         {
-            var environment = _configuration["ASPNETCORE_ENVIRONMENT"] ?? "Production";
-            if (environment.Equals("Production", StringComparison.OrdinalIgnoreCase))
+            if (!IsTestTokenEndpointEnabled())
             {
                 return StatusCode(403, new ErrorResponse
                 {
                     Code = 403,
-                    Message = "此接口仅在开发/测试环境可用"
+                    Message = "此接口仅在显式启用的开发/测试环境可用"
                 });
             }
 
@@ -168,13 +170,12 @@ namespace Atlas.Sample.WebApi.Controllers
         [ProducesResponseType(typeof(BatchTokenResponse), 200)]
         public IActionResult GenerateBatchTokens([FromBody] BatchTokenRequest request)
         {
-            var environment = _configuration["ASPNETCORE_ENVIRONMENT"] ?? "Production";
-            if (environment.Equals("Production", StringComparison.OrdinalIgnoreCase))
+            if (!IsTestTokenEndpointEnabled())
             {
                 return StatusCode(403, new ErrorResponse
                 {
                     Code = 403,
-                    Message = "此接口仅在开发/测试环境可用"
+                    Message = "此接口仅在显式启用的开发/测试环境可用"
                 });
             }
 
@@ -221,6 +222,19 @@ namespace Atlas.Sample.WebApi.Controllers
                 Failed = tokens.Count(t => !t.Success),
                 Tokens = tokens
             });
+        }
+
+        private bool IsTestTokenEndpointEnabled()
+        {
+            var enabled = _configuration.GetValue<bool>("Security:TestTokens:Enabled");
+            if (!enabled)
+            {
+                return false;
+            }
+
+            return _environment.IsDevelopment() ||
+                   _environment.IsEnvironment("Test") ||
+                   _environment.IsEnvironment("Testing");
         }
     }
 

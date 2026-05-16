@@ -106,10 +106,10 @@ namespace Atlas.Data.Tenant
 
             var cacheKey = TenantCacheKeys.ShareStoresCacheKey;
 
-            // 检查缓存
-            var cachedShareStoreIds = _cache.Value.Get<List<long>>(
+            var cachedShareStoreIds = await _cache.Value.GetAsync<List<long>>(
                 cacheKey,
-                instanceValue: storeId.Value);
+                instanceValue: storeId.Value,
+                cancellationToken: ct);
 
             if (cachedShareStoreIds.SafeAny())
             {
@@ -120,7 +120,7 @@ namespace Atlas.Data.Tenant
             try
             {
                 var shareStoreIds = await CalculateShareStoreIdsAsync(storeId.Value, ct);
-                _cache.Value.Set(cacheKey, shareStoreIds, storeId.Value);
+                await _cache.Value.SetAsync(cacheKey, shareStoreIds, storeId.Value, cancellationToken: ct);
 
                 _logger.LogInformation(
                     "Preloaded ShareStoreIds, StoreId: {StoreId}, Count: {Count}",

@@ -1,4 +1,5 @@
-﻿using Atlas.Models.DTOs;
+using Atlas.Core.Exceptions;
+using Atlas.Models.DTOs;
 using Atlas.Models.Tenant.Requests;
 using Atlas.Models.Tenant.Responses;
 using Atlas.Services.Abstractions;
@@ -86,7 +87,7 @@ namespace Atlas.Sample.WebApi.Controllers
         [HttpPost]
         [ProducesResponseType(typeof(ProductDto), StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<ActionResult<ProductDto>> Create([FromBody] ProductDto request)
+        public async Task<ActionResult<ProductDto>> Create([FromBody] CreateProductRequest request)
         {
             try
             {
@@ -95,7 +96,7 @@ namespace Atlas.Sample.WebApi.Controllers
                     return BadRequest(ModelState);
                 }
 
-                var created = await _productService.AddAsync(request);
+                var created = await _productService.AddAsync(ToProductDto(request));
                 return CreatedAtAction(
                     nameof(GetById),
                     new { id = created.Id },
@@ -120,7 +121,7 @@ namespace Atlas.Sample.WebApi.Controllers
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> Update(
             [FromRoute] long id,
-            [FromBody] ProductDto request)
+            [FromBody] UpdateProductRequest request)
         {
             try
             {
@@ -129,8 +130,12 @@ namespace Atlas.Sample.WebApi.Controllers
                     return BadRequest(ModelState);
                 }
 
-                await _productService.UpdateAsync(id, request);
+                await _productService.UpdateAsync(id, ToProductDto(request));
                 return NoContent();
+            }
+            catch (AtlasException ex)
+            {
+                return NotFound(new { message = ex.Message });
             }
             catch (Exception ex)
             {
@@ -153,6 +158,10 @@ namespace Atlas.Sample.WebApi.Controllers
             {
                 await _productService.RemoveAsync(id);
                 return NoContent();
+            }
+            catch (AtlasException ex)
+            {
+                return NotFound(new { message = ex.Message });
             }
             catch (Exception ex)
             {
@@ -242,6 +251,30 @@ namespace Atlas.Sample.WebApi.Controllers
                 _logger.LogError(ex, "Error searching products with keyword {Keyword}", keyword);
                 return StatusCode(500, new { message = "An error occurred while searching products" });
             }
+        }
+
+        private static ProductDto ToProductDto(CreateProductRequest request)
+        {
+            return new ProductDto
+            {
+                Name = request.Name,
+                Price = request.Price,
+                Description = request.Description,
+                SourceStoreId = request.SourceStoreId,
+                IsCustomized = request.IsCustomized
+            };
+        }
+
+        private static ProductDto ToProductDto(UpdateProductRequest request)
+        {
+            return new ProductDto
+            {
+                Name = request.Name,
+                Price = request.Price,
+                Description = request.Description,
+                SourceStoreId = request.SourceStoreId,
+                IsCustomized = request.IsCustomized
+            };
         }
     }
 }

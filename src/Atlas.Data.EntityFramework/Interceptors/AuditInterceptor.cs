@@ -82,6 +82,12 @@ namespace Atlas.Data.Common.Interceptors
                     if (entity is IAuditable au)
                         au.UpdatedBy = userId;
 
+                    if (entity is ISoftDelete { IsDeleted: true } softDelete)
+                    {
+                        softDelete.DeletedAt ??= now;
+                        softDelete.DeletedBy ??= userId;
+                    }
+
                     if (entity is IVersioned ve)
                         ve.Version++;
                 }

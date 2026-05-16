@@ -13,21 +13,32 @@ namespace Atlas.Infrastructure.Caching.Invalidation
     {
         private readonly ICacheProvider _provider;
         private readonly ITagManager _tagManager;
+        private readonly ICacheInvalidationBus? _invalidationBus;
 
-        public CacheInvalidator(ICacheProvider provider, ITagManager tagManager)
+        public CacheInvalidator(
+            ICacheProvider provider,
+            ITagManager tagManager,
+            ICacheInvalidationBus? invalidationBus = null)
         {
             _provider = provider ?? throw new ArgumentNullException(nameof(provider));
             _tagManager = tagManager ?? throw new ArgumentNullException(nameof(tagManager));
+            _invalidationBus = invalidationBus;
         }
 
         public async Task InvalidateByKeyAsync(string key, CancellationToken cancellationToken = default)
         {
             await _provider.RemoveAsync(key, cancellationToken);
+            await PublishInvalidationsAsync(new[] { key });
         }
 
         public async Task InvalidateByKeysAsync(IEnumerable<string> keys, CancellationToken cancellationToken = default)
         {
-            await _provider.RemoveManyAsync(keys, cancellationToken);
+            var keyList = keys.Distinct().ToList();
+            if (!keyList.Any())
+                return;
+
+            await _provider.RemoveManyAsync(keyList, cancellationToken);
+            await PublishInvalidationsAsync(keyList);
         }
 
         public async Task InvalidateByTagAsync(string tag, CancellationToken cancellationToken = default)
@@ -56,10 +67,25 @@ namespace Atlas.Infrastructure.Caching.Invalidation
 
         public async Task InvalidateByPatternAsync(string pattern, CancellationToken cancellationToken = default)
         {
-            var keys = await _provider.GetKeysByPatternAsync(pattern, cancellationToken);
+            var keys = (await _provider.GetKeysByPatternAsync(pattern, cancellationToken))
+                .Distinct()
+                .ToList();
+
             if (keys.Any())
             {
                 await _provider.RemoveManyAsync(keys, cancellationToken);
+                await PublishInvalidationsAsync(keys);
+            }
+        }
+
+        private async Task PublishInvalidationsAsync(IEnumerable<string> keys)
+        {
+            if (_invalidationBus == null)
+                return;
+
+            foreach (var key in keys)
+            {
+                await _invalidationBus.PublishInvalidationAsync(key);
             }
         }
     }

@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Entities.Tenant;
+using Atlas.Core.Entities.Tenant;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using System;
@@ -59,8 +59,7 @@ namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
 
             // SessionId索引
             builder.HasIndex(x => x.SessionId)
-                .HasDatabaseName("IX_BusinessOperationLogs_SessionId")
-                .HasFilter("[SessionId] IS NOT NULL");
+                .HasDatabaseName("IX_BusinessOperationLogs_SessionId");
 
             // 用户索引
             builder.HasIndex(x => x.UserId)
@@ -76,8 +75,7 @@ namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
 
             // 业务实体索引
             builder.HasIndex(x => new { x.Module, x.EntityId })
-                .HasDatabaseName("IX_BusinessOperationLogs_Module_EntityId")
-                .HasFilter("[EntityId] IS NOT NULL");
+                .HasDatabaseName("IX_BusinessOperationLogs_Module_EntityId");
 
             // 时间索引
             builder.HasIndex(x => x.CreatedAt)

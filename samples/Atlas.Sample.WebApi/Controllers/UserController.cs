@@ -2,6 +2,7 @@
 using Atlas.Models.DTOs;
 using Atlas.Models.Requests;
 using Atlas.Models.Responses;
+using Atlas.Sample.WebApi.Security;
 using Atlas.Services.Abstractions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -170,7 +171,7 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <param name="request">User creation request</param>
         /// <returns>Created user</returns>
         [HttpPost]
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
         [ProducesResponseType(typeof(OperationResult<UserDto>), StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<ActionResult<OperationResult<UserDto>>> CreateUser([FromBody] CreateUserRequest request)
@@ -207,7 +208,7 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <param name="request">User update request</param>
         /// <returns>Updated user</returns>
         [HttpPut]
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
         [ProducesResponseType(typeof(OperationResult<UserDto>), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -242,7 +243,7 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <param name="id">User ID</param>
         /// <returns>Operation result</returns>
         [HttpDelete("{id}")]
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
         [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<ActionResult<OperationResult>> DeleteUser([FromRoute] long id)
@@ -271,7 +272,7 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <param name="id">User ID</param>
         /// <returns>User details</returns>
         [HttpGet("{id}")]
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
         [ProducesResponseType(typeof(UserDetailDto), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<ActionResult<UserDetailDto>> GetById([FromRoute] long id)
@@ -300,7 +301,7 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <param name="userName">Username</param>
         /// <returns>User information</returns>
         [HttpGet("by-username/{userName}")]
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
         [ProducesResponseType(typeof(UserDto), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<ActionResult<UserDto>> GetByUserName([FromRoute] string userName)
@@ -329,7 +330,7 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <param name="request">Query parameters</param>
         /// <returns>Paged list of users</returns>
         [HttpGet]
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
         [ProducesResponseType(typeof(UserPagedResponse), StatusCodes.Status200OK)]
         public async Task<ActionResult<UserPagedResponse>> GetUsers([FromQuery] UserQueryRequest request)
         {
@@ -392,7 +393,7 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <param name="request">Password reset request</param>
         /// <returns>Operation result</returns>
         [HttpPost("reset-password")]
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
         [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<ActionResult<OperationResult>> ResetPassword([FromBody] ResetPasswordRequest request)
@@ -426,7 +427,7 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <param name="request">Store assignment request</param>
         /// <returns>Operation result</returns>
         [HttpPost("assign-stores")]
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
         [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<ActionResult<OperationResult>> AssignStores([FromBody] AssignStoresRequest request)
@@ -461,7 +462,7 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <param name="isActive">Active status</param>
         /// <returns>Operation result</returns>
         [HttpPut("{userId}/status")]
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
         [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<ActionResult<OperationResult>> SetUserStatus(
@@ -492,7 +493,7 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <param name="userId">User ID</param>
         /// <returns>Operation result</returns>
         [HttpPost("{userId}/unlock")]
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
         [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<ActionResult<OperationResult>> UnlockUser([FromRoute] long userId)
@@ -521,7 +522,7 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <param name="request">Query parameters</param>
         /// <returns>Paged list of login logs</returns>
         [HttpGet("login-logs")]
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
         [ProducesResponseType(typeof(LoginLogPagedResponse), StatusCodes.Status200OK)]
         public async Task<ActionResult<LoginLogPagedResponse>> GetLoginLogs([FromQuery] LoginLogQueryRequest request)
         {
@@ -543,7 +544,7 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <param name="userId">User ID</param>
         /// <returns>Operation result</returns>
         [HttpPost("{userId}/force-logout")]
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
         [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<ActionResult<OperationResult>> ForceLogoutAll([FromRoute] long userId)
@@ -572,7 +573,7 @@ namespace Atlas.Sample.WebApi.Controllers
         /// <param name="userId">User ID</param>
         /// <returns>List of active sessions</returns>
         [HttpGet("{userId}/sessions")]
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
         [ProducesResponseType(typeof(List<UserLoginLogDto>), StatusCodes.Status200OK)]
         public async Task<ActionResult<List<UserLoginLogDto>>> GetActiveSessions([FromRoute] long userId)
         {

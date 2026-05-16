@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
 
@@ -382,8 +382,7 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_BusinessOperationLogs_Module_EntityId",
                 table: "BusinessOperationLogs",
-                columns: new[] { "Module", "EntityId" },
-                filter: "[EntityId] IS NOT NULL");
+                columns: new[] { "Module", "EntityId" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_BusinessOperationLogs_Module_Type_CreatedAt",
@@ -393,8 +392,7 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_BusinessOperationLogs_SessionId",
                 table: "BusinessOperationLogs",
-                column: "SessionId",
-                filter: "[SessionId] IS NOT NULL");
+                column: "SessionId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_BusinessOperationLogs_StoreId",
@@ -429,8 +427,7 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_UserLoginLogs_SessionId",
                 table: "UserLoginLogs",
-                column: "SessionId",
-                filter: "[SessionId] IS NOT NULL");
+                column: "SessionId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_UserLoginLogs_StoreId",
@@ -511,20 +508,17 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_Users_TenantId_Email",
                 table: "Users",
-                columns: new[] { "TenantId", "Email" },
-                filter: "[Email] IS NOT NULL AND [IsDeleted] = 0");
+                columns: new[] { "TenantId", "Email" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_Users_TenantId_EmployeeNo",
                 table: "Users",
-                columns: new[] { "TenantId", "EmployeeNo" },
-                filter: "[EmployeeNo] IS NOT NULL");
+                columns: new[] { "TenantId", "EmployeeNo" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_Users_TenantId_Phone",
                 table: "Users",
-                columns: new[] { "TenantId", "Phone" },
-                filter: "[Phone] IS NOT NULL AND [IsDeleted] = 0");
+                columns: new[] { "TenantId", "Phone" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_Users_TenantId_Status_IsDeleted",
@@ -539,9 +533,7 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_Users_TenantId_UserName",
                 table: "Users",
-                columns: new[] { "TenantId", "UserName" },
-                unique: true,
-                filter: "[IsDeleted] = 0");
+                columns: new[] { "TenantId", "UserName" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_UserStores_StoreId",
@@ -566,8 +558,7 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_UserStores_UserId_IsPrimary",
                 table: "UserStores",
-                columns: new[] { "UserId", "IsPrimary" },
-                filter: "[IsPrimary] = 1");
+                columns: new[] { "UserId", "IsPrimary" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_UserStores_UserId_StoreId",

@@ -1,5 +1,7 @@
 ﻿using Atlas.Models.DTOs;
 using Atlas.Models.Tenant.Responses;
+using Atlas.Core.Exceptions;
+using Atlas.Sample.WebApi.Security;
 using Atlas.Services.Abstractions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -12,7 +14,7 @@ namespace Atlas.Sample.WebApi.Controllers
     [ApiController]
     [Route("api/[controller]")]
     [Produces("application/json")]
-    [Authorize]
+    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
     public class StoreController : ControllerBase
     {
         private readonly IStoreService _storeService;
@@ -152,6 +154,10 @@ namespace Atlas.Sample.WebApi.Controllers
                 await _storeService.UpdateAsync(id, storeDto, ct);
                 return NoContent();
             }
+            catch (AtlasException ex)
+            {
+                return NotFound(new { message = ex.Message });
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error updating store {StoreId}", id);
@@ -176,6 +182,10 @@ namespace Atlas.Sample.WebApi.Controllers
             {
                 await _storeService.RemoveAsync(id, ct);
                 return NoContent();
+            }
+            catch (AtlasException ex)
+            {
+                return NotFound(new { message = ex.Message });
             }
             catch (Exception ex)
             {

@@ -111,7 +111,8 @@ namespace Atlas.Infrastructure.Caching.Extensions
                 var memoryCache = sp.GetRequiredService<IMemoryCache>();
                 var l1 = new MemoryCacheProvider(memoryCache);
                 var l2 = new RedisCacheProvider(redis, "atlas");
-                return new HybridCacheProvider(l1, l2, options);
+                var invalidationBus = sp.GetService<ICacheInvalidationBus>();
+                return new HybridCacheProvider(l1, l2, options, invalidationBus);
             });
 
             services.TryAddSingleton<ITagVersionStore>(sp =>

@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Entities.Tenant;
+using Atlas.Core.Entities.Tenant;
 using Atlas.Core.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -137,26 +137,21 @@ namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
 
             #region 索引
 
-            // 唯一索引：租户内用户名唯一
+            // 用户名索引；唯一性由服务层按活跃用户校验，避免 MySQL 无过滤索引时软删除后无法复用用户名
             builder.HasIndex(x => new { x.TenantId, x.UserName })
-                .IsUnique()
-                .HasDatabaseName("IX_Users_TenantId_UserName")
-                .HasFilter("[IsDeleted] = 0");
+                .HasDatabaseName("IX_Users_TenantId_UserName");
 
             // 手机号索引（用于手机号登录）
             builder.HasIndex(x => new { x.TenantId, x.Phone })
-                .HasDatabaseName("IX_Users_TenantId_Phone")
-                .HasFilter("[Phone] IS NOT NULL AND [IsDeleted] = 0");
+                .HasDatabaseName("IX_Users_TenantId_Phone");
 
             // 邮箱索引（用于邮箱登录）
             builder.HasIndex(x => new { x.TenantId, x.Email })
-                .HasDatabaseName("IX_Users_TenantId_Email")
-                .HasFilter("[Email] IS NOT NULL AND [IsDeleted] = 0");
+                .HasDatabaseName("IX_Users_TenantId_Email");
 
             // 员工编号索引
             builder.HasIndex(x => new { x.TenantId, x.EmployeeNo })
-                .HasDatabaseName("IX_Users_TenantId_EmployeeNo")
-                .HasFilter("[EmployeeNo] IS NOT NULL");
+                .HasDatabaseName("IX_Users_TenantId_EmployeeNo");
 
             // 状态索引（查询活跃用户）
             builder.HasIndex(x => new { x.TenantId, x.Status, x.IsDeleted })
@@ -268,8 +263,7 @@ namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
 
             // 主门店索引（快速查找用户的主门店）
             builder.HasIndex(x => new { x.UserId, x.IsPrimary })
-                .HasDatabaseName("IX_UserStores_UserId_IsPrimary")
-                .HasFilter("[IsPrimary] = 1");
+                .HasDatabaseName("IX_UserStores_UserId_IsPrimary");
 
             #endregion
 
@@ -392,8 +386,7 @@ namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
 
             // ✅ SessionId索引（用于关联业务日志）
             builder.HasIndex(x => x.SessionId)
-                .HasDatabaseName("IX_UserLoginLogs_SessionId")
-                .HasFilter("[SessionId] IS NOT NULL");
+                .HasDatabaseName("IX_UserLoginLogs_SessionId");
 
             // 用户索引
             builder.HasIndex(x => x.UserId)

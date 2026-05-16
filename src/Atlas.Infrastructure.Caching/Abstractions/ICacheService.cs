@@ -37,14 +37,14 @@ namespace Atlas.Infrastructure.Caching.Abstractions
         // ========== Definition 的同步方法 ==========
 
         /// <summary>
-        /// 【同步】获取缓存值（仅使用本地内存缓存）
+        /// 【同步】获取缓存值
         /// </summary>
         T? Get<T>(
             CacheKeyDefinition definition,
             object? instanceValue = null);
 
         /// <summary>
-        /// 【同步】设置缓存值（仅使用本地内存缓存）
+        /// 【同步】设置缓存值
         /// </summary>
         void Set<T>(
             CacheKeyDefinition definition,
@@ -53,7 +53,7 @@ namespace Atlas.Infrastructure.Caching.Abstractions
             CacheOptions? optionsOverride = null);
 
         /// <summary>
-        /// 【同步】获取或设置缓存值（仅使用本地内存缓存）
+        /// 【同步】获取或设置缓存值
         /// </summary>
         CacheResult<T> GetOrSet<T>(
             CacheKeyDefinition definition,
@@ -69,7 +69,7 @@ namespace Atlas.Infrastructure.Caching.Abstractions
             object? instanceValue = null);
 
         /// <summary>
-        /// 【同步】检查缓存是否存在（仅检查本地内存缓存）
+        /// 【同步】检查缓存是否存在
         /// </summary>
         bool Exists(
             CacheKeyDefinition definition,

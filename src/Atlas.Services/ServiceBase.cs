@@ -88,6 +88,7 @@ namespace Atlas.Services
         public virtual async Task<TDto> AddAsync(TDto dto, CancellationToken ct = default)
         {
             var entity = _mapper.Map<TEntity>(dto);
+            entity.Id = 0;
             await _repository.AddAsync(entity, ct);
             await UnitOfWork.SaveChangesAsync(ct);
             return _mapper.Map<TDto>(entity);
@@ -97,8 +98,47 @@ namespace Atlas.Services
         {
             var builder = await _repository.QueryTrackingAsync(ct);
             var entity = await builder.Where(e => e.Id == id).FirstOrDefaultAsync(ct);
-            if (entity == null) throw new AtlasException();
+            if (entity == null) throw new AtlasException($"实体不存在: {id}");
+
+            var createdAt = entity.CreatedAt;
+            var updatedAt = entity.UpdatedAt;
+            var tenantId = entity is ITenantEntity tenantEntity ? tenantEntity.TenantId : (long?)null;
+            var storeId = entity is IStoreEntity storeEntity ? storeEntity.StoreId : (long?)null;
+            var createdBy = entity is IAuditable auditable ? auditable.CreatedBy : null;
+            var updatedBy = entity is IAuditable auditableEntity ? auditableEntity.UpdatedBy : null;
+            var isDeleted = entity is ISoftDelete softDelete ? softDelete.IsDeleted : (bool?)null;
+            var deletedAt = entity is ISoftDelete softDeletedEntity ? softDeletedEntity.DeletedAt : null;
+            var deletedBy = entity is ISoftDelete softDeleteAuditable ? softDeleteAuditable.DeletedBy : null;
+            var version = entity is IVersioned versioned ? versioned.Version : (int?)null;
+
             _mapper.Map(dto, entity);
+
+            entity.Id = id;
+            entity.CreatedAt = createdAt;
+            entity.UpdatedAt = updatedAt;
+
+            if (entity is ITenantEntity mappedTenantEntity && tenantId.HasValue)
+                mappedTenantEntity.TenantId = tenantId.Value;
+
+            if (entity is IStoreEntity mappedStoreEntity && storeId.HasValue)
+                mappedStoreEntity.StoreId = storeId.Value;
+
+            if (entity is IAuditable mappedAuditable)
+            {
+                mappedAuditable.CreatedBy = createdBy;
+                mappedAuditable.UpdatedBy = updatedBy;
+            }
+
+            if (entity is ISoftDelete mappedSoftDelete)
+            {
+                mappedSoftDelete.IsDeleted = isDeleted ?? mappedSoftDelete.IsDeleted;
+                mappedSoftDelete.DeletedAt = deletedAt;
+                mappedSoftDelete.DeletedBy = deletedBy;
+            }
+
+            if (entity is IVersioned mappedVersioned && version.HasValue)
+                mappedVersioned.Version = version.Value;
+
             await UnitOfWork.SaveChangesAsync(ct);
         }
 

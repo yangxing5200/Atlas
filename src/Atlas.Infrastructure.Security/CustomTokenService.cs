@@ -17,11 +17,10 @@ namespace Atlas.Infrastructure.Security
         private readonly ICryptoService _cryptoService;
         private readonly IMemoryCache _cache;
         private readonly ILogger<CustomTokenService> _logger;
-        private readonly ITokenCacheService _tokenCacheService;
         private readonly byte[] _secretKeyBytes;
         private readonly int _expirationMinutes;
         private readonly TokenOptions _options;
-        private readonly IServiceProvider _serviceProvider;
+        private readonly IServiceScopeFactory _scopeFactory;
         private bool _disposed;
 
         private const char TOKEN_SEPARATOR = '.';
@@ -33,15 +32,13 @@ namespace Atlas.Infrastructure.Security
             IMemoryCache cache,
             ILogger<CustomTokenService> logger,
             IOptions<TokenOptions> options,
-            IServiceProvider serviceProvider)
+            IServiceScopeFactory scopeFactory)
         {
             _cryptoService = cryptoService;
             _cache = cache;
             _logger = logger;
             _options = options.Value;
-            _serviceProvider = serviceProvider;
-            using var scope = _serviceProvider.CreateScope();
-            _tokenCacheService = scope.ServiceProvider.GetRequiredService<ITokenCacheService>();
+            _scopeFactory = scopeFactory;
 
             if (string.IsNullOrEmpty(_options.SecretKey))
                 throw new ArgumentException("Token secret key cannot be empty");
@@ -107,7 +104,7 @@ namespace Atlas.Infrastructure.Security
                     // ✅ 优化2：只检查Session黑名单（内存操作，极快）
                     // TokenVersion已通过缓存键验证
                     if (!string.IsNullOrEmpty(cachedInfo.SessionId) &&
-                        !_tokenCacheService.IsSessionValid(cachedInfo.SessionId))
+                        !WithTokenCache(tokenCache => tokenCache.IsSessionValid(cachedInfo.SessionId)))
                     {
                         _cache.Remove(cacheKey);
                         _logger.LogWarning("Session invalidated - UserId: {UserId}", cachedInfo.UserId);
@@ -125,14 +122,14 @@ namespace Atlas.Infrastructure.Security
             {
                 // ✅ 优化3：验证前先检查Session
                 if (!string.IsNullOrEmpty(result.SessionId) &&
-                    !_tokenCacheService.IsSessionValid(result.SessionId))
+                    !WithTokenCache(tokenCache => tokenCache.IsSessionValid(result.SessionId)))
                 {
                     _logger.LogWarning("Session invalidated - UserId: {UserId}", result.UserId);
                     return null;
                 }
 
                 // ✅ 优化4：验证TokenVersion（只在首次验证时）
-                var currentVersion = _tokenCacheService.GetUserTokenVersion(result.UserId ?? 0);
+                var currentVersion = WithTokenCache(tokenCache => tokenCache.GetUserTokenVersion(result.UserId ?? 0));
                 if (currentVersion.HasValue && currentVersion.Value != result.TokenVersion)
                 {
                     _logger.LogWarning("TokenVersion mismatch - UserId: {UserId}, Expected: {Expected}, Got: {Got}",
@@ -165,7 +162,7 @@ namespace Atlas.Infrastructure.Security
                 {
                     // 只检查Session黑名单
                     if (!string.IsNullOrEmpty(cachedInfo.SessionId) &&
-                        !_tokenCacheService.IsSessionValid(cachedInfo.SessionId))
+                        !WithTokenCache(tokenCache => tokenCache.IsSessionValid(cachedInfo.SessionId)))
                     {
                         _cache.Remove(cacheKey);
                         _logger.LogWarning("Session invalidated - UserId: {UserId}", cachedInfo.UserId);
@@ -182,13 +179,13 @@ namespace Atlas.Infrastructure.Security
             if (result != null)
             {
                 if (!string.IsNullOrEmpty(result.SessionId) &&
-                    !_tokenCacheService.IsSessionValid(result.SessionId))
+                    !WithTokenCache(tokenCache => tokenCache.IsSessionValid(result.SessionId)))
                 {
                     _logger.LogWarning("Session invalidated - UserId: {UserId}", result.UserId);
                     return null;
                 }
 
-                var currentVersion = _tokenCacheService.GetUserTokenVersion(result.UserId ?? 0);
+                var currentVersion = WithTokenCache(tokenCache => tokenCache.GetUserTokenVersion(result.UserId ?? 0));
                 if (currentVersion.HasValue && currentVersion.Value != result.TokenVersion)
                 {
                     _logger.LogWarning("TokenVersion mismatch - UserId: {UserId}", result.UserId);
@@ -206,6 +203,13 @@ namespace Atlas.Infrastructure.Security
             using var sha = SHA256.Create();
             var hashBytes = sha.ComputeHash(Encoding.UTF8.GetBytes(token));
             return $"token_{Convert.ToBase64String(hashBytes, 0, 16)}";
+        }
+
+        private T WithTokenCache<T>(Func<ITokenCacheService, T> action)
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var tokenCache = scope.ServiceProvider.GetRequiredService<ITokenCacheService>();
+            return action(tokenCache);
         }
 
         private TokenInfo? ValidateTokenCore(string token)

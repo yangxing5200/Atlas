@@ -39,15 +39,14 @@ namespace Atlas.Core.Tests
             var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
             var logger = loggerFactory.CreateLogger<CustomTokenService>();
 
-            // Setup ServiceProvider that returns mock TokenCacheService
-            var serviceProvider = new MockServiceProvider(mockTokenCacheService);
+            var scopeFactory = new MockServiceScopeFactory(mockTokenCacheService);
 
             _tokenService = new CustomTokenService(
                 _cryptoService,
                 memoryCache,
                 logger,
                 tokenOptions,
-                serviceProvider);
+                scopeFactory);
         }
 
         [Fact]

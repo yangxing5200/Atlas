@@ -96,7 +96,8 @@ namespace Atlas.Infrastructure.Caching.Providers.Memory
         {
             foreach (var item in items)
             {
-                SetAsync(item.Key, item.Value, expiration, cancellationToken).Wait();
+                cancellationToken.ThrowIfCancellationRequested();
+                _ = SetAsync(item.Key, item.Value, expiration, cancellationToken);
             }
             return Task.CompletedTask;
         }
@@ -104,11 +105,13 @@ namespace Atlas.Infrastructure.Caching.Providers.Memory
         public Task<int> RemoveManyAsync(IEnumerable<string> keys, CancellationToken cancellationToken = default)
         {
             var count = 0;
-            foreach (var key in keys)
+            foreach (var key in keys.Distinct())
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var existed = _keys.ContainsKey(key);
                 _cache.Remove(key);
-                byte dummyValue;
-                if (_keys.TryRemove(key, out dummyValue))
+                _keys.TryRemove(key, out _);
+                if (existed)
                     count++;
             }
             return Task.FromResult(count);

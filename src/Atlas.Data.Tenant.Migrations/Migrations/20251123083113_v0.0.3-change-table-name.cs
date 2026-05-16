@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -55,8 +55,7 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_BusinessOperationLogs_Module_EntityId",
                 table: "OperationLogs",
-                columns: new[] { "Module", "EntityId" },
-                filter: "[EntityId] IS NOT NULL");
+                columns: new[] { "Module", "EntityId" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_BusinessOperationLogs_Module_Type_CreatedAt",
@@ -66,8 +65,7 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_BusinessOperationLogs_SessionId",
                 table: "OperationLogs",
-                column: "SessionId",
-                filter: "[SessionId] IS NOT NULL");
+                column: "SessionId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_BusinessOperationLogs_TenantId_UserId",
@@ -147,8 +145,7 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_BusinessOperationLogs_Module_EntityId",
                 table: "BusinessOperationLogs",
-                columns: new[] { "Module", "EntityId" },
-                filter: "[EntityId] IS NOT NULL");
+                columns: new[] { "Module", "EntityId" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_BusinessOperationLogs_Module_Type_CreatedAt",
@@ -158,8 +155,7 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_BusinessOperationLogs_SessionId",
                 table: "BusinessOperationLogs",
-                column: "SessionId",
-                filter: "[SessionId] IS NOT NULL");
+                column: "SessionId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_BusinessOperationLogs_StoreId",

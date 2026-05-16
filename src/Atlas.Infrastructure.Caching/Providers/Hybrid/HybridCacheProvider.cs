@@ -13,15 +13,19 @@ namespace Atlas.Infrastructure.Caching.Providers.Hybrid
         private readonly ICacheProvider _l1Cache; // Memory
         private readonly ICacheProvider _l2Cache; // Redis/Distributed
         private readonly HybridCacheOptions _options;
+        private readonly ICacheInvalidationBus? _invalidationBus;
 
         public HybridCacheProvider(
             ICacheProvider l1Cache,
             ICacheProvider l2Cache,
-            HybridCacheOptions options)
+            HybridCacheOptions options,
+            ICacheInvalidationBus? invalidationBus = null)
         {
             _l1Cache = l1Cache ?? throw new ArgumentNullException(nameof(l1Cache));
             _l2Cache = l2Cache ?? throw new ArgumentNullException(nameof(l2Cache));
             _options = options ?? throw new ArgumentNullException(nameof(options));
+            _invalidationBus = invalidationBus;
+            _invalidationBus?.Subscribe(OnRemoteInvalidation);
         }
 
         public async Task<byte[]?> GetAsync(string key, CancellationToken cancellationToken = default)
@@ -123,8 +127,9 @@ namespace Atlas.Infrastructure.Caching.Providers.Hybrid
 
         public async Task<int> RemoveManyAsync(IEnumerable<string> keys, CancellationToken cancellationToken = default)
         {
-            var l1Task = _l1Cache.RemoveManyAsync(keys, cancellationToken);
-            var l2Task = _l2Cache.RemoveManyAsync(keys, cancellationToken);
+            var keyList = keys.Distinct().ToList();
+            var l1Task = _l1Cache.RemoveManyAsync(keyList, cancellationToken);
+            var l2Task = _l2Cache.RemoveManyAsync(keyList, cancellationToken);
 
             var results = await Task.WhenAll(l1Task, l2Task);
             return results.Max();
@@ -132,8 +137,15 @@ namespace Atlas.Infrastructure.Caching.Providers.Hybrid
 
         public async Task<IEnumerable<string>> GetKeysByPatternAsync(string pattern, CancellationToken cancellationToken = default)
         {
-            // Pattern matching only on L2 (distributed cache)
-            return await _l2Cache.GetKeysByPatternAsync(pattern, cancellationToken);
+            var l1KeysTask = _l1Cache.GetKeysByPatternAsync(pattern, cancellationToken);
+            var l2KeysTask = _l2Cache.GetKeysByPatternAsync(pattern, cancellationToken);
+
+            await Task.WhenAll(l1KeysTask, l2KeysTask);
+
+            return l1KeysTask.Result
+                .Concat(l2KeysTask.Result)
+                .Distinct()
+                .ToList();
         }
 
         public async Task ClearAsync(CancellationToken cancellationToken = default)
@@ -141,6 +153,11 @@ namespace Atlas.Infrastructure.Caching.Providers.Hybrid
             await Task.WhenAll(
                 _l1Cache.ClearAsync(cancellationToken),
                 _l2Cache.ClearAsync(cancellationToken));
+        }
+
+        private void OnRemoteInvalidation(string key)
+        {
+            _ = _l1Cache.RemoveAsync(key);
         }
     }
 

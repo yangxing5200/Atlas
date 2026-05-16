@@ -66,6 +66,69 @@ namespace Atlas.Infrastructure.Caching.Tests.Core
                 _mockInvalidator.Object);
         }
 
+        #region Sync Definition API Tests
+
+        [Fact]
+        public void Get_WithDefinition_UsesConfiguredProvider()
+        {
+            // Arrange
+            var definition = TestHelpers.CreateKeyDefinition();
+            var product = TestDataGenerator.CreateProduct(1, "Sync Product");
+            var cachedValue = new CachedValue<TestProduct>
+            {
+                Value = product,
+                TagVersions = new Dictionary<string, long>(),
+                CachedAt = DateTime.UtcNow
+            };
+
+            _mockProvider.Setup(x => x.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(_serializer.Serialize(cachedValue));
+
+            // Act
+            var result = _cacheService.Get<TestProduct>(definition, 1);
+
+            // Assert
+            result.Should().NotBeNull();
+            result!.Id.Should().Be(product.Id);
+            _mockProvider.Verify(x => x.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
+        public void Set_WithDefinition_UsesConfiguredProvider()
+        {
+            // Arrange
+            var definition = TestHelpers.CreateKeyDefinition();
+            var product = TestDataGenerator.CreateProduct(1, "Sync Product");
+
+            // Act
+            _cacheService.Set(definition, product, 1);
+
+            // Assert
+            _mockProvider.Verify(x => x.SetAsync(
+                It.IsAny<string>(),
+                It.IsAny<byte[]>(),
+                It.IsAny<TimeSpan?>(),
+                It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
+        public void Exists_WithDefinition_UsesConfiguredProvider()
+        {
+            // Arrange
+            var definition = TestHelpers.CreateKeyDefinition();
+            _mockProvider.Setup(x => x.ExistsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+
+            // Act
+            var exists = _cacheService.Exists(definition, 1);
+
+            // Assert
+            exists.Should().BeTrue();
+            _mockProvider.Verify(x => x.ExistsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        #endregion
+
         #region GetAsync Tests
 
         [Fact]
