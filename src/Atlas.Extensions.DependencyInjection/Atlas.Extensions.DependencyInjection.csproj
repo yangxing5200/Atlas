@@ -7,8 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-	  <PackageReference Include="AutoMapper.Extensions.Microsoft.DependencyInjection" Version="12.0.0" />
-	  <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
+	  <PackageReference Include="AutoMapper" Version="16.1.1" />
+	  <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
 	  <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.0" />
 	  <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.0" />
       <PackageReference Include="Microsoft.AspNetCore.Authentication" Version="2.2.0" />
@@ -19,8 +19,11 @@
     <ProjectReference Include="..\Atlas.Core\Atlas.Core.csproj" />
     <ProjectReference Include="..\Atlas.Data.Global\Atlas.Data.Global.csproj" />
     <ProjectReference Include="..\Atlas.Data.Tenant\Atlas.Data.Tenant.csproj" />
+    <ProjectReference Include="..\Atlas.Messaging.Abstractions\Atlas.Messaging.Abstractions.csproj" />
+    <ProjectReference Include="..\Atlas.Messaging.Redis\Atlas.Messaging.Redis.csproj" />
     <ProjectReference Include="..\Atlas.Services.Abstractions\Atlas.Services.Abstractions.csproj" />
     <ProjectReference Include="..\Atlas.Services\Atlas.Services.csproj" />
+    <ProjectReference Include="..\Atlas.Services.Tenant\Atlas.Services.Tenant.csproj" />
   </ItemGroup>
 
 </Project>

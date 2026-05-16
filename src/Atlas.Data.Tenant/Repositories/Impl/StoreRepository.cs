@@ -22,7 +22,7 @@ namespace Atlas.Data.Tenant.Repositories.Impl
         public async Task<List<Store>> GetChildDirectStoresAsync(long parentStoreId, CancellationToken ct = default)
         {
             _logger.LogInformation("Getting child direct stores for parentStoreId: {ParentStoreId}", parentStoreId);
-            var builder = await QueryAsync();
+            var builder = await QueryAsync(ct);
             return await builder.Where(s => s.ParentStoreId == parentStoreId && s.Type == StoreType.DirectOperated)
               .ToListAsync(ct);
         }
@@ -32,14 +32,14 @@ namespace Atlas.Data.Tenant.Repositories.Impl
             _logger.LogInformation(_logger.IsEnabled(LogLevel.Debug)
                 ? "Getting child store IDs for parentStoreId: {ParentStoreId}"
                 : "Getting child store IDs.");
-            var builder = await QueryAsync();
+            var builder = await QueryAsync(ct);
             return await builder.Where(s => s.ParentStoreId == parentStoreId).SelectToListAsync(x => x.Id, ct);
         }
 
         public async Task<List<Store>> GetSiblingDirectStoresAsync(long parentStoreId, CancellationToken ct = default)
         {
             _logger.LogInformation("Getting sibling direct stores for parentStoreId: {ParentStoreId}", parentStoreId);
-            var builder = await QueryAsync();
+            var builder = await QueryAsync(ct);
             return await builder.Where(s => s.ParentStoreId == parentStoreId && s.Type == StoreType.DirectOperated)
                 .ToListAsync(ct);
         }

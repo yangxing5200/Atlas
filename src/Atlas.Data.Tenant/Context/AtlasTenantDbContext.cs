@@ -4,6 +4,7 @@ using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Common;
 using Atlas.Data.Common.Extensions;
+using Atlas.Data.Tenant;
 using Microsoft.EntityFrameworkCore;
 using Pomelo.EntityFrameworkCore.MySql.Internal;
 using System.Reflection;
@@ -23,6 +24,36 @@ namespace Atlas.Data.Tenant.Context
         internal DbSet<TEntity> GetDbSet<TEntity>() where TEntity : class
         {
             return Set<TEntity>();
+        }
+
+        public IQueryable<TEntity> ScopedSet<TEntity>(IDataScope dataScope)
+            where TEntity : class
+        {
+            return Set<TEntity>().ApplyScope(dataScope);
+        }
+
+        public IQueryable<TEntity> ScopedSet<TEntity>(DataScopeSnapshot dataScope)
+            where TEntity : class
+        {
+            return Set<TEntity>().ApplyScope(dataScope);
+        }
+
+        public IQueryable<TEntity> ScopedSet<TEntity>(
+            IDataScope dataScope,
+            long? explicitTenantId,
+            long? explicitStoreId = null)
+            where TEntity : class
+        {
+            return Set<TEntity>().ApplyScope(dataScope, explicitTenantId, explicitStoreId);
+        }
+
+        public IQueryable<TEntity> ScopedSet<TEntity>(
+            DataScopeSnapshot dataScope,
+            long? explicitTenantId,
+            long? explicitStoreId = null)
+            where TEntity : class
+        {
+            return Set<TEntity>().ApplyScope(dataScope, explicitTenantId, explicitStoreId);
         }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)

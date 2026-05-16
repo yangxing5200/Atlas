@@ -24,11 +24,6 @@ namespace Atlas.Models.Requests
         public string Password { get; set; } = string.Empty;
 
         /// <summary>
-        /// 登录门店ID（可选，不传则使用默认门店）
-        /// </summary>
-        public long? StoreId { get; set; }
-
-        /// <summary>
         /// 记住我（延长Token有效期）
         /// </summary>
         public bool RememberMe { get; set; }

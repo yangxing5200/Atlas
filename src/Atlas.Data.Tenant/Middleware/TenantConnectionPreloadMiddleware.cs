@@ -10,7 +10,7 @@ namespace Atlas.Data.Tenant.Middleware
 {
     /// <summary>
     /// Preloads tenant connection strings and data scope into cache during request initialization.
-    /// Enables synchronous repository operations by ensuring required data is cached.
+    /// Request queries resolve their own scope asynchronously; this middleware only warms caches.
     /// </summary>
     public class TenantConnectionPreloadMiddleware
     {
@@ -45,7 +45,7 @@ namespace Atlas.Data.Tenant.Middleware
                     // Preload data scope if store context exists
                     if (dataScope?.StoreId.HasValue == true)
                     {
-                        await dataScope.PreloadShareStoreIdsAsync(ct);
+                        await dataScope.ResolveAsync(ct);
                     }
 
                     _logger.LogDebug(

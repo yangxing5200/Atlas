@@ -249,6 +249,31 @@ namespace Atlas.Data.Tests
             result.Select(e => e.StoreId).Should().BeEquivalentTo(new[] { 10L, 20L });
         }
 
+        [Fact]
+        public void ApplyScope_SharedEntity_WithResolvedSnapshot_ShouldUseSnapshotShareStoreIds()
+        {
+            // Arrange
+            var data = new List<SharedTestEntity>
+            {
+                new() { Id = 1, TenantId = 100, StoreId = 10, Name = "Entity1" },
+                new() { Id = 2, TenantId = 100, StoreId = 20, Name = "Entity2" },
+                new() { Id = 3, TenantId = 100, StoreId = 30, Name = "Entity3" },
+                new() { Id = 4, TenantId = 200, StoreId = 10, Name = "Entity4" }
+            }.AsQueryable();
+
+            var snapshot = new DataScopeSnapshot(
+                TenantId: 100,
+                StoreId: 10,
+                ShareStoreIds: new List<long> { 10, 20 });
+
+            // Act
+            var result = data.ApplyScope(snapshot).ToList();
+
+            // Assert
+            result.Should().HaveCount(2);
+            result.Select(e => e.Id).Should().BeEquivalentTo(new[] { 1L, 2L });
+        }
+
         #endregion
 
         #region SimpleEntity Tests (No Tenant/Store Filtering)
@@ -297,7 +322,7 @@ namespace Atlas.Data.Tests
             }.AsQueryable();
 
             // Act & Assert
-            Assert.Throws<ArgumentNullException>(() => data.ApplyScope(null!));
+            Assert.Throws<ArgumentNullException>(() => data.ApplyScope((IDataScope)null!));
         }
 
         #endregion

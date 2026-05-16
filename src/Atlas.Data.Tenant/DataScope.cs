@@ -24,6 +24,8 @@ namespace Atlas.Data.Tenant
         private readonly ITenantDbContextFactory _dbFactory;
         private readonly Lazy<ICacheService> _cache;
         private readonly ILogger<DataScope> _logger;
+        private readonly SemaphoreSlim _scopeLock = new(1, 1);
+        private DataScopeSnapshot? _resolvedScope;
 
         /// <summary>
         /// 门店基本信息 DTO
@@ -50,21 +52,69 @@ namespace Atlas.Data.Tenant
         public long? TenantId => _currentIdentity?.TenantId;
         public long? StoreId => _currentIdentity?.StoreId;
 
+        public async Task<DataScopeSnapshot> ResolveAsync(CancellationToken ct = default)
+        {
+            var tenantId = TenantId;
+            var storeId = StoreId;
+
+            if (_resolvedScope is { } current &&
+                current.TenantId == tenantId &&
+                current.StoreId == storeId)
+            {
+                return current;
+            }
+
+            await _scopeLock.WaitAsync(ct);
+            try
+            {
+                if (_resolvedScope is { } cached &&
+                    cached.TenantId == tenantId &&
+                    cached.StoreId == storeId)
+                {
+                    return cached;
+                }
+
+                var shareStoreIds = storeId.HasValue
+                    ? await GetShareStoreIdsAsync(ct)
+                    : new List<long>();
+
+                _resolvedScope = new DataScopeSnapshot(
+                    tenantId,
+                    storeId,
+                    shareStoreIds);
+
+                return _resolvedScope;
+            }
+            finally
+            {
+                _scopeLock.Release();
+            }
+        }
+
         /// <summary>
         /// 预加载门店访问范围到缓存（中间件调用）
         /// </summary>
         public async Task PreloadShareStoreIdsAsync(CancellationToken ct = default)
         {
+            _ = await ResolveAsync(ct);
+        }
+
+        public async Task<List<long>> GetShareStoreIdsAsync(CancellationToken ct = default)
+        {
             var storeId = StoreId;
-            if (!storeId.HasValue) return;
+            if (!storeId.HasValue) return new List<long>();
 
             var cacheKey = TenantCacheKeys.ShareStoresCacheKey;
 
             // 检查缓存
-            if (_cache.Value.Get<List<long>>(cacheKey, instanceValue: storeId.Value).SafeAny())
+            var cachedShareStoreIds = _cache.Value.Get<List<long>>(
+                cacheKey,
+                instanceValue: storeId.Value);
+
+            if (cachedShareStoreIds.SafeAny())
             {
                 _logger.LogDebug("ShareStoreIds cached, StoreId: {StoreId}", storeId.Value);
-                return;
+                return cachedShareStoreIds!;
             }
 
             try
@@ -75,6 +125,8 @@ namespace Atlas.Data.Tenant
                 _logger.LogInformation(
                     "Preloaded ShareStoreIds, StoreId: {StoreId}, Count: {Count}",
                     storeId.Value, shareStoreIds.Count);
+
+                return shareStoreIds;
             }
             catch (Exception ex)
             {
@@ -213,8 +265,8 @@ namespace Atlas.Data.Tenant
         /// 获取门店访问范围（优先从缓存读取）
         /// </summary>
         /// <remarks>
-        /// 缓存未命中时返回保守策略（仅当前门店）
-        /// 需确保 TenantConnectionPreloadMiddleware 已配置或手动调用 PreloadShareStoreIdsAsync
+        /// 兼容旧同步路径。缓存未命中时返回保守策略（仅当前门店）。
+        /// 请求处理应优先使用 ResolveAsync 或 GetShareStoreIdsAsync。
         /// </remarks>
         public List<long> GetShareStoreIds()
         {
@@ -240,14 +292,14 @@ namespace Atlas.Data.Tenant
             {
                 _logger.LogWarning(
                     "ShareStoreIds cache miss, StoreId: {StoreId}. " +
-                    "Ensure middleware configured or call PreloadShareStoreIdsAsync()",
+                    "Legacy synchronous scope path will use current store only.",
                     storeId.Value);
 
                 return new List<long> { storeId.Value };
             }
 
             _logger.LogDebug("Cache hit, StoreId: {StoreId}, Count: {Count}",
-                storeId.Value, shareIds.Count);
+                storeId.Value, shareIds!.Count);
 
             return shareIds;
         }

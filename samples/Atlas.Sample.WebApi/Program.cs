@@ -2,7 +2,6 @@
 using Atlas.Data.Tenant.Middleware;
 using Atlas.Extensions.DependencyInjection;
 using Atlas.Infrastructure.Logging.Configuration;
-using Atlas.Infrastructure.Logging.Middleware;
 using Atlas.Infrastructure.Logging.Extensions;
 using Atlas.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication;
@@ -23,7 +22,6 @@ builder.Host.UseSerilog();
 // ============================================
 builder.Services.AddMemoryCache(options =>
 {
-    options.SizeLimit = 1024; // 限制缓存条目数量
     options.CompactionPercentage = 0.25; // 当达到限制时压缩25%
 });
 
@@ -173,7 +171,7 @@ builder.Services.AddSwaggerGen(options =>
 // ============================================
 // 7. Add AutoMapper
 // ============================================
-builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
+builder.Services.AddAutoMapper(_ => { }, AppDomain.CurrentDomain.GetAssemblies());
 
 // ============================================
 // 8. Add CORS
@@ -216,7 +214,6 @@ app.UseAuthentication();  // 先认证
 // ✅ 中间件顺序很重要！
 app.UseMiddleware<TenantConnectionPreloadMiddleware>();
 app.UseMiddleware<TokenVersionValidationMiddleware>();
-app.UseMiddleware<LogContextMiddleware>();
 app.UseAuthorization();   // 后授权
 
 app.UseAtlasLogging();

@@ -16,15 +16,18 @@ using Atlas.Data.Tenant.Repositories.Impl;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Extensions;
 using Atlas.Infrastructure.Caching.Locking;
+using Atlas.Infrastructure.Common.Tenants;
+using Atlas.Messaging.Abstractions;
+using Atlas.Messaging.Redis;
 using Atlas.Services;
 using Atlas.Services.Abstractions;
+using Atlas.Services.Tenant;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using System.Reflection;
 
 namespace Atlas.Extensions.DependencyInjection;
 
@@ -51,6 +54,7 @@ public static class AtlasCoreServiceExtensions
         services.AddAtlasDatabase(configuration);
         services.AddAtlasIdentity();
         services.AddAtlasCache(configuration);
+        services.AddAtlasMessaging(configuration);
         services.AddAtlasBusinessServices();
 
         return services;
@@ -162,6 +166,33 @@ public static class AtlasCoreServiceExtensions
             if (l1Minutes.HasValue)
                 options.L1Expiration = TimeSpan.FromMinutes(l1Minutes.Value);
         });
+    }
+
+    #endregion
+
+    #region Infrastructure - Messaging
+
+    private static IServiceCollection AddAtlasMessaging(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        var provider = configuration["Messaging:Provider"]?.ToLowerInvariant();
+
+        if (provider == "redis")
+        {
+            var connectionString =
+                configuration["Messaging:Redis:ConnectionString"] ??
+                configuration["CacheSettings:Redis:ConnectionString"];
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+                throw new InvalidOperationException("Redis messaging connection string is required.");
+
+            var channelPrefix = configuration["Messaging:Redis:ChannelPrefix"];
+            return services.AddRedisDomainEvents(connectionString, channelPrefix);
+        }
+
+        services.TryAddSingleton<IDomainEventPublisher, NoOpDomainEventPublisher>();
+        return services;
     }
 
     #endregion
@@ -303,7 +334,7 @@ public static class AtlasCoreServiceExtensions
                 dbFactory,
                 logger);
         });
-        services.AddAutoMapper(Assembly.GetExecutingAssembly());
+        services.AddAutoMapper(_ => { }, typeof(ProductService).Assembly);
 
         // Global layer
         services.AddScoped<ITenantRepository,TenantRepository>();
@@ -314,6 +345,8 @@ public static class AtlasCoreServiceExtensions
         services.AddScoped(typeof(IRepository<>), typeof(RepositoryBase<>));
         services.AddScoped<IStoreRepository, StoreRepository>();
         services.AddScoped<IOperationLogRepository, OperationLogRepository>();
+        services.TryAddSingleton<ITenantCodeGenerator, TenantCodeGenerator>();
+        services.AddScoped<ITenantProvisioningService, TenantProvisioningService>();
         services.AddScoped<IStoreService, StoreService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IUserService, UserService>();

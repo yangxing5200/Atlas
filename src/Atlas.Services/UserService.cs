@@ -28,6 +28,7 @@ namespace Atlas.Services
         private readonly IStoreRepository _storeRepository;
         private readonly ITenantRepository _tenantRepository;
         private readonly IOperationLogService _operationLogService;
+        private readonly ICurrentIdentity _currentIdentity;
 
         public UserService(
           IRepository<User> repository,
@@ -40,6 +41,7 @@ namespace Atlas.Services
           ITokenService tokenService,
           ITokenCacheService tokenCacheService,
           IOperationLogService operationLogService,
+          ICurrentIdentity currentIdentity,
           ILogger<UserService> logger)
           : base(repository, unitOfWork, mapper)
         {
@@ -50,6 +52,7 @@ namespace Atlas.Services
             _tokenService = tokenService;
             _tokenCacheService = tokenCacheService;
             _operationLogService = operationLogService;
+            _currentIdentity = currentIdentity;
             _logger = logger;
         }
 
@@ -103,7 +106,7 @@ namespace Atlas.Services
                 }
 
                 // ========== 第四步：确定登录门店 ==========
-                var loginStore = DetermineLoginStore(user, accessibleStores, request.StoreId);
+                var loginStore = DetermineLoginStore(user, accessibleStores, requestedStoreId: null);
                 if (loginStore == null)
                 {
                     return new LoginResponse { Success = false, Message = "指定的门店不在可访问范围内" };
@@ -183,6 +186,7 @@ namespace Atlas.Services
 
                 // 生成新Token
                 var expirationMinutes = 1440;
+                var previousSessionId = _currentIdentity.SessionId;
                 var tokenInfo = TokenInfo.Create(
                     new CurrentIdentityImpl
                     {
@@ -207,8 +211,14 @@ namespace Atlas.Services
                     OperationType = "SwitchStore",
                     Description = $"用户 {user.UserName} 切换到门店 {targetStore.Store.Name}",
                     EntityId = targetStore.Store.Id,
+                    SessionId = previousSessionId,
                     IsSuccess = true
                 });
+
+                if (!string.IsNullOrWhiteSpace(previousSessionId))
+                {
+                    _tokenCacheService.InvalidateSession(previousSessionId);
+                }
 
                 return new SwitchStoreResponse
                 {
@@ -691,6 +701,16 @@ namespace Atlas.Services
         {
             try
             {
+                var userBuilder = await _repository.QueryTrackingAsync();
+                var user = await userBuilder
+                    .Where(u => u.Id == request.UserId && !u.IsDeleted)
+                    .FirstOrDefaultAsync();
+
+                if (user == null)
+                {
+                    return OperationResult.Failed("用户不存在");
+                }
+
                 var queryBuilder = await _userStoreRepository.QueryTrackingAsync();
                 // 删除旧的门店关联
                 var oldStores = await queryBuilder
@@ -711,9 +731,11 @@ namespace Atlas.Services
                 }).ToList();
 
                 await _userStoreRepository.AddRangeAsync(newStores);
+                user.InvalidateAllTokens();
                 await CommitAsync();
+                _tokenCacheService.SetUserTokenVersion(request.UserId, user.TokenVersion);
 
-                return OperationResult.Succeed("门店分配成功");
+                return OperationResult.Succeed("门店分配成功，用户需要重新登录或重新获取Token");
             }
             catch (Exception ex)
             {

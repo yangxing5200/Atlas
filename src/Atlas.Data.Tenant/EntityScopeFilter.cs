@@ -1,5 +1,4 @@
 ﻿using Atlas.Core.Entities.Interfaces;
-using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using System;
 using System.Collections.Generic;
@@ -40,6 +39,14 @@ namespace Atlas.Data.Tenant
         }
 
         /// <summary>
+        /// 应用过滤器（使用已异步解析的数据范围快照）
+        /// </summary>
+        public static IQueryable<TEntity> Apply(IQueryable<TEntity> query, DataScopeSnapshot scope)
+        {
+            return Apply(query, scope, explicitTenantId: null, explicitStoreId: null);
+        }
+
+        /// <summary>
         /// 应用数据范围过滤器（支持显式参数优先级）
         /// </summary>
         /// <param name="query">查询</param>
@@ -57,9 +64,45 @@ namespace Atlas.Data.Tenant
             if (scope == null)
                 throw new ArgumentNullException(nameof(scope));
 
-            // 优先使用显式传入的值，否则使用 scope 中的值
             var tenantId = explicitTenantId ?? scope.TenantId;
             var storeId = explicitStoreId ?? scope.StoreId;
+            IReadOnlyCollection<long> shareIds = IsShared && !explicitStoreId.HasValue
+                ? scope.GetShareStoreIds()
+                : Array.Empty<long>();
+
+            return ApplyResolved(query, tenantId, storeId, explicitStoreId, shareIds);
+        }
+
+        /// <summary>
+        /// 应用数据范围过滤器（支持显式参数优先级）
+        /// </summary>
+        public static IQueryable<TEntity> Apply(
+            IQueryable<TEntity> query,
+            DataScopeSnapshot scope,
+            long? explicitTenantId,
+            long? explicitStoreId)
+        {
+            if (query == null)
+                throw new ArgumentNullException(nameof(query));
+            if (scope == null)
+                throw new ArgumentNullException(nameof(scope));
+
+            var tenantId = explicitTenantId ?? scope.TenantId;
+            var storeId = explicitStoreId ?? scope.StoreId;
+            IReadOnlyCollection<long> shareIds = explicitStoreId.HasValue
+                ? Array.Empty<long>()
+                : scope.ShareStoreIds;
+
+            return ApplyResolved(query, tenantId, storeId, explicitStoreId, shareIds);
+        }
+
+        private static IQueryable<TEntity> ApplyResolved(
+            IQueryable<TEntity> query,
+            long? tenantId,
+            long? storeId,
+            long? explicitStoreId,
+            IReadOnlyCollection<long> shareIds)
+        {
 
             // ----------------------------
             // 租户过滤
@@ -108,10 +151,8 @@ namespace Atlas.Data.Tenant
                     return ApplyStoreOnlyFilter(query, explicitStoreId.Value);
                 }
 
-                var shareIds = scope.GetShareStoreIds();
-
                 // 空列表表示没有可访问门店，返回空结果（安全策略）
-                if (shareIds == null || shareIds.Count == 0)
+                if (shareIds.Count == 0)
                 {
                     return query.Where(_ => false);
                 }
@@ -155,8 +196,10 @@ namespace Atlas.Data.Tenant
         /// <summary>
         /// 应用共享门店过滤
         /// </summary>
-        private static IQueryable<TEntity> ApplySharedFilter(IQueryable<TEntity> query, List<long> shareIds)
+        private static IQueryable<TEntity> ApplySharedFilter(IQueryable<TEntity> query, IEnumerable<long> shareIds)
         {
+            var storeIds = shareIds.Distinct().ToArray();
+
             // 构建表达式: e => shareIds.Contains(e.StoreId)
             var parameter = Expression.Parameter(typeof(TEntity), "e");
             var property = Expression.Property(parameter, "StoreId");
@@ -169,7 +212,7 @@ namespace Atlas.Data.Tenant
             var containsCall = Expression.Call(
                 null,
                 containsMethod,
-                Expression.Constant(shareIds),
+                Expression.Constant(storeIds),
                 property);
 
             var lambda = Expression.Lambda<Func<TEntity, bool>>(containsCall, parameter);
@@ -199,6 +242,17 @@ namespace Atlas.Data.Tenant
         }
 
         /// <summary>
+        /// 应用租户/门店范围过滤的扩展方法（使用已异步解析的数据范围快照）
+        /// </summary>
+        public static IQueryable<TEntity> ApplyScope<TEntity>(
+            this IQueryable<TEntity> query,
+            DataScopeSnapshot scope)
+            where TEntity : class
+        {
+            return EntityScopeFilter<TEntity>.Apply(query, scope);
+        }
+
+        /// <summary>
         /// 应用租户/门店范围过滤的扩展方法（支持显式传入 tenantId 和 storeId）
         /// 用于登录等无 Token 上下文的场景
         /// </summary>
@@ -209,6 +263,19 @@ namespace Atlas.Data.Tenant
         public static IQueryable<TEntity> ApplyScope<TEntity>(
             this IQueryable<TEntity> query,
             IDataScope scope,
+            long? explicitTenantId,
+            long? explicitStoreId = null)
+            where TEntity : class
+        {
+            return EntityScopeFilter<TEntity>.Apply(query, scope, explicitTenantId, explicitStoreId);
+        }
+
+        /// <summary>
+        /// 应用租户/门店范围过滤的扩展方法（使用已异步解析的数据范围快照）
+        /// </summary>
+        public static IQueryable<TEntity> ApplyScope<TEntity>(
+            this IQueryable<TEntity> query,
+            DataScopeSnapshot scope,
             long? explicitTenantId,
             long? explicitStoreId = null)
             where TEntity : class

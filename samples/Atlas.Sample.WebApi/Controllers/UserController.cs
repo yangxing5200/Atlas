@@ -97,6 +97,74 @@ namespace Atlas.Sample.WebApi.Controllers
         }
 
         /// <summary>
+        /// Switch current store after login
+        /// </summary>
+        /// <param name="request">Target store</param>
+        /// <returns>New token scoped to the target store</returns>
+        [HttpPost("switch-store")]
+        [Authorize]
+        [ProducesResponseType(typeof(SwitchStoreResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<ActionResult<SwitchStoreResponse>> SwitchStore([FromBody] SwitchStoreRequest request)
+        {
+            try
+            {
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(ModelState);
+                }
+
+                var userId = _currentIdentity.UserId;
+                if (!userId.HasValue)
+                {
+                    return Unauthorized(new { message = "User ID not found in token" });
+                }
+
+                var result = await _userService.SwitchStoreAsync(userId.Value, request);
+                if (!result.Success)
+                {
+                    return BadRequest(result);
+                }
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error switching store for user {UserId}", _currentIdentity.UserId);
+                return StatusCode(500, new { message = "An error occurred while switching store" });
+            }
+        }
+
+        /// <summary>
+        /// Get stores available to the current user
+        /// </summary>
+        /// <returns>Accessible stores for store selection</returns>
+        [HttpGet("accessible-stores")]
+        [Authorize]
+        [ProducesResponseType(typeof(List<StoreInfoDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<ActionResult<List<StoreInfoDto>>> GetMyAccessibleStores()
+        {
+            try
+            {
+                var userId = _currentIdentity.UserId;
+                if (!userId.HasValue)
+                {
+                    return Unauthorized(new { message = "User ID not found in token" });
+                }
+
+                var stores = await _userService.GetAccessibleStoresAsync(userId.Value);
+                return Ok(stores);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving accessible stores for user {UserId}", _currentIdentity.UserId);
+                return StatusCode(500, new { message = "An error occurred while retrieving accessible stores" });
+            }
+        }
+
+        /// <summary>
         /// Create a new user
         /// </summary>
         /// <param name="request">User creation request</param>

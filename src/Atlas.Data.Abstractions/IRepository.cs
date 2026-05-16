@@ -1,5 +1,4 @@
 ﻿using Atlas.Core.Entities.Interfaces;
-using Atlas.Models.Tenant.Responses;
 using System;
 using System.Collections.Generic;
 using System.Linq;

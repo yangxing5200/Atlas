@@ -73,9 +73,9 @@ namespace Atlas.Data.Tenant.Repositories
         public virtual async Task<QueryBuilder<TEntity>> QueryAsync(CancellationToken ct = default)
         {
             var db = await _dbFactory.GetReadonlyDbContextAsync(ct);
-            var query = db.Set<TEntity>()
-                .AsNoTracking()
-                .ApplyScope(_dataScope);
+            var scope = await _dataScope.ResolveAsync(ct);
+            var query = db.ScopedSet<TEntity>(scope)
+                .AsNoTracking();
             return new QueryBuilder<TEntity>(query);
         }
 
@@ -85,8 +85,8 @@ namespace Atlas.Data.Tenant.Repositories
         public virtual async Task<QueryBuilder<TEntity>> QueryTrackingAsync(CancellationToken ct = default)
         {
             var db = await _dbFactory.GetDbContextAsync(ct);
-            var query = db.Set<TEntity>()
-                .ApplyScope(_dataScope);
+            var scope = await _dataScope.ResolveAsync(ct);
+            var query = db.ScopedSet<TEntity>(scope);
             return new QueryBuilder<TEntity>(query);
         }
 
@@ -97,9 +97,9 @@ namespace Atlas.Data.Tenant.Repositories
         public virtual async Task<QueryBuilder<TEntity>> QueryAsync(long tenantId, CancellationToken ct = default)
         {
             var db = await _dbFactory.GetReadonlyDbContextAsync(tenantId, ct);
-            var query = db.Set<TEntity>()
-                .AsNoTracking()
-                .ApplyScope(_dataScope, explicitTenantId: tenantId);
+            var scope = await _dataScope.ResolveAsync(ct);
+            var query = db.ScopedSet<TEntity>(scope, explicitTenantId: tenantId)
+                .AsNoTracking();
             return new QueryBuilder<TEntity>(query);
         }
 
@@ -110,17 +110,17 @@ namespace Atlas.Data.Tenant.Repositories
         public virtual async Task<QueryBuilder<TEntity>> QueryTrackingAsync(long tenantId, CancellationToken ct = default)
         {
             var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
-            var query = db.Set<TEntity>()
-                .ApplyScope(_dataScope, explicitTenantId: tenantId);
+            var scope = await _dataScope.ResolveAsync(ct);
+            var query = db.ScopedSet<TEntity>(scope, explicitTenantId: tenantId);
             return new QueryBuilder<TEntity>(query);
         }
 
         public virtual async Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default)
         {
             var db = await _dbFactory.GetReportDbContextAsync(ct);
-            return await db.Set<TEntity>()
+            var scope = await _dataScope.ResolveAsync(ct);
+            return await db.ScopedSet<TEntity>(scope)
                 .AsNoTracking()
-                .ApplyScope(_dataScope)
                 .FirstOrDefaultAsync(x => x.Id.Equals(id), ct);
         }
 

@@ -312,7 +312,11 @@ namespace Atlas.Data.Tenant.Providers
         /// </summary>
         private string AppendDatabase(string connectionString, string databaseName)
         {
-           return connectionString;
+            if (string.IsNullOrWhiteSpace(connectionString))
+                return connectionString;
+
+            var trimmed = connectionString.Trim().TrimEnd(';');
+            return $"{trimmed};Database={databaseName};";
         }
     }
 }
