@@ -1,7 +1,7 @@
 ﻿namespace Atlas.Infrastructure.Caching.Core.Models
 {
     /// <summary>
-    /// 缓存操作结果
+    /// Result of a cache operation.
     /// </summary>
     public class CacheResult<T>
     {
@@ -10,7 +10,7 @@
         public CacheSource Source { get; set; }
         public long? LatencyMs { get; set; }
 
-        public static CacheResult<T> Hit(T value, CacheSource source = CacheSource.Cache, long? latencyMs = null)
+        public static CacheResult<T> Hit(T? value, CacheSource source = CacheSource.Cache, long? latencyMs = null)
         {
             return new CacheResult<T>
             {

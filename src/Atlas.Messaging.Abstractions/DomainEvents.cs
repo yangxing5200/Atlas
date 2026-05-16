@@ -33,12 +33,34 @@ public interface IDomainEventPublisher
 {
     Task PublishAsync<TEvent>(TEvent domainEvent, CancellationToken ct = default)
         where TEvent : IDomainEvent;
+
+    Task PublishAsync(IDomainEvent domainEvent, CancellationToken ct = default);
+}
+
+public interface IDomainEventTransport
+{
+    Task PublishAsync(IDomainEvent domainEvent, CancellationToken ct = default);
 }
 
 public sealed class NoOpDomainEventPublisher : IDomainEventPublisher
 {
     public Task PublishAsync<TEvent>(TEvent domainEvent, CancellationToken ct = default)
         where TEvent : IDomainEvent
+    {
+        ArgumentNullException.ThrowIfNull(domainEvent);
+        return Task.CompletedTask;
+    }
+
+    public Task PublishAsync(IDomainEvent domainEvent, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(domainEvent);
+        return Task.CompletedTask;
+    }
+}
+
+public sealed class NoOpDomainEventTransport : IDomainEventTransport
+{
+    public Task PublishAsync(IDomainEvent domainEvent, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(domainEvent);
         return Task.CompletedTask;

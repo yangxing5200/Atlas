@@ -30,9 +30,7 @@ namespace Atlas.Infrastructure.Caching.Providers.Redis
                 return version;
             }
 
-            // Initialize tag version
-            await Database.StringSetAsync(key, 1, flags: CommandFlags.FireAndForget);
-            return 1;
+            return 0;
         }
 
         public async Task<IDictionary<string, long>> GetVersionsAsync(IEnumerable<string> tags, CancellationToken cancellationToken = default)
@@ -50,8 +48,7 @@ namespace Atlas.Infrastructure.Caching.Providers.Redis
                 }
                 else
                 {
-                    result[tagArray[i]] = 1;
-                    await Database.StringSetAsync(GetTagKey(tagArray[i]), 1, flags: CommandFlags.FireAndForget);
+                    result[tagArray[i]] = 0;
                 }
             }
 

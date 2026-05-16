@@ -53,16 +53,7 @@ namespace Atlas.Infrastructure.Caching.Invalidation
 
         public async Task InvalidateByScopeAsync(CacheScope scope, string? scopeId = null, CancellationToken cancellationToken = default)
         {
-            var pattern = scope switch
-            {
-                CacheScope.Global => "G:*",
-                CacheScope.Tenant => $"T:{scopeId}:*",
-                CacheScope.Store => $"S:{scopeId}:*",
-                CacheScope.User => $"U:{scopeId}:*",
-                _ => throw new ArgumentException($"Unknown scope: {scope}")
-            };
-
-            await InvalidateByPatternAsync(pattern, cancellationToken);
+            await InvalidateByPatternAsync(BuildScopePattern(scope, scopeId), cancellationToken);
         }
 
         public async Task InvalidateByPatternAsync(string pattern, CancellationToken cancellationToken = default)
@@ -87,6 +78,47 @@ namespace Atlas.Infrastructure.Caching.Invalidation
             {
                 await _invalidationBus.PublishInvalidationAsync(key);
             }
+        }
+
+        private static string BuildScopePattern(CacheScope scope, string? scopeId)
+        {
+            return scope switch
+            {
+                CacheScope.Global => "G:*",
+                CacheScope.Tenant => $"T:{RequireSingleScopeId(scopeId, "tenant")}:*",
+                CacheScope.Store => BuildCompositeScopePattern("S", scopeId, "store"),
+                CacheScope.User => BuildCompositeScopePattern("U", scopeId, "user"),
+                _ => throw new ArgumentException($"Unknown scope: {scope}", nameof(scope))
+            };
+        }
+
+        private static string BuildCompositeScopePattern(string prefix, string? scopeId, string scopeName)
+        {
+            var parts = RequireCompositeScopeId(scopeId, scopeName);
+            return $"{prefix}:{parts[0]}:{parts[1]}:*";
+        }
+
+        private static string RequireSingleScopeId(string? scopeId, string scopeName)
+        {
+            if (string.IsNullOrWhiteSpace(scopeId))
+                throw new ArgumentException($"{scopeName} scope invalidation requires a scope id.", nameof(scopeId));
+
+            if (scopeId.Contains(':'))
+                throw new ArgumentException($"{scopeName} scope id cannot contain ':'.", nameof(scopeId));
+
+            return scopeId;
+        }
+
+        private static string[] RequireCompositeScopeId(string? scopeId, string scopeName)
+        {
+            if (string.IsNullOrWhiteSpace(scopeId))
+                throw new ArgumentException($"{scopeName} scope invalidation requires a scope id.", nameof(scopeId));
+
+            var parts = scopeId.Split(':', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 2)
+                throw new ArgumentException($"{scopeName} scope id must use the 'tenantId:itemId' format.", nameof(scopeId));
+
+            return parts;
         }
     }
 }

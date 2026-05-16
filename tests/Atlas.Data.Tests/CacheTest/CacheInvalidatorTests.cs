@@ -109,19 +109,16 @@ namespace Atlas.Infrastructure.Caching.Tests.Invalidation
         #region InvalidateByScopeAsync Tests
 
         [Theory]
-        [InlineData(CacheScope.Global, "G:*")]
-        [InlineData(CacheScope.Tenant, "T:tenant-001:*")]
-        [InlineData(CacheScope.Store, "S:store-001:*")]
-        [InlineData(CacheScope.User, "U:user-001:*")]
+        [InlineData(CacheScope.Global, null, "G:*")]
+        [InlineData(CacheScope.Tenant, "tenant-001", "T:tenant-001:*")]
+        [InlineData(CacheScope.Store, "tenant-001:store-001", "S:tenant-001:store-001:*")]
+        [InlineData(CacheScope.User, "tenant-001:user-001", "U:tenant-001:user-001:*")]
         public async Task InvalidateByScopeAsync_CallsProviderWithCorrectPattern(
             CacheScope scope,
+            string? scopeId,
             string expectedPattern)
         {
             // Arrange
-            var scopeId = scope == CacheScope.Global ? null : 
-                          scope == CacheScope.Tenant ? "tenant-001" :
-                          scope == CacheScope.Store ? "store-001" : "user-001";
-
             _mockProvider.Setup(x => x.GetKeysByPatternAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new List<string>());
 
@@ -132,6 +129,20 @@ namespace Atlas.Infrastructure.Caching.Tests.Invalidation
             _mockProvider.Verify(x => x.GetKeysByPatternAsync(
                 expectedPattern,
                 It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Theory]
+        [InlineData(CacheScope.Tenant, null)]
+        [InlineData(CacheScope.Tenant, "tenant-001:store-001")]
+        [InlineData(CacheScope.Store, "store-001")]
+        [InlineData(CacheScope.User, "user-001")]
+        public async Task InvalidateByScopeAsync_WithInvalidScopeId_ThrowsArgumentException(
+            CacheScope scope,
+            string? scopeId)
+        {
+            // Act & Assert
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                _invalidator.InvalidateByScopeAsync(scope, scopeId));
         }
 
         [Fact]

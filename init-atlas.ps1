@@ -113,9 +113,9 @@ Set-Location "src/6.Messaging"
 dotnet new classlib -n Atlas.Messaging.Abstractions -f net8.0
 dotnet sln ../../Atlas.sln add Atlas.Messaging.Abstractions/Atlas.Messaging.Abstractions.csproj
 
-# 9.2 Messaging.Redis
-dotnet new classlib -n Atlas.Messaging.Redis -f net8.0
-dotnet sln ../../Atlas.sln add Atlas.Messaging.Redis/Atlas.Messaging.Redis.csproj
+# 9.2 Messaging.RabbitMQ
+dotnet new classlib -n Atlas.Messaging.RabbitMQ -f net8.0
+dotnet sln ../../Atlas.sln add Atlas.Messaging.RabbitMQ/Atlas.Messaging.RabbitMQ.csproj
 
 Set-Location "../.."
 
@@ -192,8 +192,8 @@ dotnet add src/5.Infrastructure/Atlas.Infrastructure.Security reference src/2.Mo
 # Messaging.Abstractions -> Core
 dotnet add src/6.Messaging/Atlas.Messaging.Abstractions reference src/1.Core/Atlas.Core
 
-# Messaging.Redis -> Messaging.Abstractions
-dotnet add src/6.Messaging/Atlas.Messaging.Redis reference src/6.Messaging/Atlas.Messaging.Abstractions
+# Messaging.RabbitMQ -> Messaging.Abstractions
+dotnet add src/6.Messaging/Atlas.Messaging.RabbitMQ reference src/6.Messaging/Atlas.Messaging.Abstractions
 
 # 13. 添加 NuGet 包
 Write-Host "13. 添加 NuGet 包..." -ForegroundColor Yellow
@@ -212,7 +212,7 @@ dotnet add src/3.Data/Atlas.Data.Tenant package Microsoft.EntityFrameworkCore.Sq
 dotnet add src/5.Infrastructure/Atlas.Infrastructure.Caching package StackExchange.Redis --version 2.7.0
 dotnet add src/5.Infrastructure/Atlas.Infrastructure.Caching package Microsoft.Extensions.Caching.Memory --version 8.0.0
 
-dotnet add src/6.Messaging/Atlas.Messaging.Redis package StackExchange.Redis --version 2.7.0
+dotnet add src/6.Messaging/Atlas.Messaging.RabbitMQ package MassTransit.RabbitMQ --version 8.4.1
 
 # Serilog 包
 dotnet add src/5.Infrastructure/Atlas.Infrastructure.Logging package Serilog --version 3.1.0

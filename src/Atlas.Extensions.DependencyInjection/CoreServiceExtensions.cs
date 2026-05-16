@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Configuration;
+using Atlas.Core.Configuration;
 using Atlas.Core.IdGenerators;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
@@ -18,16 +18,18 @@ using Atlas.Infrastructure.Caching.Extensions;
 using Atlas.Infrastructure.Caching.Locking;
 using Atlas.Infrastructure.Common.Tenants;
 using Atlas.Messaging.Abstractions;
-using Atlas.Messaging.Redis;
+using Atlas.Messaging.RabbitMQ;
 using Atlas.Services;
 using Atlas.Services.Abstractions;
 using Atlas.Services.Tenant;
+using MassTransit;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using System.Reflection;
 
 namespace Atlas.Extensions.DependencyInjection;
 
@@ -48,13 +50,24 @@ public static class AtlasCoreServiceExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
+        return services.AddAtlasCore(configuration, Array.Empty<Assembly>());
+    }
+
+    /// <summary>
+    /// Registers all Atlas core services and optional MassTransit consumer assemblies.
+    /// </summary>
+    public static IServiceCollection AddAtlasCore(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        params Assembly[] messagingConsumerAssemblies)
+    {
         services.AddLogging();
         services.AddHttpContextAccessor();
         services.AddAtlasSnowflakeId(configuration);
         services.AddAtlasDatabase(configuration);
         services.AddAtlasIdentity();
         services.AddAtlasCache(configuration);
-        services.AddAtlasMessaging(configuration);
+        services.AddAtlasMessaging(configuration, messagingConsumerAssemblies ?? Array.Empty<Assembly>());
         services.AddAtlasBusinessServices();
 
         return services;
@@ -174,24 +187,91 @@ public static class AtlasCoreServiceExtensions
 
     private static IServiceCollection AddAtlasMessaging(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        Assembly[] messagingConsumerAssemblies)
     {
-        var provider = configuration["Messaging:Provider"]?.ToLowerInvariant();
+        var provider = configuration["Messaging:Provider"]?.Trim().ToLowerInvariant()
+            ?? "none";
+
+        if (provider is "rabbitmq" or "rabbit-mq" or "rabbit")
+        {
+            return services.AddAtlasRabbitMqMessaging(configuration, messagingConsumerAssemblies);
+        }
 
         if (provider == "redis")
         {
-            var connectionString =
-                configuration["Messaging:Redis:ConnectionString"] ??
-                configuration["CacheSettings:Redis:ConnectionString"];
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-                throw new InvalidOperationException("Redis messaging connection string is required.");
-
-            var channelPrefix = configuration["Messaging:Redis:ChannelPrefix"];
-            return services.AddRedisDomainEvents(connectionString, channelPrefix);
+            throw new NotSupportedException(
+                "Redis Pub/Sub messaging has been removed. Use Messaging:Provider=RabbitMQ for reliable business messaging.");
         }
 
+        if (provider is not "none" and not "noop")
+            throw new InvalidOperationException($"Unsupported messaging provider '{provider}'.");
+
         services.TryAddSingleton<IDomainEventPublisher, NoOpDomainEventPublisher>();
+        services.TryAddSingleton<IDomainEventTransport, NoOpDomainEventTransport>();
+        return services;
+    }
+
+    private static IServiceCollection AddAtlasRabbitMqMessaging(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        Assembly[] messagingConsumerAssemblies)
+    {
+        var rabbitMqSection = configuration.GetSection("Messaging:RabbitMQ");
+        var options = rabbitMqSection.Get<RabbitMqMessagingOptions>() ?? new RabbitMqMessagingOptions();
+
+        services.Configure<RabbitMqMessagingOptions>(rabbitMqSection);
+        services.Configure<TenantOutboxDispatcherOptions>(configuration.GetSection("Messaging:TenantOutbox"));
+
+        services.AddMassTransit(configurator =>
+        {
+            configurator.SetKebabCaseEndpointNameFormatter();
+
+            foreach (var assembly in messagingConsumerAssemblies.Where(x => x != null).Distinct())
+            {
+                configurator.AddConsumers(assembly);
+            }
+
+            configurator.AddEntityFrameworkOutbox<AtlasGlobalDbContext>(outbox =>
+            {
+                outbox.UseMySql();
+                outbox.UseBusOutbox();
+            });
+
+            configurator.UsingRabbitMq((context, cfg) =>
+            {
+                cfg.PrefetchCount = options.PrefetchCount;
+                cfg.UseMessageRetry(retry =>
+                    retry.Interval(
+                        Math.Max(0, options.RetryLimit),
+                        TimeSpan.FromSeconds(Math.Max(1, options.RetryIntervalSeconds))));
+
+                if (!string.IsNullOrWhiteSpace(options.Uri))
+                {
+                    cfg.Host(new Uri(options.Uri), host =>
+                    {
+                        host.Username(options.Username);
+                        host.Password(options.Password);
+                    });
+                }
+                else
+                {
+                    cfg.Host(options.Host, options.Port, options.VirtualHost, host =>
+                    {
+                        host.Username(options.Username);
+                        host.Password(options.Password);
+                    });
+                }
+
+                cfg.ConfigureEndpoints(context);
+            });
+        });
+
+        services.RemoveAll<IDomainEventPublisher>();
+        services.AddScoped<IDomainEventPublisher, MassTransitDomainEventPublisher>();
+        services.RemoveAll<IDomainEventTransport>();
+        services.AddSingleton<IDomainEventTransport, MassTransitDomainEventTransport>();
+        services.AddHostedService<TenantOutboxDispatcher>();
         return services;
     }
 
@@ -346,7 +426,9 @@ public static class AtlasCoreServiceExtensions
         services.AddScoped<IStoreRepository, StoreRepository>();
         services.AddScoped<IOperationLogRepository, OperationLogRepository>();
         services.TryAddSingleton<ITenantCodeGenerator, TenantCodeGenerator>();
+        services.AddScoped<ITenantDomainEventOutbox, TenantDomainEventOutbox>();
         services.AddScoped<ITenantProvisioningService, TenantProvisioningService>();
+        services.AddScoped<IOrderCommandService, OrderCommandService>();
         services.AddScoped<IStoreService, StoreService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IUserService, UserService>();

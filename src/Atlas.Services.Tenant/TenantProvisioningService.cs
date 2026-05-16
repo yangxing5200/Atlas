@@ -74,21 +74,6 @@ public sealed class TenantProvisioningService : ITenantProvisioningService
         }
 
         var headquarters = await CreateHeadquartersStoreAsync(tenant, request, ct);
-
-        await _globalUnitOfWork.BeginTransactionAsync(ct);
-        try
-        {
-            tenant.Status = TenantStatus.Active;
-            await _globalUnitOfWork.SaveChangesAsync(ct);
-            await _globalUnitOfWork.CommitAsync(ct);
-        }
-        catch
-        {
-            if (_globalUnitOfWork.HasActiveTransaction)
-                await _globalUnitOfWork.RollbackAsync(ct);
-            throw;
-        }
-
         var domainEvent = new TenantProvisionedEvent
         {
             TenantId = tenant.Id,
@@ -98,18 +83,20 @@ public sealed class TenantProvisioningService : ITenantProvisioningService
         };
         eventId = domainEvent.EventId;
 
+        await _globalUnitOfWork.BeginTransactionAsync(ct);
         try
         {
+            tenant.Status = TenantStatus.Active;
             await _eventPublisher.PublishAsync(domainEvent, ct);
             eventPublished = true;
+            await _globalUnitOfWork.SaveChangesAsync(ct);
+            await _globalUnitOfWork.CommitAsync(ct);
         }
-        catch (Exception ex)
+        catch
         {
-            _logger.LogWarning(
-                ex,
-                "Tenant {TenantId} was provisioned but event {EventId} was not published",
-                tenant.Id,
-                eventId);
+            if (_globalUnitOfWork.HasActiveTransaction)
+                await _globalUnitOfWork.RollbackAsync(ct);
+            throw;
         }
 
         _logger.LogInformation(

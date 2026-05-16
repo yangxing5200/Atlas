@@ -215,12 +215,14 @@ Atlas.Data 负责数据访问、ORM 实现、仓储和数据库上下文。
 消息队列（事件总线）基本结构：
 
 ## Atlas.Messaging.Abstractions
-- 消息发布接口（IEventPublisher、IMessageBus）
-- 消息模型（EventMessage）
+- 领域事件接口（IDomainEvent）
+- 领域事件发布接口（IDomainEventPublisher）
+- 无消息提供程序时的 NoOp 实现
 
-## Atlas.Messaging.Redis
-- Redis Stream / PubSub 的具体实现
-- 消费者组逻辑
+## Atlas.Messaging.RabbitMQ
+- RabbitMQ + MassTransit 的具体实现
+- 通过 MassTransit EF Transactional Outbox 将事件先写入 Global 数据库
+- 由 MassTransit 后台投递服务异步发布到 RabbitMQ
 
 ---
 

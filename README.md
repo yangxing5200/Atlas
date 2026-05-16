@@ -16,7 +16,7 @@
 - 🧩 **模块化设计** - 清晰的分层架构，高度可扩展
 - 🔐 **安全机制** - Token 认证、数据加密、敏感信息过滤
 - 💾 **分布式缓存** - 支持 Redis 缓存，内存缓存降级
-- 📨 **消息队列** - Redis Stream/PubSub 消息集成
+- 📨 **消息队列** - RabbitMQ + MassTransit + EF Outbox 可靠消息集成
 - 📝 **结构化日志** - Serilog + Seq 日志聚合
 - 🗄️ **数据访问** - Entity Framework Core + MySQL
 
@@ -32,7 +32,7 @@
 | **缓存** | Redis |
 | **日志** | Serilog + Seq |
 | **API 文档** | Swagger/OpenAPI |
-| **消息队列** | Redis Stream/PubSub |
+| **消息队列** | RabbitMQ + MassTransit |
 
 ---
 
@@ -43,6 +43,7 @@
 - [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
 - [MySQL 8.0+](https://www.mysql.com/)
 - [Redis 6.0+](https://redis.io/)
+- [RabbitMQ 3.12+](https://www.rabbitmq.com/)
 - [Visual Studio 2022](https://visualstudio.microsoft.com/) 或 [VS Code](https://code.visualstudio.com/)
 
 ### 安装步骤 | Installation
@@ -127,7 +128,7 @@ graph TB
     
     subgraph Messaging["📨 Messaging Layer"]
         MsgAbs["Atlas.Messaging.Abstractions"]
-        MsgRedis["Atlas.Messaging.Redis"]
+        MsgRabbit["Atlas.Messaging.RabbitMQ"]
     end
     
     subgraph Core["🎯 Core Layer"]
@@ -173,7 +174,7 @@ Atlas/
 │   ├── 🏗️ Atlas.Infrastructure.Logging/  # 日志基础设施
 │   ├── 🏗️ Atlas.Infrastructure.Security/ # 安全基础设施
 │   ├── 📨 Atlas.Messaging.Abstractions/  # 消息抽象
-│   ├── 📨 Atlas.Messaging.Redis/         # Redis 消息实现
+│   ├── 📨 Atlas.Messaging.RabbitMQ/      # RabbitMQ 消息实现
 │   ├── 🔌 Atlas.Extensions.DependencyInjection/ # DI 扩展
 │   └── 📱 Atlas.WebApi/                  # WebAPI 项目
 └── 📁 tests/                             # 测试项目
@@ -267,15 +268,15 @@ public class OrderService
 
 ### 5. 消息队列 | Message Queue
 
-基于 Redis 的消息发布订阅：
+基于 RabbitMQ + MassTransit 的可靠领域事件发布。业务代码依赖 `IDomainEventPublisher`，启用 RabbitMQ 后事件会先写入全局库 Outbox，再由 MassTransit 后台投递到 RabbitMQ：
 
 ```csharp
-// 发布消息
-await _messageBus.PublishAsync(new OrderCreatedEvent { OrderId = 123 });
-
-// 订阅消息
-_messageBus.Subscribe<OrderCreatedEvent>(async (msg) => {
-    // 处理消息
+await _domainEventPublisher.PublishAsync(new TenantProvisionedEvent
+{
+    TenantId = tenant.Id,
+    TenantName = tenant.Name,
+    Domain = tenant.Domain,
+    HeadquartersStoreId = headquarters.Id
 });
 ```
 
@@ -341,6 +342,9 @@ dotnet ef database update \
 | `Security:Crypto:Key` | AES 加密密钥（至少32字符） | - |
 | `CacheSettings:Provider` | 缓存提供程序（Redis/Memory） | Redis |
 | `CacheSettings:Redis:ConnectionString` | Redis 连接字符串 | localhost:6379 |
+| `Messaging:Provider` | 消息提供程序（RabbitMQ/None） | None |
+| `Messaging:RabbitMQ:Host` | RabbitMQ 主机 | localhost |
+| `Messaging:RabbitMQ:Port` | RabbitMQ 端口 | 5672 |
 | `Logging:Atlas:EnableConsole` | 启用控制台日志 | true |
 | `Logging:Atlas:EnableFile` | 启用文件日志 | true |
 | `Logging:Atlas:EnableSeq` | 启用 Seq 日志 | false |
@@ -369,6 +373,16 @@ dotnet ef database update \
     "Redis": {
       "ConnectionString": "localhost:6379",
       "InstanceName": "atlas"
+    }
+  },
+  "Messaging": {
+    "Provider": "RabbitMQ",
+    "RabbitMQ": {
+      "Host": "localhost",
+      "Port": 5672,
+      "VirtualHost": "/",
+      "Username": "guest",
+      "Password": "guest"
     }
   },
   "Snowflake": {

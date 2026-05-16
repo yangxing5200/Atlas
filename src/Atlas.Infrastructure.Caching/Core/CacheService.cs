@@ -1,12 +1,11 @@
 ﻿using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Core.Models;
-using System.Collections.Concurrent;
 using System.Diagnostics;
 
 namespace Atlas.Infrastructure.Caching.Core
 {
     /// <summary>
-    /// �������ʵ�֣�֧��ͬ�������ͷֲ�ʽ����ʧЧ֪ͨ��
+    /// Implements cache reads, writes, tag-version validation, and distributed invalidation.
     /// </summary>
     public class CacheService : ICacheService
     {
@@ -16,22 +15,18 @@ namespace Atlas.Infrastructure.Caching.Core
         private readonly ICacheKeyGenerator _keyGenerator;
         private readonly IScopeContextAccessor _scopeAccessor;
         private readonly ICacheInvalidator _invalidator;
-        private readonly ICacheInvalidationBus? _invalidationBus; // ��ѡ�ķֲ�ʽʧЧ����
+        private readonly ICacheInvalidationBus? _invalidationBus; // Optional distributed invalidation bus.
 
-        // ʹ�ù̶���С�����ر����ڴ�й©
+        // Use a bounded lock pool so each cache key does not keep a permanent lock object.
         private readonly SemaphoreSlim[] _lockPool;
         private const int LockPoolSize = 1024;
 
-        // ʹ�ø���ȷ��ͳ�Ƽ���
+        // Cache counters are updated with atomic operations.
         private long _totalGets;
         private long _totalSets;
         private long _totalHits;
         private long _totalMisses;
         private long _totalInvalidations;
-
-        // �����ڴ滺�棨����ͬ��������
-        private readonly ConcurrentDictionary<string, object> _cache = new();
-        private readonly ConcurrentDictionary<string, DateTime> _expirations = new();
 
         public CacheService(
             ICacheProvider provider,
@@ -50,7 +45,7 @@ namespace Atlas.Infrastructure.Caching.Core
             _invalidator = invalidator ?? throw new ArgumentNullException(nameof(invalidator));
             _invalidationBus = invalidationBus;
 
-            // ��ʼ������
+            // Initialize striped locks.
             _lockPool = new SemaphoreSlim[LockPoolSize];
             for (int i = 0; i < LockPoolSize; i++)
             {
@@ -62,44 +57,41 @@ namespace Atlas.Infrastructure.Caching.Core
             // L1 providers that own process-level state subscribe once instead.
         }
 
-        // ================= ����ͬ���ӿ� =================
+        // ================= Raw-key synchronous API =================
 
         public T? Get<T>(string key)
         {
-            if (_cache.TryGetValue(key, out var value))
-            {
-                if (_expirations.TryGetValue(key, out var exp) && exp < DateTime.UtcNow)
-                {
-                    _cache.TryRemove(key, out _);
-                    _expirations.TryRemove(key, out _);
-                    return default;
-                }
+            ValidateRawKey(key);
+            Interlocked.Increment(ref _totalGets);
 
-                return (T)value;
+            var data = _provider.GetAsync(key).GetAwaiter().GetResult();
+            if (data == null)
+            {
+                Interlocked.Increment(ref _totalMisses);
+                return default;
             }
 
-            return default;
+            var value = _serializer.Deserialize<T>(data);
+            Interlocked.Increment(ref _totalHits);
+            return value;
         }
 
         public void Set<T>(string key, T value, TimeSpan? expiration = null)
         {
-            _cache[key] = value!;
-            if (expiration.HasValue)
-            {
-                _expirations[key] = DateTime.UtcNow.Add(expiration.Value);
-            }
-            else
-            {
-                _expirations.TryRemove(key, out _);
-            }
+            ValidateRawKey(key);
+            ArgumentNullException.ThrowIfNull(value);
+            Interlocked.Increment(ref _totalSets);
+
+            var data = _serializer.Serialize(value);
+            _provider.SetAsync(key, data, expiration).GetAwaiter().GetResult();
         }
 
         public bool Remove(string key)
         {
-            var removed = _cache.TryRemove(key, out _);
-            _expirations.TryRemove(key, out _);
+            ValidateRawKey(key);
+            var removed = _provider.RemoveAsync(key).GetAwaiter().GetResult();
 
-            // ��������ʧЧ֪ͨ��������������Fire-and-forget��
+            // Synchronous callers cannot await the notification, so publish in the background.
             if (removed && _invalidationBus != null)
             {
                 _ = _invalidationBus.PublishInvalidationAsync(key);
@@ -110,21 +102,11 @@ namespace Atlas.Infrastructure.Caching.Core
 
         public bool Exists(string key)
         {
-            if (!_cache.ContainsKey(key))
-                return false;
-
-            // ����Ƿ����
-            if (_expirations.TryGetValue(key, out var exp) && exp < DateTime.UtcNow)
-            {
-                _cache.TryRemove(key, out _);
-                _expirations.TryRemove(key, out _);
-                return false;
-            }
-
-            return true;
+            ValidateRawKey(key);
+            return _provider.ExistsAsync(key).GetAwaiter().GetResult();
         }
 
-        // ================= ���������� Definition ��ͬ������ =================
+        // ================= Definition-based synchronous API =================
 
         public T? Get<T>(CacheKeyDefinition definition, object? instanceValue = null)
         {
@@ -170,7 +152,7 @@ namespace Atlas.Infrastructure.Caching.Core
             return ExistsAsync(definition, instanceValue).GetAwaiter().GetResult();
         }
 
-        // ================= �첽������ԭ��ʵ�֣����ֲ��䣩 =================
+        // ================= Asynchronous API =================
 
         public async Task<T?> GetAsync<T>(
             CacheKeyDefinition definition,
@@ -199,14 +181,14 @@ namespace Atlas.Infrastructure.Caching.Core
                 return default;
             }
 
-            // ��ȡΪ�����������ڸ���
+            // Validate tag versions to detect logically invalidated entries.
             if (cachedValue.TagVersions.Any())
             {
                 bool isValid = await ValidateTagVersionsAsync(cachedValue.TagVersions, cancellationToken);
                 if (!isValid)
                 {
                     Interlocked.Increment(ref _totalMisses);
-                    // �첽ɾ��ʧЧ���棬����������
+                    // Remove the stale entry in the background.
                     _ = _provider.RemoveAsync(fullKey, cancellationToken);
                     return default;
                 }
@@ -226,10 +208,9 @@ namespace Atlas.Infrastructure.Caching.Core
             if (definition == null)
                 throw new ArgumentNullException(nameof(definition));
 
-            // ��ȷ����nullֵ
+            // Honor the null-caching policy from the cache definition.
             if (!definition.AllowNull && value == null)
             {
-                // ��Ĭ���أ�����ԭ����Ϊ
                 return;
             }
 
@@ -239,7 +220,7 @@ namespace Atlas.Infrastructure.Caching.Core
             var fullKey = GenerateScopedKey(baseKey, definition.Scope);
             var options = optionsOverride ?? definition.CreateOptions(_scopeAccessor.Current, instanceValue);
 
-            // ��ȡ��ǰTag�汾
+            // Store the current tag versions with the cached value.
             Dictionary<string, long> tagVersions = new();
             if (options.Tags.Any())
             {
@@ -247,7 +228,7 @@ namespace Atlas.Infrastructure.Caching.Core
                 tagVersions = versions.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             }
 
-            // ���IsNull��ǣ���������nullֵ�Ͳ�����
+            // Persist a null marker so cached nulls are not confused with misses.
             var cachedValue = new CachedValue<T>
             {
                 Value = value!,
@@ -278,7 +259,7 @@ namespace Atlas.Infrastructure.Caching.Core
 
             if (exists)
             {
-                // �������null��ֵȷʵ��null��Ҳ������
+                // Cached nulls count as hits only when the definition allows null values.
                 if (isNull && definition.AllowNull)
                 {
                     return CacheResult<T>.Hit(default, CacheSource.Cache, sw.ElapsedMilliseconds);
@@ -297,7 +278,7 @@ namespace Atlas.Infrastructure.Caching.Core
             await semaphore.WaitAsync(cancellationToken);
             try
             {
-                // ˫�ؼ�飺�ٴγ��Զ�ȡ����
+                // Re-read after taking the striped lock to reduce cache stampede.
                 (value, exists, isNull) = await GetWithExistsAsync<T>(definition, instanceValue, cancellationToken);
 
                 if (exists)
@@ -313,7 +294,7 @@ namespace Atlas.Infrastructure.Caching.Core
                     }
                 }
 
-                // ����factory��ȡ����
+                // Load data through the caller-provided factory on cache miss.
                 value = await factory();
 
                 if (value != null || definition.AllowNull)
@@ -342,7 +323,7 @@ namespace Atlas.Infrastructure.Caching.Core
 
             var result = await _provider.RemoveAsync(fullKey, cancellationToken);
 
-            // ��������ʧЧ֪ͨ������������
+            // Publish invalidation after removing the value from the configured provider.
             if (result && _invalidationBus != null)
             {
                 await _invalidationBus.PublishInvalidationAsync(fullKey);
@@ -385,14 +366,14 @@ namespace Atlas.Infrastructure.Caching.Core
                 keyMapping[fullKey] = value;
             }
 
-            // ������ȡ���л�������
+            // Batch-read serialized cache values.
             var results = await _provider.GetManyAsync(keyMapping.Keys, cancellationToken);
 
-            // �����ռ��Ͳ�ѯ
+            // Collect all tags so current versions can be loaded once.
             var allTags = new HashSet<string>();
             var deserializedCache = new Dictionary<string, CachedValue<T>?>();
 
-            // ��һ�飺�����л����ռ�����tags
+            // First pass: deserialize entries and collect tag names.
             foreach (var kvp in results)
             {
                 if (kvp.Value != null)
@@ -410,7 +391,7 @@ namespace Atlas.Infrastructure.Caching.Core
                 }
             }
 
-            // ������֤����tag�汾��һ���Բ�ѯ��
+            // Load current tag versions for the whole batch.
             Dictionary<string, long> currentTagVersions = new();
             if (allTags.Any())
             {
@@ -418,7 +399,7 @@ namespace Atlas.Infrastructure.Caching.Core
                     .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             }
 
-            // �ڶ��飺��֤�����ؽ��
+            // Second pass: validate tag versions and build the result.
             var output = new Dictionary<object, T?>();
             foreach (var kvp in keyMapping)
             {
@@ -431,7 +412,7 @@ namespace Atlas.Infrastructure.Caching.Core
                     continue;
                 }
 
-                // ��֤tag�汾
+                // Validate this entry's tag versions.
                 bool isValid = true;
                 if (cachedValue.TagVersions.Any())
                 {
@@ -466,7 +447,7 @@ namespace Atlas.Infrastructure.Caching.Core
 
             var options = optionsOverride ?? definition.CreateOptions(_scopeAccessor.Current, null);
 
-            // ������ȡTag�汾������У�
+            // Capture one tag-version snapshot for the whole batch.
             Dictionary<string, long> tagVersions = new();
             if (options.Tags.Any())
             {
@@ -523,7 +504,7 @@ namespace Atlas.Infrastructure.Caching.Core
 
             var count = await _provider.RemoveManyAsync(fullKeys, cancellationToken);
 
-            // ������������ʧЧ֪ͨ
+            // Publish invalidation for each scoped key that was removed.
             if (count > 0 && _invalidationBus != null)
             {
                 foreach (var key in fullKeys)
@@ -553,23 +534,37 @@ namespace Atlas.Infrastructure.Caching.Core
 
         public async Task InvalidateScopeAsync(CacheScope scope, CancellationToken cancellationToken = default)
         {
-            await _invalidator.InvalidateByScopeAsync(scope, cancellationToken: cancellationToken);
+            var scopeId = scope switch
+            {
+                CacheScope.Global => null,
+                CacheScope.Tenant => RequireScopeValue(_scopeAccessor.TenantId, "tenant"),
+                CacheScope.Store => $"{RequireScopeValue(_scopeAccessor.TenantId, "tenant")}:{RequireScopeValue(_scopeAccessor.StoreId, "store")}",
+                CacheScope.User => $"{RequireScopeValue(_scopeAccessor.TenantId, "tenant")}:{RequireScopeValue(_scopeAccessor.UserId, "user")}",
+                _ => throw new ArgumentException($"Unknown scope: {scope}", nameof(scope))
+            };
+
+            await _invalidator.InvalidateByScopeAsync(scope, scopeId, cancellationToken);
         }
 
         public async Task InvalidateTenantAsync(string tenantId, CancellationToken cancellationToken = default)
         {
+            ValidateRawKey(tenantId, nameof(tenantId));
             var pattern = $"T:{tenantId}:*";
             await _invalidator.InvalidateByPatternAsync(pattern, cancellationToken);
         }
 
         public async Task InvalidateStoreAsync(string tenantId, string storeId, CancellationToken cancellationToken = default)
         {
+            ValidateRawKey(tenantId, nameof(tenantId));
+            ValidateRawKey(storeId, nameof(storeId));
             var pattern = $"S:{tenantId}:{storeId}:*";
             await _invalidator.InvalidateByPatternAsync(pattern, cancellationToken);
         }
 
         public async Task InvalidateUserAsync(string tenantId, string userId, CancellationToken cancellationToken = default)
         {
+            ValidateRawKey(tenantId, nameof(tenantId));
+            ValidateRawKey(userId, nameof(userId));
             var pattern = $"U:{tenantId}:{userId}:*";
             await _invalidator.InvalidateByPatternAsync(pattern, cancellationToken);
         }
@@ -590,15 +585,26 @@ namespace Atlas.Infrastructure.Caching.Core
 
         public async Task ClearAsync(CancellationToken cancellationToken = default)
         {
-            // ��ձ����ڴ滺��
-            _cache.Clear();
-            _expirations.Clear();
-
-            // ��շֲ�ʽ����
+            // Clear the configured underlying provider.
             await _provider.ClearAsync(cancellationToken);
         }
 
-        // ========== ˽�и������� ==========
+        // ========== Helpers ==========
+
+        private static void ValidateRawKey(string key, string parameterName = "key")
+        {
+            if (string.IsNullOrWhiteSpace(key))
+                throw new ArgumentException("Cache key cannot be empty.", parameterName);
+        }
+
+        private static string RequireScopeValue(string? value, string scopeName)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                throw new InvalidOperationException(
+                    $"The current context does not contain a {scopeName} id, so scoped cache invalidation cannot be executed.");
+
+            return value;
+        }
 
         private string GenerateScopedKey(string baseKey, CacheScope scope)
         {
@@ -631,7 +637,7 @@ namespace Atlas.Infrastructure.Caching.Core
         }
 
         /// <summary>
-        /// ʹ�����ػ�ȡ���������ڴ�й©
+        /// Returns a stable striped lock for a cache key.
         /// </summary>
         private SemaphoreSlim GetLockForKey(string key)
         {
@@ -640,7 +646,7 @@ namespace Atlas.Infrastructure.Caching.Core
         }
 
         /// <summary>
-        /// ������֤Tag�汾
+        /// Validates whether the tag versions stored with the cache entry are still current.
         /// </summary>
         private async Task<bool> ValidateTagVersionsAsync(
             Dictionary<string, long> cachedTagVersions,
@@ -666,7 +672,7 @@ namespace Atlas.Infrastructure.Caching.Core
         }
 
         /// <summary>
-        /// ͬʱ����ֵ�ʹ���״̬������˫�ز�ѯ
+        /// Reads the cached value, existence flag, and cached-null flag together.
         /// </summary>
         private async Task<(T? value, bool exists, bool isNull)> GetWithExistsAsync<T>(
             CacheKeyDefinition definition,
@@ -688,13 +694,13 @@ namespace Atlas.Infrastructure.Caching.Core
                 return (default, false, false);
             }
 
-            // ��֤Tag�汾
+            // Validate tag versions before reporting a hit.
             if (cachedValue.TagVersions.Any())
             {
                 bool isValid = await ValidateTagVersionsAsync(cachedValue.TagVersions, cancellationToken);
                 if (!isValid)
                 {
-                    // �첽ɾ��ʧЧ����
+                    // Remove the stale entry in the background.
                     _ = _provider.RemoveAsync(fullKey, cancellationToken);
                     return (default, false, false);
                 }

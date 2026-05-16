@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 namespace Atlas.Infrastructure.Caching.Providers.Redis
 {
     /// <summary>
-    /// 基于 Redis Pub/Sub 的分布式缓存失效总线
+    /// Redis Pub/Sub based distributed cache invalidation bus.
     /// </summary>
     public class RedisInvalidationBus : ICacheInvalidationBus
     {
@@ -16,6 +16,7 @@ namespace Atlas.Infrastructure.Caching.Providers.Redis
         private readonly ILogger<RedisInvalidationBus>? _logger;
         private readonly List<Action<string>> _handlers = new();
         private const string ChannelName = "atlas.cache.invalidation";
+        private static readonly RedisChannel Channel = RedisChannel.Literal(ChannelName);
         private bool _isSubscribed = false;
         private readonly object _subscribeLock = new();
 
@@ -28,7 +29,7 @@ namespace Atlas.Infrastructure.Caching.Providers.Redis
         }
 
         /// <summary>
-        /// 发布缓存失效通知到所有订阅的服务器
+        /// Publishes a cache invalidation notification to all subscribed servers.
         /// </summary>
         public async Task PublishInvalidationAsync(string key)
         {
@@ -38,7 +39,7 @@ namespace Atlas.Infrastructure.Caching.Providers.Redis
             try
             {
                 var sub = _redis.GetSubscriber();
-                var recipients = await sub.PublishAsync(ChannelName, key);
+                var recipients = await sub.PublishAsync(Channel, key);
 
                 _logger?.LogDebug(
                     "Published cache invalidation for key '{Key}' to {Recipients} subscribers",
@@ -47,7 +48,7 @@ namespace Atlas.Infrastructure.Caching.Providers.Redis
             }
             catch (Exception ex)
             {
-                // 记录错误但不抛出异常，避免影响主流程
+                // Log failures without breaking the caller's main flow.
                 _logger?.LogError(
                     ex,
                     "Failed to publish cache invalidation for key '{Key}'",
@@ -56,7 +57,7 @@ namespace Atlas.Infrastructure.Caching.Providers.Redis
         }
 
         /// <summary>
-        /// 订阅缓存失效通知
+        /// Subscribes to cache invalidation notifications.
         /// </summary>
         public void Subscribe(Action<string> onInvalidate)
         {
@@ -67,13 +68,13 @@ namespace Atlas.Infrastructure.Caching.Providers.Redis
             {
                 _handlers.Add(onInvalidate);
 
-                // 只订阅一次 Redis 频道
+                // Subscribe to the Redis channel only once.
                 if (!_isSubscribed)
                 {
                     try
                     {
                         var sub = _redis.GetSubscriber();
-                        sub.Subscribe(ChannelName, (channel, message) =>
+                        sub.Subscribe(Channel, (channel, message) =>
                         {
                             if (message.IsNullOrEmpty)
                                 return;
@@ -84,7 +85,7 @@ namespace Atlas.Infrastructure.Caching.Providers.Redis
                                 "Received cache invalidation notification for key '{Key}'",
                                 key);
 
-                            // 调用所有已注册的处理器
+                            // Invoke all registered handlers.
                             foreach (var handler in _handlers)
                             {
                                 try
@@ -119,7 +120,7 @@ namespace Atlas.Infrastructure.Caching.Providers.Redis
         }
 
         /// <summary>
-        /// 批量发布缓存失效通知（性能优化）
+        /// Publishes multiple cache invalidation notifications.
         /// </summary>
         public async Task PublishInvalidationsAsync(IEnumerable<string> keys)
         {
@@ -143,7 +144,7 @@ namespace Atlas.Infrastructure.Caching.Providers.Redis
 
                 foreach (var key in keyList)
                 {
-                    tasks.Add(sub.PublishAsync(ChannelName, key));
+                    tasks.Add(sub.PublishAsync(Channel, key));
                 }
 
                 await Task.WhenAll(tasks);

@@ -3,6 +3,7 @@ using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Common;
 using Atlas.Data.Common.Extensions;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
 
@@ -43,14 +44,31 @@ namespace Atlas.Data.Global
             var migrationsAssembly = Assembly.Load("Atlas.Data.Global.Migrations");
             modelBuilder.ApplyConfigurationsFromAssembly(migrationsAssembly);
 
-            // 2. 确保外键字段有索引
+            // 2. MassTransit transactional outbox tables
+            modelBuilder.AddInboxStateEntity();
+            modelBuilder.AddOutboxMessageEntity();
+            modelBuilder.AddOutboxStateEntity();
+            ConfigureMassTransitOutbox(modelBuilder);
+
+            // 3. 确保外键字段有索引
             modelBuilder.EnsureForeignKeyIndexes();
 
-            // 3. 应用软删除过滤器
+            // 4. 应用软删除过滤器
             modelBuilder.ApplySoftDeleteFilter();
 
-            // 4. 移除所有外键约束
+            // 5. 移除所有外键约束
             modelBuilder.RemoveAllForeignKeyConstraints();
+        }
+
+        private static void ConfigureMassTransitOutbox(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.OutboxMessage", builder =>
+            {
+                builder.Property<string>("Body").HasColumnType("longtext");
+                builder.Property<string>("Headers").HasColumnType("longtext");
+                builder.Property<string>("MessageType").HasColumnType("longtext");
+                builder.Property<string>("Properties").HasColumnType("longtext");
+            });
         }
     }
 }

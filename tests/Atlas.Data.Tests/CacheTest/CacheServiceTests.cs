@@ -69,6 +69,74 @@ namespace Atlas.Infrastructure.Caching.Tests.Core
         #region Sync Definition API Tests
 
         [Fact]
+        public void Get_WithRawKey_UsesConfiguredProvider()
+        {
+            // Arrange
+            var key = "raw:product:1";
+            var product = TestDataGenerator.CreateProduct(1, "Raw Product");
+            _mockProvider.Setup(x => x.GetAsync(key, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(_serializer.Serialize(product));
+
+            // Act
+            var result = _cacheService.Get<TestProduct>(key);
+
+            // Assert
+            result.Should().NotBeNull();
+            result!.Id.Should().Be(product.Id);
+            _mockProvider.Verify(x => x.GetAsync(key, It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
+        public void Set_WithRawKey_UsesConfiguredProvider()
+        {
+            // Arrange
+            var key = "raw:product:1";
+            var product = TestDataGenerator.CreateProduct(1, "Raw Product");
+
+            // Act
+            _cacheService.Set(key, product, TimeSpan.FromMinutes(5));
+
+            // Assert
+            _mockProvider.Verify(x => x.SetAsync(
+                key,
+                It.IsAny<byte[]>(),
+                TimeSpan.FromMinutes(5),
+                It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
+        public void Remove_WithRawKey_UsesConfiguredProvider()
+        {
+            // Arrange
+            var key = "raw:product:1";
+            _mockProvider.Setup(x => x.RemoveAsync(key, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+
+            // Act
+            var removed = _cacheService.Remove(key);
+
+            // Assert
+            removed.Should().BeTrue();
+            _mockProvider.Verify(x => x.RemoveAsync(key, It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
+        public void Exists_WithRawKey_UsesConfiguredProvider()
+        {
+            // Arrange
+            var key = "raw:product:1";
+            _mockProvider.Setup(x => x.ExistsAsync(key, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+
+            // Act
+            var exists = _cacheService.Exists(key);
+
+            // Assert
+            exists.Should().BeTrue();
+            _mockProvider.Verify(x => x.ExistsAsync(key, It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
         public void Get_WithDefinition_UsesConfiguredProvider()
         {
             // Arrange
@@ -572,19 +640,22 @@ namespace Atlas.Infrastructure.Caching.Tests.Core
             _mockInvalidator.Verify(x => x.InvalidateByTagsAsync(tags, It.IsAny<CancellationToken>()), Times.Once);
         }
 
-        [Fact]
-        public async Task InvalidateScopeAsync_CallsInvalidator()
+        [Theory]
+        [InlineData(CacheScope.Global, null)]
+        [InlineData(CacheScope.Tenant, TestHelpers.TestTenantId)]
+        [InlineData(CacheScope.Store, TestHelpers.TestTenantId + ":" + TestHelpers.TestStoreId)]
+        [InlineData(CacheScope.User, TestHelpers.TestTenantId + ":" + TestHelpers.TestUserId)]
+        public async Task InvalidateScopeAsync_CallsInvalidatorWithResolvedScopeId(
+            CacheScope scope,
+            string? expectedScopeId)
         {
-            // Arrange
-            var scope = CacheScope.Tenant;
-
             // Act
             await _cacheService.InvalidateScopeAsync(scope);
 
             // Assert
             _mockInvalidator.Verify(x => x.InvalidateByScopeAsync(
                 scope,
-                null,
+                expectedScopeId,
                 It.IsAny<CancellationToken>()), Times.Once);
         }
 

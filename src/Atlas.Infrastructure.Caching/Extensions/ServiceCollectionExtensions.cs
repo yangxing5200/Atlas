@@ -19,7 +19,7 @@ namespace Atlas.Infrastructure.Caching.Extensions
     public static class ServiceCollectionExtensions
     {
         /// <summary>
-        /// 添加 Atlas 缓存核心服务
+        /// Adds the core Atlas caching services.
         /// </summary>
         public static IServiceCollection AddAtlasCaching(
             this IServiceCollection services,
@@ -28,39 +28,42 @@ namespace Atlas.Infrastructure.Caching.Extensions
             var builder = new CachingOptionsBuilder(services);
             configure?.Invoke(builder);
 
-            // Core services - 使用具体类型注册
+            // Core services.
             services.TryAddSingleton<ICacheSerializer>(sp => new JsonCacheSerializer());
             services.TryAddSingleton<ICacheKeyGenerator>(sp => new CacheKeyGenerator());
             services.TryAddSingleton<ICacheKeyParser>(sp => new CacheKeyParser());
             services.TryAddScoped<IScopeContextAccessor, CurrentUserScopeContextAccessor>();
 
-            // Tag management
+            // Tag version storage. Concrete providers can replace the default in-memory store.
             services.TryAddSingleton<ITagVersionStore, TagVersionStore>();
             services.TryAddSingleton<ITagManager, TagManager>();
 
-            // Invalidation
+            // Cache invalidation.
             services.TryAddSingleton<ICacheInvalidator, CacheInvalidator>();
 
-            // Main cache service
+            // Main cache service.
             services.TryAddScoped<ICacheService, CacheService>();
 
             return services;
         }
 
         /// <summary>
-        /// 添加基于内存的缓存（不支持分布式失效通知）
+        /// Adds in-memory caching. This mode does not support cross-instance invalidation.
         /// </summary>
         public static IServiceCollection AddMemoryCaching(this IServiceCollection services)
         {
             services.AddMemoryCache();
-            services.TryAddSingleton<ICacheProvider, MemoryCacheProvider>();
+            services.RemoveAll<ICacheProvider>();
+            services.AddSingleton<ICacheProvider, MemoryCacheProvider>();
 
-            // 内存缓存不需要 ICacheInvalidationBus
+            services.RemoveAll<ITagVersionStore>();
+            services.AddSingleton<ITagVersionStore, TagVersionStore>();
+            services.RemoveAll<ICacheInvalidationBus>();
             return services;
         }
 
         /// <summary>
-        /// 添加基于 Redis 的缓存（支持分布式失效通知）
+        /// Adds Redis-backed caching with shared cache data and invalidation notifications.
         /// </summary>
         public static IServiceCollection AddRedisCaching(
             this IServiceCollection services,
@@ -69,18 +72,35 @@ namespace Atlas.Infrastructure.Caching.Extensions
             bool enableInvalidationBus = true)
         {
             var redis = ConnectionMultiplexer.Connect(connectionString);
-            services.AddSingleton<IConnectionMultiplexer>(redis);
+            return services.AddRedisCaching(redis, instanceName, enableInvalidationBus);
+        }
 
-            services.TryAddSingleton<ICacheProvider>(sp =>
+        /// <summary>
+        /// Adds Redis-backed caching by using an existing connection.
+        /// </summary>
+        public static IServiceCollection AddRedisCaching(
+            this IServiceCollection services,
+            IConnectionMultiplexer redis,
+            string? instanceName = null,
+            bool enableInvalidationBus = true)
+        {
+            ArgumentNullException.ThrowIfNull(redis);
+
+            services.RemoveAll<IConnectionMultiplexer>();
+            services.AddSingleton(redis);
+
+            services.RemoveAll<ICacheProvider>();
+            services.AddSingleton<ICacheProvider>(sp =>
                 new RedisCacheProvider(redis, instanceName ?? "atlas"));
 
-            services.TryAddSingleton<ITagVersionStore>(sp =>
+            services.RemoveAll<ITagVersionStore>();
+            services.AddSingleton<ITagVersionStore>(sp =>
                 new RedisTagVersionStore(redis));
 
-            // 注册分布式缓存失效总线
+            services.RemoveAll<ICacheInvalidationBus>();
             if (enableInvalidationBus)
             {
-                services.TryAddSingleton<ICacheInvalidationBus>(sp =>
+                services.AddSingleton<ICacheInvalidationBus>(sp =>
                 {
                     var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<RedisInvalidationBus>>();
                     return new RedisInvalidationBus(redis, logger);
@@ -91,7 +111,7 @@ namespace Atlas.Infrastructure.Caching.Extensions
         }
 
         /// <summary>
-        /// 添加混合缓存（L1: Memory + L2: Redis，支持分布式失效通知）
+        /// Adds hybrid caching with local memory as L1 and Redis as L2.
         /// </summary>
         public static IServiceCollection AddHybridCaching(
             this IServiceCollection services,
@@ -101,12 +121,39 @@ namespace Atlas.Infrastructure.Caching.Extensions
         {
             services.AddMemoryCache();
             var redis = ConnectionMultiplexer.Connect(redisConnectionString);
-            services.AddSingleton<IConnectionMultiplexer>(redis);
+            return services.AddHybridCaching(redis, configureOptions, enableInvalidationBus);
+        }
+
+        /// <summary>
+        /// Adds hybrid caching by using an existing Redis connection.
+        /// </summary>
+        public static IServiceCollection AddHybridCaching(
+            this IServiceCollection services,
+            IConnectionMultiplexer redis,
+            Action<HybridCacheOptions>? configureOptions = null,
+            bool enableInvalidationBus = true)
+        {
+            ArgumentNullException.ThrowIfNull(redis);
+
+            services.AddMemoryCache();
+            services.RemoveAll<IConnectionMultiplexer>();
+            services.AddSingleton(redis);
 
             var options = new HybridCacheOptions();
             configureOptions?.Invoke(options);
 
-            services.TryAddSingleton<ICacheProvider>(sp =>
+            services.RemoveAll<ICacheInvalidationBus>();
+            if (enableInvalidationBus)
+            {
+                services.AddSingleton<ICacheInvalidationBus>(sp =>
+                {
+                    var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<RedisInvalidationBus>>();
+                    return new RedisInvalidationBus(redis, logger);
+                });
+            }
+
+            services.RemoveAll<ICacheProvider>();
+            services.AddSingleton<ICacheProvider>(sp =>
             {
                 var memoryCache = sp.GetRequiredService<IMemoryCache>();
                 var l1 = new MemoryCacheProvider(memoryCache);
@@ -115,18 +162,9 @@ namespace Atlas.Infrastructure.Caching.Extensions
                 return new HybridCacheProvider(l1, l2, options, invalidationBus);
             });
 
-            services.TryAddSingleton<ITagVersionStore>(sp =>
+            services.RemoveAll<ITagVersionStore>();
+            services.AddSingleton<ITagVersionStore>(sp =>
                 new RedisTagVersionStore(redis));
-
-            // 注册分布式缓存失效总线
-            if (enableInvalidationBus)
-            {
-                services.TryAddSingleton<ICacheInvalidationBus>(sp =>
-                {
-                    var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<RedisInvalidationBus>>();
-                    return new RedisInvalidationBus(redis, logger);
-                });
-            }
 
             return services;
         }
