@@ -15,6 +15,12 @@
 	  <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.0" />
       <PackageReference Include="Microsoft.AspNetCore.Authentication" Version="2.2.0" />
       <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
+      <PackageReference Include="Serilog.Extensions.Hosting" Version="9.0.0" />
+      <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>
@@ -24,6 +30,8 @@
     <ProjectReference Include="..\Atlas.Data.Tenant\Atlas.Data.Tenant.csproj" />
     <ProjectReference Include="..\Atlas.Messaging.Abstractions\Atlas.Messaging.Abstractions.csproj" />
     <ProjectReference Include="..\Atlas.Messaging.RabbitMQ\Atlas.Messaging.RabbitMQ.csproj" />
+    <ProjectReference Include="..\Atlas.Infrastructure.Logging\Atlas.Infrastructure.Logging.csproj" />
+    <ProjectReference Include="..\Atlas.Infrastructure.Security\Atlas.Infrastructure.Security.csproj" />
     <ProjectReference Include="..\Atlas.Services.Abstractions\Atlas.Services.Abstractions.csproj" />
     <ProjectReference Include="..\Atlas.Services\Atlas.Services.csproj" />
     <ProjectReference Include="..\Atlas.Services.Tenant\Atlas.Services.Tenant.csproj" />

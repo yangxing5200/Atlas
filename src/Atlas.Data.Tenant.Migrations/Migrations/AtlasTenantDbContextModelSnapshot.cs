@@ -775,12 +775,12 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
 
                     b.HasIndex("TenantId");
 
-                    b.HasIndex("MessageId", "ConsumerName")
-                        .IsUnique()
-                        .HasDatabaseName("UX_TenantInboxMessages_Message_Consumer");
-
                     b.HasIndex("TenantId", "ReceivedAtUtc")
                         .HasDatabaseName("IX_TenantInboxMessages_Tenant_ReceivedAt");
+
+                    b.HasIndex("TenantId", "MessageId", "ConsumerName")
+                        .IsUnique()
+                        .HasDatabaseName("UX_TenantInboxMessages_Tenant_Message_Consumer");
 
                     b.ToTable("TenantInboxMessages", (string)null);
                 });
@@ -860,19 +860,21 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("EventId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_TenantOutboxMessages_EventId");
+                    b.HasIndex("EventId");
 
                     b.HasIndex("StoreId");
 
                     b.HasIndex("TenantId");
 
-                    b.HasIndex("ProcessingAtUtc", "ProcessedAtUtc")
-                        .HasDatabaseName("IX_TenantOutboxMessages_Processing");
+                    b.HasIndex("TenantId", "EventId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_TenantOutboxMessages_Tenant_EventId");
 
                     b.HasIndex("TenantId", "ProcessedAtUtc", "NextAttemptAtUtc")
                         .HasDatabaseName("IX_TenantOutboxMessages_Tenant_ProcessDue");
+
+                    b.HasIndex("TenantId", "ProcessingAtUtc", "ProcessedAtUtc")
+                        .HasDatabaseName("IX_TenantOutboxMessages_Tenant_Processing");
 
                     b.ToTable("TenantOutboxMessages", (string)null);
                 });

@@ -61,61 +61,43 @@ namespace Atlas.Sample.WebApi.Controllers
                 });
             }
 
-            try
+            var testIdentity = new TestIdentity
             {
-                // 创建测试用户身份
-                var testIdentity = new TestIdentity
+                TenantId = request.TenantId,
+                StoreId = request.StoreId,
+                UserId = request.UserId,
+                UserName = request.UserName
+            };
+
+            var token = _tokenService.GenerateToken(testIdentity);
+            var expiresAt = DateTime.UtcNow.AddMinutes(request.ExpirationMinutes ?? 60);
+
+            return Ok(new GenerateTokenResponse
+            {
+                Success = true,
+                Token = token,
+                ExpiresAt = expiresAt,
+                ExpiresIn = (int)(expiresAt - DateTime.UtcNow).TotalSeconds,
+                TokenInfo = new TokenInfoDto
                 {
                     TenantId = request.TenantId,
                     StoreId = request.StoreId,
                     UserId = request.UserId,
-                    UserName = request.UserName
-                };
-
-                // 生成Token
-                var token = _tokenService.GenerateToken(
-                    testIdentity
-                );
-
-                // 计算过期时间
-                var expiresAt = DateTime.UtcNow.AddMinutes(request.ExpirationMinutes ?? 60);
-
-                return Ok(new GenerateTokenResponse
+                    UserName = request.UserName,
+                    Extra = request.Extra
+                },
+                Usage = new UsageInfo
                 {
-                    Success = true,
-                    Token = token,
-                    ExpiresAt = expiresAt,
-                    ExpiresIn = (int)(expiresAt - DateTime.UtcNow).TotalSeconds,
-                    TokenInfo = new TokenInfoDto
+                    AuthorizationHeader = $"Bearer {token}",
+                    CookieName = "atlas-auth-token",
+                    CookieValue = token,
+                    QueryString = "disabled by default",
+                    CustomHeader = new Dictionary<string, string>
                     {
-                        TenantId = request.TenantId,
-                        StoreId = request.StoreId,
-                        UserId = request.UserId,
-                        UserName = request.UserName,
-                        Extra = request.Extra
-                    },
-                    Usage = new UsageInfo
-                    {
-                        AuthorizationHeader = $"Bearer {token}",
-                        CookieName = "atlas-auth-token",
-                        CookieValue = token,
-                        QueryString = $"?access_token={token}",
-                        CustomHeader = new Dictionary<string, string>
-                        {
-                            { "X-Access-Token", token }
-                        }
+                        { "X-Access-Token", token }
                     }
-                });
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(new ErrorResponse
-                {
-                    Code = 400,
-                    Message = "Token生成失败",
-                    Detail = ex.Message
-                });
-            }
+                }
+            });
         }
 
         /// <summary>
@@ -183,36 +165,21 @@ namespace Atlas.Sample.WebApi.Controllers
 
             foreach (var user in request.Users)
             {
-                try
+                var testIdentity = new TestIdentity
                 {
-                    var testIdentity = new TestIdentity
-                    {
-                        TenantId = user.TenantId,
-                        StoreId = user.StoreId,
-                        UserId = user.UserId,
-                        UserName = user.UserName
-                    };
+                    TenantId = user.TenantId,
+                    StoreId = user.StoreId,
+                    UserId = user.UserId,
+                    UserName = user.UserName
+                };
 
-                    var token = _tokenService.GenerateToken(testIdentity);
-
-                    tokens.Add(new TokenItem
-                    {
-                        UserId = user.UserId,
-                        UserName = user.UserName,
-                        Token = token,
-                        Success = true
-                    });
-                }
-                catch (Exception ex)
+                tokens.Add(new TokenItem
                 {
-                    tokens.Add(new TokenItem
-                    {
-                        UserId = user.UserId,
-                        UserName = user.UserName,
-                        Success = false,
-                        Error = ex.Message
-                    });
-                }
+                    UserId = user.UserId,
+                    UserName = user.UserName,
+                    Token = _tokenService.GenerateToken(testIdentity),
+                    Success = true
+                });
             }
 
             return Ok(new BatchTokenResponse
@@ -398,7 +365,7 @@ namespace Atlas.Sample.WebApi.Controllers
         public long? TenantId { get; set; }
         public long? StoreId { get; set; }
         public long? UserId { get; set; }
-        public string? UserName { get; set; }
+        public string UserName { get; set; } = string.Empty;
         public string? Extra { get; set; }
         public string? SessionId { get; set; }
         public bool IsAuthenticated { get; set; }

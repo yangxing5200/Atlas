@@ -1,5 +1,5 @@
 using Atlas.Services.Tenant;
-using Atlas.Sample.WebApi.Security;
+using Atlas.Infrastructure.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -12,14 +12,10 @@ namespace Atlas.Sample.WebApi.Controllers;
 public sealed class TenantProvisioningController : ControllerBase
 {
     private readonly ITenantProvisioningService _provisioningService;
-    private readonly ILogger<TenantProvisioningController> _logger;
 
-    public TenantProvisioningController(
-        ITenantProvisioningService provisioningService,
-        ILogger<TenantProvisioningController> logger)
+    public TenantProvisioningController(ITenantProvisioningService provisioningService)
     {
-        _provisioningService = provisioningService;
-        _logger = logger;
+        _provisioningService = provisioningService ?? throw new ArgumentNullException(nameof(provisioningService));
     }
 
     [HttpPost]
@@ -29,24 +25,8 @@ public sealed class TenantProvisioningController : ControllerBase
         [FromBody] TenantProvisioningRequest request,
         CancellationToken ct)
     {
-        try
-        {
-            var result = await _provisioningService.ProvisionAsync(request, ct);
-            return Created($"/api/tenant-provisioning/{result.TenantId}", result);
-        }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Tenant provisioning failed for domain {Domain}", request.Domain);
-            return StatusCode(500, new { message = "Tenant provisioning failed" });
-        }
+        var result = await _provisioningService.ProvisionAsync(request, ct);
+        return Created($"/api/tenant-provisioning/{result.TenantId}", result);
     }
 
 }

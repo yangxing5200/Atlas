@@ -1,592 +1,214 @@
-﻿using Atlas.Core.Services;
+using Atlas.Core.Services;
+using Atlas.Infrastructure.Security;
 using Atlas.Models.DTOs;
 using Atlas.Models.Requests;
 using Atlas.Models.Responses;
-using Atlas.Sample.WebApi.Security;
 using Atlas.Services.Abstractions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace Atlas.Sample.WebApi.Controllers
+namespace Atlas.Sample.WebApi.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+[Produces("application/json")]
+public sealed class UserController : ControllerBase
 {
-    /// <summary>
-    /// User management endpoints
-    /// </summary>
-    [ApiController]
-    [Route("api/[controller]")]
-    [Produces("application/json")]
-    public class UserController : ControllerBase
+    private readonly IUserService _userService;
+    private readonly ICurrentIdentity _currentIdentity;
+
+    public UserController(
+        IUserService userService,
+        ICurrentIdentity currentIdentity)
     {
-        private readonly IUserService _userService;
-        private readonly ICurrentIdentity _currentIdentity;
-        private readonly ILogger<UserController> _logger;
+        _userService = userService ?? throw new ArgumentNullException(nameof(userService));
+        _currentIdentity = currentIdentity ?? throw new ArgumentNullException(nameof(currentIdentity));
+    }
 
-        public UserController(
-            IUserService userService,
-            ICurrentIdentity currentIdentity,
-            ILogger<UserController> logger)
-        {
-            _userService = userService;
-            _currentIdentity = currentIdentity;
-            _logger = logger;
-        }
+    [HttpPost("login")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(LoginResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<LoginResponse>> Login([FromBody] LoginRequest request)
+    {
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
+        var userAgent = Request.Headers["User-Agent"].ToString();
+        var response = await _userService.LoginAsync(request, ipAddress, userAgent);
 
-        /// <summary>
-        /// User login
-        /// </summary>
-        /// <param name="request">Login credentials</param>
-        /// <returns>Login response with token</returns>
-        [HttpPost("login")]
-        [AllowAnonymous]
-        [ProducesResponseType(typeof(LoginResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-        public async Task<ActionResult<LoginResponse>> Login([FromBody] LoginRequest request)
-        {
-            try
-            {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
+        return response == null
+            ? Unauthorized(new { message = "Invalid username or password" })
+            : Ok(response);
+    }
 
-                var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
-                var userAgent = Request.Headers["User-Agent"].ToString();
+    [HttpPost("logout")]
+    [Authorize]
+    [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<OperationResult>> Logout()
+    {
+        if (string.IsNullOrEmpty(_currentIdentity.SessionId))
+            return BadRequest(new { message = "Session ID not found in token" });
 
-                var response = await _userService.LoginAsync(request, ipAddress, userAgent);
+        return Ok(await _userService.LogoutAsync(_currentIdentity.SessionId));
+    }
 
-                if (response == null)
-                {
-                    return Unauthorized(new { message = "Invalid username or password" });
-                }
+    [HttpPost("switch-store")]
+    [Authorize]
+    [ProducesResponseType(typeof(SwitchStoreResponse), StatusCodes.Status200OK)]
+    public async Task<ActionResult<SwitchStoreResponse>> SwitchStore([FromBody] SwitchStoreRequest request)
+    {
+        if (!_currentIdentity.UserId.HasValue)
+            return Unauthorized(new { message = "User ID not found in token" });
 
-                return Ok(response);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error during login for user {UserName}", request.UserName);
-                return StatusCode(500, new { message = "An error occurred during login" });
-            }
-        }
+        var result = await _userService.SwitchStoreAsync(_currentIdentity.UserId.Value, request);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
 
-        /// <summary>
-        /// User logout
-        /// </summary>
-        /// <returns>Operation result</returns>
-        [HttpPost("logout")]
-        [Authorize]
-        [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<ActionResult<OperationResult>> Logout()
-        {
-            try
-            {
-                var sessionId = _currentIdentity.SessionId;
-                if (string.IsNullOrEmpty(sessionId))
-                {
-                    return BadRequest(new { message = "Session ID not found in token" });
-                }
+    [HttpGet("accessible-stores")]
+    [Authorize]
+    [ProducesResponseType(typeof(List<StoreInfoDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<StoreInfoDto>>> GetMyAccessibleStores()
+    {
+        if (!_currentIdentity.UserId.HasValue)
+            return Unauthorized(new { message = "User ID not found in token" });
 
-                var result = await _userService.LogoutAsync(sessionId);
-                return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error during logout for session {SessionId}", _currentIdentity.SessionId);
-                return StatusCode(500, new { message = "An error occurred during logout" });
-            }
-        }
+        return Ok(await _userService.GetAccessibleStoresAsync(_currentIdentity.UserId.Value));
+    }
 
-        /// <summary>
-        /// Switch current store after login
-        /// </summary>
-        /// <param name="request">Target store</param>
-        /// <returns>New token scoped to the target store</returns>
-        [HttpPost("switch-store")]
-        [Authorize]
-        [ProducesResponseType(typeof(SwitchStoreResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-        public async Task<ActionResult<SwitchStoreResponse>> SwitchStore([FromBody] SwitchStoreRequest request)
-        {
-            try
-            {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
+    [HttpPost]
+    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [ProducesResponseType(typeof(OperationResult<UserDto>), StatusCodes.Status201Created)]
+    public async Task<ActionResult<OperationResult<UserDto>>> CreateUser([FromBody] CreateUserRequest request)
+    {
+        var result = await _userService.CreateUserAsync(request);
+        if (!result.Success || result.Data == null)
+            return BadRequest(result);
 
-                var userId = _currentIdentity.UserId;
-                if (!userId.HasValue)
-                {
-                    return Unauthorized(new { message = "User ID not found in token" });
-                }
+        return CreatedAtAction(nameof(GetById), new { id = result.Data.Id }, result);
+    }
 
-                var result = await _userService.SwitchStoreAsync(userId.Value, request);
-                if (!result.Success)
-                {
-                    return BadRequest(result);
-                }
+    [HttpPut]
+    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [ProducesResponseType(typeof(OperationResult<UserDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<OperationResult<UserDto>>> UpdateUser([FromBody] UpdateUserRequest request)
+    {
+        return ToActionResult(await _userService.UpdateUserAsync(request));
+    }
 
-                return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error switching store for user {UserId}", _currentIdentity.UserId);
-                return StatusCode(500, new { message = "An error occurred while switching store" });
-            }
-        }
+    [HttpDelete("{id:long}")]
+    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<OperationResult>> DeleteUser([FromRoute] long id)
+    {
+        var result = await _userService.DeleteUserAsync(id);
+        return result.Success ? Ok(result) : NotFound(result);
+    }
 
-        /// <summary>
-        /// Get stores available to the current user
-        /// </summary>
-        /// <returns>Accessible stores for store selection</returns>
-        [HttpGet("accessible-stores")]
-        [Authorize]
-        [ProducesResponseType(typeof(List<StoreInfoDto>), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-        public async Task<ActionResult<List<StoreInfoDto>>> GetMyAccessibleStores()
-        {
-            try
-            {
-                var userId = _currentIdentity.UserId;
-                if (!userId.HasValue)
-                {
-                    return Unauthorized(new { message = "User ID not found in token" });
-                }
+    [HttpGet("{id:long}")]
+    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [ProducesResponseType(typeof(UserDetailDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<UserDetailDto>> GetById([FromRoute] long id)
+    {
+        var user = await _userService.GetUserByIdAsync(id);
+        return user == null
+            ? NotFound(new { message = $"User with ID {id} not found" })
+            : Ok(user);
+    }
 
-                var stores = await _userService.GetAccessibleStoresAsync(userId.Value);
-                return Ok(stores);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving accessible stores for user {UserId}", _currentIdentity.UserId);
-                return StatusCode(500, new { message = "An error occurred while retrieving accessible stores" });
-            }
-        }
+    [HttpGet("by-username/{userName}")]
+    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [ProducesResponseType(typeof(UserDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<UserDto>> GetByUserName([FromRoute] string userName)
+    {
+        var user = await _userService.GetUserByUserNameAsync(userName);
+        return user == null
+            ? NotFound(new { message = $"User with username '{userName}' not found" })
+            : Ok(user);
+    }
 
-        /// <summary>
-        /// Create a new user
-        /// </summary>
-        /// <param name="request">User creation request</param>
-        /// <returns>Created user</returns>
-        [HttpPost]
-        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
-        [ProducesResponseType(typeof(OperationResult<UserDto>), StatusCodes.Status201Created)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<ActionResult<OperationResult<UserDto>>> CreateUser([FromBody] CreateUserRequest request)
-        {
-            try
-            {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
+    [HttpGet]
+    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [ProducesResponseType(typeof(UserPagedResponse), StatusCodes.Status200OK)]
+    public Task<UserPagedResponse> GetUsers([FromQuery] UserQueryRequest request)
+    {
+        return _userService.GetUsersAsync(request);
+    }
 
-                var result = await _userService.CreateUserAsync(request);
+    [HttpPost("change-password")]
+    [Authorize]
+    [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<OperationResult>> ChangePassword([FromBody] ChangePasswordRequest request)
+    {
+        if (!_currentIdentity.UserId.HasValue)
+            return BadRequest(new { message = "User ID not found in token" });
 
-                if (!result.Success)
-                {
-                    return BadRequest(result);
-                }
+        return ToActionResult(await _userService.ChangePasswordAsync(_currentIdentity.UserId.Value, request));
+    }
 
-                return CreatedAtAction(
-                    nameof(GetById),
-                    new { id = result.Data.Id },
-                    result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error creating user");
-                return StatusCode(500, new { message = "An error occurred while creating the user" });
-            }
-        }
+    [HttpPost("reset-password")]
+    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<OperationResult>> ResetPassword([FromBody] ResetPasswordRequest request)
+    {
+        return ToActionResult(await _userService.ResetPasswordAsync(request));
+    }
 
-        /// <summary>
-        /// Update an existing user
-        /// </summary>
-        /// <param name="request">User update request</param>
-        /// <returns>Updated user</returns>
-        [HttpPut]
-        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
-        [ProducesResponseType(typeof(OperationResult<UserDto>), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<OperationResult<UserDto>>> UpdateUser([FromBody] UpdateUserRequest request)
-        {
-            try
-            {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
+    [HttpPost("assign-stores")]
+    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<OperationResult>> AssignStores([FromBody] AssignStoresRequest request)
+    {
+        return ToActionResult(await _userService.AssignStoresAsync(request));
+    }
 
-                var result = await _userService.UpdateUserAsync(request);
+    [HttpPut("{userId:long}/status")]
+    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<OperationResult>> SetUserStatus(
+        [FromRoute] long userId,
+        [FromQuery] bool isActive)
+    {
+        return ToActionResult(await _userService.SetUserStatusAsync(userId, isActive));
+    }
 
-                if (!result.Success)
-                {
-                    return BadRequest(result);
-                }
+    [HttpPost("{userId:long}/unlock")]
+    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<OperationResult>> UnlockUser([FromRoute] long userId)
+    {
+        return ToActionResult(await _userService.UnlockUserAsync(userId));
+    }
 
-                return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error updating user");
-                return StatusCode(500, new { message = "An error occurred while updating the user" });
-            }
-        }
+    [HttpGet("login-logs")]
+    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [ProducesResponseType(typeof(LoginLogPagedResponse), StatusCodes.Status200OK)]
+    public Task<LoginLogPagedResponse> GetLoginLogs([FromQuery] LoginLogQueryRequest request)
+    {
+        return _userService.GetLoginLogsAsync(request);
+    }
 
-        /// <summary>
-        /// Delete a user (soft delete)
-        /// </summary>
-        /// <param name="id">User ID</param>
-        /// <returns>Operation result</returns>
-        [HttpDelete("{id}")]
-        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
-        [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<OperationResult>> DeleteUser([FromRoute] long id)
-        {
-            try
-            {
-                var result = await _userService.DeleteUserAsync(id);
+    [HttpPost("{userId:long}/force-logout")]
+    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<OperationResult>> ForceLogoutAll([FromRoute] long userId)
+    {
+        return ToActionResult(await _userService.ForceLogoutAllAsync(userId));
+    }
 
-                if (!result.Success)
-                {
-                    return NotFound(result);
-                }
+    [HttpGet("{userId:long}/sessions")]
+    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [ProducesResponseType(typeof(List<UserLoginLogDto>), StatusCodes.Status200OK)]
+    public Task<List<UserLoginLogDto>> GetActiveSessions([FromRoute] long userId)
+    {
+        return _userService.GetActiveSessionsAsync(userId);
+    }
 
-                return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error deleting user {UserId}", id);
-                return StatusCode(500, new { message = "An error occurred while deleting the user" });
-            }
-        }
+    private ActionResult<OperationResult> ToActionResult(OperationResult result)
+    {
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
 
-        /// <summary>
-        /// Get user by ID
-        /// </summary>
-        /// <param name="id">User ID</param>
-        /// <returns>User details</returns>
-        [HttpGet("{id}")]
-        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
-        [ProducesResponseType(typeof(UserDetailDto), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<UserDetailDto>> GetById([FromRoute] long id)
-        {
-            try
-            {
-                var user = await _userService.GetUserByIdAsync(id);
-
-                if (user == null)
-                {
-                    return NotFound(new { message = $"User with ID {id} not found" });
-                }
-
-                return Ok(user);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving user {UserId}", id);
-                return StatusCode(500, new { message = "An error occurred while retrieving the user" });
-            }
-        }
-
-        /// <summary>
-        /// Get user by username
-        /// </summary>
-        /// <param name="userName">Username</param>
-        /// <returns>User information</returns>
-        [HttpGet("by-username/{userName}")]
-        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
-        [ProducesResponseType(typeof(UserDto), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<UserDto>> GetByUserName([FromRoute] string userName)
-        {
-            try
-            {
-                var user = await _userService.GetUserByUserNameAsync(userName);
-
-                if (user == null)
-                {
-                    return NotFound(new { message = $"User with username '{userName}' not found" });
-                }
-
-                return Ok(user);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving user by username {UserName}", userName);
-                return StatusCode(500, new { message = "An error occurred while retrieving the user" });
-            }
-        }
-
-        /// <summary>
-        /// Get users with pagination and filtering
-        /// </summary>
-        /// <param name="request">Query parameters</param>
-        /// <returns>Paged list of users</returns>
-        [HttpGet]
-        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
-        [ProducesResponseType(typeof(UserPagedResponse), StatusCodes.Status200OK)]
-        public async Task<ActionResult<UserPagedResponse>> GetUsers([FromQuery] UserQueryRequest request)
-        {
-            try
-            {
-                var result = await _userService.GetUsersAsync(request);
-                return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving users");
-                return StatusCode(500, new { message = "An error occurred while retrieving users" });
-            }
-        }
-
-        /// <summary>
-        /// Change user password
-        /// </summary>
-        /// <param name="request">Password change request</param>
-        /// <returns>Operation result</returns>
-        [HttpPost("change-password")]
-        [Authorize]
-        [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<ActionResult<OperationResult>> ChangePassword(
-            [FromBody] ChangePasswordRequest request)
-        {
-            try
-            {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
-                var userId = _currentIdentity.UserId;
-                if (!userId.HasValue)
-                {
-                    return BadRequest(new { message = "User ID not found in token" });
-                }
-
-                var result = await _userService.ChangePasswordAsync(userId.Value, request);
-
-                if (!result.Success)
-                {
-                    return BadRequest(result);
-                }
-
-                return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error changing password for user {UserId}", _currentIdentity.UserId);
-                return StatusCode(500, new { message = "An error occurred while changing password" });
-            }
-        }
-
-        /// <summary>
-        /// Reset user password (admin operation)
-        /// </summary>
-        /// <param name="request">Password reset request</param>
-        /// <returns>Operation result</returns>
-        [HttpPost("reset-password")]
-        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
-        [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<ActionResult<OperationResult>> ResetPassword([FromBody] ResetPasswordRequest request)
-        {
-            try
-            {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
-                var result = await _userService.ResetPasswordAsync(request);
-
-                if (!result.Success)
-                {
-                    return BadRequest(result);
-                }
-
-                return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error resetting password");
-                return StatusCode(500, new { message = "An error occurred while resetting password" });
-            }
-        }
-
-        /// <summary>
-        /// Assign stores to user
-        /// </summary>
-        /// <param name="request">Store assignment request</param>
-        /// <returns>Operation result</returns>
-        [HttpPost("assign-stores")]
-        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
-        [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<ActionResult<OperationResult>> AssignStores([FromBody] AssignStoresRequest request)
-        {
-            try
-            {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
-                var result = await _userService.AssignStoresAsync(request);
-
-                if (!result.Success)
-                {
-                    return BadRequest(result);
-                }
-
-                return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error assigning stores to user");
-                return StatusCode(500, new { message = "An error occurred while assigning stores" });
-            }
-        }
-
-        /// <summary>
-        /// Enable or disable user
-        /// </summary>
-        /// <param name="userId">User ID</param>
-        /// <param name="isActive">Active status</param>
-        /// <returns>Operation result</returns>
-        [HttpPut("{userId}/status")]
-        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
-        [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<ActionResult<OperationResult>> SetUserStatus(
-            [FromRoute] long userId,
-            [FromQuery] bool isActive)
-        {
-            try
-            {
-                var result = await _userService.SetUserStatusAsync(userId, isActive);
-
-                if (!result.Success)
-                {
-                    return BadRequest(result);
-                }
-
-                return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error setting status for user {UserId}", userId);
-                return StatusCode(500, new { message = "An error occurred while setting user status" });
-            }
-        }
-
-        /// <summary>
-        /// Unlock user account
-        /// </summary>
-        /// <param name="userId">User ID</param>
-        /// <returns>Operation result</returns>
-        [HttpPost("{userId}/unlock")]
-        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
-        [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<ActionResult<OperationResult>> UnlockUser([FromRoute] long userId)
-        {
-            try
-            {
-                var result = await _userService.UnlockUserAsync(userId);
-
-                if (!result.Success)
-                {
-                    return BadRequest(result);
-                }
-
-                return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error unlocking user {UserId}", userId);
-                return StatusCode(500, new { message = "An error occurred while unlocking user" });
-            }
-        }
-
-        /// <summary>
-        /// Get user login logs
-        /// </summary>
-        /// <param name="request">Query parameters</param>
-        /// <returns>Paged list of login logs</returns>
-        [HttpGet("login-logs")]
-        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
-        [ProducesResponseType(typeof(LoginLogPagedResponse), StatusCodes.Status200OK)]
-        public async Task<ActionResult<LoginLogPagedResponse>> GetLoginLogs([FromQuery] LoginLogQueryRequest request)
-        {
-            try
-            {
-                var result = await _userService.GetLoginLogsAsync(request);
-                return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving login logs");
-                return StatusCode(500, new { message = "An error occurred while retrieving login logs" });
-            }
-        }
-
-        /// <summary>
-        /// Force user logout (revoke all tokens)
-        /// </summary>
-        /// <param name="userId">User ID</param>
-        /// <returns>Operation result</returns>
-        [HttpPost("{userId}/force-logout")]
-        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
-        [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<ActionResult<OperationResult>> ForceLogoutAll([FromRoute] long userId)
-        {
-            try
-            {
-                var result = await _userService.ForceLogoutAllAsync(userId);
-
-                if (!result.Success)
-                {
-                    return BadRequest(result);
-                }
-
-                return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error forcing logout for user {UserId}", userId);
-                return StatusCode(500, new { message = "An error occurred while forcing logout" });
-            }
-        }
-
-        /// <summary>
-        /// Get active user sessions
-        /// </summary>
-        /// <param name="userId">User ID</param>
-        /// <returns>List of active sessions</returns>
-        [HttpGet("{userId}/sessions")]
-        [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
-        [ProducesResponseType(typeof(List<UserLoginLogDto>), StatusCodes.Status200OK)]
-        public async Task<ActionResult<List<UserLoginLogDto>>> GetActiveSessions([FromRoute] long userId)
-        {
-            try
-            {
-                var sessions = await _userService.GetActiveSessionsAsync(userId);
-                return Ok(sessions);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving active sessions for user {UserId}", userId);
-                return StatusCode(500, new { message = "An error occurred while retrieving active sessions" });
-            }
-        }
+    private ActionResult<OperationResult<T>> ToActionResult<T>(OperationResult<T> result)
+    {
+        return result.Success ? Ok(result) : BadRequest(result);
     }
 }

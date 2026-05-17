@@ -13,6 +13,7 @@ using Atlas.Data.Tenant.Identity;
 using Atlas.Data.Tenant.Providers;
 using Atlas.Data.Tenant.Repositories;
 using Atlas.Data.Tenant.Repositories.Impl;
+using Atlas.Data.Tenant.Sql;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Extensions;
 using Atlas.Infrastructure.Caching.Locking;
@@ -438,10 +439,12 @@ public static class AtlasCoreServiceExtensions
 
         // Repository layer
         services.AddScoped<IUnitOfWork, TenantUnitOfWork>();
+        services.AddScoped<ITenantSqlExecutor, TenantSqlExecutor>();
         services.AddScoped(typeof(IRepository<>), typeof(RepositoryBase<>));
         services.AddScoped<IStoreRepository, StoreRepository>();
         services.AddScoped<IOperationLogRepository, OperationLogRepository>();
         services.TryAddSingleton<ITenantCodeGenerator, TenantCodeGenerator>();
+        services.AddScoped<ITenantConsumerRuntime, TenantConsumerRuntime>();
         services.AddScoped<ITenantDomainEventOutbox, TenantDomainEventOutbox>();
         services.AddScoped<ITenantProvisioningService, TenantProvisioningService>();
         services.AddScoped<IOrderCommandService, OrderCommandService>();

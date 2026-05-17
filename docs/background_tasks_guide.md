@@ -189,10 +189,13 @@ src/Atlas.Services.Tenant/BackgroundJobs/TenantOutboxMaintenanceTask.cs
 
 ```sql
 DELETE FROM TenantOutboxMessages
-WHERE ProcessedAtUtc IS NOT NULL
+WHERE TenantId = @tenantId
+  AND ProcessedAtUtc IS NOT NULL
   AND ProcessedAtUtc < @cutoff
 LIMIT @batchSize;
 ```
+
+租户库维护 SQL 必须通过 `ITenantSqlExecutor` 执行；该入口会拒绝缺少 `TenantId` 条件的 SQL。
 
 生产多实例运行时，`RecurringTaskRunner` 会使用 `IDistributedLockProvider` 加锁：
 
@@ -214,7 +217,9 @@ src/Atlas.Worker
 
 ```csharp
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddAtlasCore(builder.Configuration);
+builder.Services.AddAtlasCore(
+    builder.Configuration,
+    typeof(OrderPlacedEventConsumer).Assembly);
 var app = builder.Build();
 await app.RunAsync();
 ```

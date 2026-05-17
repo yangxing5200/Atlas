@@ -12,7 +12,7 @@
 
 ## ✨ 核心特性 | Core Features
 
-- 🏢 **多租户架构** - Global/Tenant 数据库完全隔离，支持独立租户数据库
+- 🏢 **多租户架构** - Global 控制库 + Tenant 业务库，支持多个租户共用一个租户库并通过 `TenantId` 强隔离
 - 🧩 **模块化设计** - 清晰的分层架构，高度可扩展
 - 🔐 **安全机制** - Token 认证、数据加密、敏感信息过滤
 - 💾 **分布式缓存** - 支持 Redis 缓存，内存缓存降级
@@ -158,6 +158,7 @@ Atlas/
 │   └── Atlas.Sample.WebApi/              # WebAPI 示例
 ├── 📁 src/
 │   ├── 🎯 Atlas.Core/                    # 核心库（实体、接口、扩展方法）
+│   ├── 🧪 Atlas.Analyzers/               # 编译期多租户边界检查
 │   ├── 📦 Atlas.Models.Global/           # 全局模型
 │   ├── 📦 Atlas.Models.Tenant/           # 租户模型
 │   ├── 💾 Atlas.Data.Abstractions/       # 数据访问抽象
@@ -176,7 +177,8 @@ Atlas/
 │   ├── 📨 Atlas.Messaging.Abstractions/  # 消息抽象
 │   ├── 📨 Atlas.Messaging.RabbitMQ/      # RabbitMQ 消息实现
 │   ├── 🔌 Atlas.Extensions.DependencyInjection/ # DI 扩展
-│   └── 📱 Atlas.WebApi/                  # WebAPI 项目
+│   ├── 📱 Atlas.WebApi/                  # 标准 WebAPI 宿主
+│   └── ⚙️ Atlas.Worker/                  # 独立后台 Worker 宿主
 └── 📁 tests/                             # 测试项目
     ├── Atlas.Core.Tests/
     ├── Atlas.Data.Tests/
@@ -193,20 +195,39 @@ Atlas/
 Atlas 提供完整的多租户架构支持：
 
 - **全局数据库 (GlobalDbContext)** - 存储租户配置、用户认证等跨租户数据
-- **租户数据库 (TenantDbContext)** - 每个租户独立的业务数据隔离
+- **租户数据库 (AtlasTenantDbContext)** - 可由多个租户共享同一个物理库，所有租户实体必须包含 `TenantId`
+- **数据访问边界** - 业务/API 层不能直接注入租户 `DbContext` 或调用 `DbContext.Set<T>()`，编译期由 `Atlas.Analyzers` 阻断
+- **实体定义方式** - 租户实体定义在 `Atlas.Core/Entities/Tenant`，通过 `Atlas.Data.Tenant.Migrations/EntityConfigurations` 加入 EF Model；不在 `DbContext` 暴露 `DbSet` 属性
+- **门店范围** - `IStoreOnlyEntity` 仅当前门店可见，`ISharedEntity` 按门店共享组可见
 
 ```csharp
-// 使用租户上下文
-public class OrderService
+public class ProductService
 {
-    private readonly TenantDbContext _context;
-    
-    public async Task<Order> GetOrderAsync(int orderId)
+    private readonly IRepository<Product> _products;
+
+    public ProductService(IRepository<Product> products)
     {
-        // 自动按租户过滤数据
-        return await _context.Orders.FindAsync(orderId);
+        _products = products;
+    }
+
+    public async Task<ProductDto?> GetAsync(long id, CancellationToken ct)
+    {
+        // Repository 会自动套用 TenantId、StoreId、共享门店范围和软删除过滤。
+        var product = await _products.GetByIdAsync(id, ct);
+        return product == null ? null : Map(product);
     }
 }
+```
+
+WebApi 项目只需要使用统一启动入口：
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+builder.AddAtlasWebApi();
+
+var app = builder.Build();
+app.UseAtlasWebApi();
+await app.RunAsync();
 ```
 
 ### 2. 认证授权 | Authentication & Authorization
@@ -311,7 +332,7 @@ dotnet ef migrations add InitialCreate \
 dotnet ef migrations add InitialCreate \
     --project src/Atlas.Data.Tenant.Migrations \
     --startup-project samples/Atlas.Sample.WebApi \
-    --context TenantDbContext
+    --context AtlasTenantDbContext
 ```
 
 ### 应用迁移 | Apply Migration
@@ -339,6 +360,7 @@ dotnet ef database update \
 | `ConnectionStrings:AtlasGlobal` | 全局数据库连接字符串 | - |
 | `Security:Token:SecretKey` | Token 签名密钥 | - |
 | `Security:Token:ExpirationMinutes` | Token 过期时间（分钟） | 1440 |
+| `Security:Token:EnableQueryStringToken` | 是否允许 query string token | false |
 | `Security:Crypto:Key` | AES 加密密钥（至少32字符） | - |
 | `CacheSettings:Provider` | 缓存提供程序（Redis/Memory） | Redis |
 | `CacheSettings:Redis:ConnectionString` | Redis 连接字符串 | localhost:6379 |
@@ -365,7 +387,8 @@ dotnet ef database update \
     "Token": {
       "SecretKey": "your-secret-token-key",
       "ExpirationMinutes": 1440,
-      "CookieName": "atlas-auth-token"
+      "CookieName": "atlas-auth-token",
+      "EnableQueryStringToken": false
     }
   },
   "CacheSettings": {

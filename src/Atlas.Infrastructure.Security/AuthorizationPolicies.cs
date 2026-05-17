@@ -3,8 +3,9 @@ using Atlas.Core.Enums;
 using Atlas.Data.Abstractions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
-namespace Atlas.Sample.WebApi.Security;
+namespace Atlas.Infrastructure.Security;
 
 public static class AuthorizationPolicies
 {
@@ -24,8 +25,8 @@ public sealed class TenantAdminAuthorizationHandler : AuthorizationHandler<Tenan
         IRepository<User> users,
         ILogger<TenantAdminAuthorizationHandler> logger)
     {
-        _users = users;
-        _logger = logger;
+        _users = users ?? throw new ArgumentNullException(nameof(users));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     protected override async Task HandleRequirementAsync(
@@ -42,16 +43,14 @@ public sealed class TenantAdminAuthorizationHandler : AuthorizationHandler<Tenan
         {
             var users = await _users.QueryAsync(tenantId);
             var isAdmin = await users.Where(user =>
-                user.Id == userId &&
-                !user.IsDeleted &&
-                user.Status == UserStatus.Active &&
-                (user.Type == UserType.TenantAdmin || user.Type == UserType.SystemAdmin))
+                    user.Id == userId &&
+                    !user.IsDeleted &&
+                    user.Status == UserStatus.Active &&
+                    (user.Type == UserType.TenantAdmin || user.Type == UserType.SystemAdmin))
                 .AnyAsync();
 
             if (isAdmin)
-            {
                 context.Succeed(requirement);
-            }
         }
         catch (Exception ex)
         {

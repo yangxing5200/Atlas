@@ -132,15 +132,15 @@ Atlas.Data 负责数据访问、ORM 实现、仓储和数据库上下文。
 ## 3.5 Atlas.Data.Tenant
 
 ### ✔ 应放：
-- TenantDbContext（EF 实现）
+- AtlasTenantDbContext（EF 实现）
 - 租户仓储实现
 - 租户数据过滤（基于 TenantId）
 
 ---
 
-## 3.6 Atlas.Data.TenantMigrations
+## 3.6 Atlas.Data.Tenant.Migrations
 
-存放 TenantDbContext 的 Migration 文件。
+存放 AtlasTenantDbContext 的 Migration 文件和实体映射配置。
 
 ---
 

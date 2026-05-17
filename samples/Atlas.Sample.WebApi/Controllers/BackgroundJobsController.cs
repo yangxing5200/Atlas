@@ -28,9 +28,12 @@ public sealed class BackgroundJobsController : ControllerBase
         [FromBody] EnqueueTenantCacheWarmupRequest request,
         CancellationToken ct)
     {
-        var tenantId = request.TenantId ?? _currentIdentity.TenantId;
+        var tenantId = _currentIdentity.TenantId;
         if (!tenantId.HasValue)
             return BadRequest(new { message = "TenantId is required." });
+
+        if (request.TenantId.HasValue && request.TenantId.Value != tenantId.Value)
+            return Forbid();
 
         var storeId = request.StoreId ?? _currentIdentity.StoreId;
         var result = await _jobClient.EnqueueAsync(
@@ -58,8 +61,12 @@ public sealed class BackgroundJobsController : ControllerBase
     [HttpGet("{jobId:long}")]
     public async Task<ActionResult<BackgroundJobStatusResponse>> Get(long jobId, CancellationToken ct)
     {
+        var tenantId = _currentIdentity.TenantId;
+        if (!tenantId.HasValue)
+            return BadRequest(new { message = "TenantId is required." });
+
         var job = await _jobClient.FindAsync(jobId, ct);
-        if (job == null)
+        if (job == null || job.TenantId != tenantId.Value)
             return NotFound();
 
         return new BackgroundJobStatusResponse

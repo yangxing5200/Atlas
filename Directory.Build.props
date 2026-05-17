@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(MSBuildProjectName)' != 'Atlas.Analyzers' and Exists('$(MSBuildThisFileDirectory)src\Atlas.Analyzers\Atlas.Analyzers.csproj')">
+    <ProjectReference Include="$(MSBuildThisFileDirectory)src\Atlas.Analyzers\Atlas.Analyzers.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      PrivateAssets="all" />
+  </ItemGroup>
+</Project>

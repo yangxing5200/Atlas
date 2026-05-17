@@ -3,6 +3,7 @@ using Atlas.Core.Entities.Tenant;
 using Atlas.Core.Enums;
 using Atlas.Data.Global;
 using Atlas.Data.Tenant.Context;
+using Atlas.Data.Tenant.Sql;
 using Atlas.Messaging.Abstractions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -113,6 +114,7 @@ public sealed class TenantOutboxDispatcher : BackgroundService
         CancellationToken ct)
     {
         var dbContextFactory = serviceProvider.GetRequiredService<ITenantDbContextFactory>();
+        var sqlExecutor = serviceProvider.GetRequiredService<ITenantSqlExecutor>();
         var transport = serviceProvider.GetRequiredService<IDomainEventTransport>();
         var db = await dbContextFactory.GetDbContextAsync(tenantId, ct);
 
@@ -122,6 +124,7 @@ public sealed class TenantOutboxDispatcher : BackgroundService
 
         var messages = await db.Set<TenantOutboxMessage>()
             .Where(x =>
+                x.TenantId == tenantId &&
                 x.ProcessedAtUtc == null &&
                 x.AttemptCount < maxAttempts &&
                 (x.AvailableAtUtc == null || x.AvailableAtUtc <= now) &&
@@ -134,7 +137,7 @@ public sealed class TenantOutboxDispatcher : BackgroundService
         var dispatched = 0;
         foreach (var message in messages)
         {
-            if (!await TryClaimAsync(db, message.Id, now, staleProcessingBefore, maxAttempts, ct))
+            if (!await TryClaimAsync(sqlExecutor, db, tenantId, message.Id, now, staleProcessingBefore, maxAttempts, ct))
                 continue;
 
             await db.Entry(message).ReloadAsync(ct);
@@ -142,6 +145,10 @@ public sealed class TenantOutboxDispatcher : BackgroundService
             try
             {
                 var domainEvent = Deserialize(message);
+                if (domainEvent.TenantId != message.TenantId)
+                    throw new InvalidOperationException(
+                        $"Tenant outbox message {message.Id} has mismatched payload tenant id '{domainEvent.TenantId}'.");
+
                 await transport.PublishAsync(domainEvent, ct);
 
                 message.ProcessedAtUtc = DateTime.UtcNow;
@@ -161,20 +168,25 @@ public sealed class TenantOutboxDispatcher : BackgroundService
     }
 
     private async Task<bool> TryClaimAsync(
+        ITenantSqlExecutor sqlExecutor,
         DbContext db,
+        long tenantId,
         long messageId,
         DateTime now,
         DateTime staleProcessingBefore,
         int maxAttempts,
         CancellationToken ct)
     {
-        var updated = await db.Database.ExecuteSqlInterpolatedAsync(
+        var updated = await sqlExecutor.ExecuteTenantCommandAsync(
+            db,
+            tenantId,
             $"""
              UPDATE TenantOutboxMessages
-             SET ProcessingAtUtc = {now}, ProcessingBy = {_workerId}, UpdatedAt = {now}
-             WHERE Id = {messageId}
-               AND ProcessedAtUtc IS NULL
-               AND AttemptCount < {maxAttempts}
+              SET ProcessingAtUtc = {now}, ProcessingBy = {_workerId}, UpdatedAt = {now}
+              WHERE Id = {messageId}
+                AND TenantId = {tenantId}
+                AND ProcessedAtUtc IS NULL
+                AND AttemptCount < {maxAttempts}
                AND (AvailableAtUtc IS NULL OR AvailableAtUtc <= {now})
                AND (NextAttemptAtUtc IS NULL OR NextAttemptAtUtc <= {now})
                AND (ProcessingAtUtc IS NULL OR ProcessingAtUtc < {staleProcessingBefore})

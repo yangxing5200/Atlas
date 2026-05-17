@@ -11,14 +11,10 @@ namespace Atlas.Sample.WebApi.Controllers;
 public sealed class OrderController : ControllerBase
 {
     private readonly IOrderCommandService _orderCommandService;
-    private readonly ILogger<OrderController> _logger;
 
-    public OrderController(
-        IOrderCommandService orderCommandService,
-        ILogger<OrderController> logger)
+    public OrderController(IOrderCommandService orderCommandService)
     {
         _orderCommandService = orderCommandService ?? throw new ArgumentNullException(nameof(orderCommandService));
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     [HttpPost]
@@ -28,27 +24,8 @@ public sealed class OrderController : ControllerBase
         [FromBody] PlaceOrderRequest request,
         CancellationToken ct = default)
     {
-        try
-        {
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
-
-            var result = await _orderCommandService.PlaceAsync(request, ct);
-            return StatusCode(StatusCodes.Status201Created, result);
-        }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error placing order");
-            return StatusCode(500, new { message = "An error occurred while placing the order" });
-        }
+        var result = await _orderCommandService.PlaceAsync(request, ct);
+        return StatusCode(StatusCodes.Status201Created, result);
     }
 
 }

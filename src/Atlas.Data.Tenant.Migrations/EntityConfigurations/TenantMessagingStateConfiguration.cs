@@ -60,15 +60,15 @@ public sealed class TenantOutboxMessageConfiguration : BaseEntityConfiguration<T
             .HasMaxLength(2000)
             .HasColumnType("varchar(2000)");
 
-        builder.HasIndex(x => x.EventId)
+        builder.HasIndex(x => new { x.TenantId, x.EventId })
             .IsUnique()
-            .HasDatabaseName("IX_TenantOutboxMessages_EventId");
+            .HasDatabaseName("UX_TenantOutboxMessages_Tenant_EventId");
 
         builder.HasIndex(x => new { x.TenantId, x.ProcessedAtUtc, x.NextAttemptAtUtc })
             .HasDatabaseName("IX_TenantOutboxMessages_Tenant_ProcessDue");
 
-        builder.HasIndex(x => new { x.ProcessingAtUtc, x.ProcessedAtUtc })
-            .HasDatabaseName("IX_TenantOutboxMessages_Processing");
+        builder.HasIndex(x => new { x.TenantId, x.ProcessingAtUtc, x.ProcessedAtUtc })
+            .HasDatabaseName("IX_TenantOutboxMessages_Tenant_Processing");
     }
 }
 
@@ -93,9 +93,9 @@ public sealed class TenantInboxMessageConfiguration : BaseEntityConfiguration<Te
         builder.Property(x => x.ReceivedAtUtc)
             .IsRequired();
 
-        builder.HasIndex(x => new { x.MessageId, x.ConsumerName })
+        builder.HasIndex(x => new { x.TenantId, x.MessageId, x.ConsumerName })
             .IsUnique()
-            .HasDatabaseName("UX_TenantInboxMessages_Message_Consumer");
+            .HasDatabaseName("UX_TenantInboxMessages_Tenant_Message_Consumer");
 
         builder.HasIndex(x => new { x.TenantId, x.ReceivedAtUtc })
             .HasDatabaseName("IX_TenantInboxMessages_Tenant_ReceivedAt");

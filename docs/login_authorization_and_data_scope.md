@@ -297,8 +297,8 @@ WHERE StoreId IN (...)
 | 使用 `RepositoryBase.QueryAsync()` | 是 |
 | 使用 `RepositoryBase.QueryTrackingAsync()` | 是 |
 | 使用 `db.ScopedSet<TEntity>(scope)` | 是 |
-| 直接使用 `db.Set<TEntity>()` | 否，需要业务代码自己保证 |
-| 原生 SQL / `FromSqlRaw` | 否，需要自己拼好安全过滤 |
+| 直接使用 `db.Set<TEntity>()` | 否，业务/API 层已由 Analyzer 阻断 |
+| 原生 SQL / `FromSqlRaw` | 否，租户库写 SQL 必须走 `ITenantSqlExecutor` |
 | 实体没有实现任何范围接口 | 不做租户/门店隔离 |
 
 ## 八、表类型如何表达
@@ -581,8 +581,8 @@ visibleStoreOnlyInventories = 1
 ## 十三、当前实现边界
 
 1. 数据隔离依赖实体接口。新表必须正确选择 `ITenantEntity`、`ISharedEntity`、`IStoreOnlyEntity`。
-2. 直接 `db.Set<TEntity>()` 查询不会自动套范围，除非显式调用 `ScopedSet` 或 `ApplyScope`。
-3. 原生 SQL 不会自动隔离，必须手写 `TenantId` 和 `StoreId` 条件。
+2. 直接 `db.Set<TEntity>()` 查询不会自动套范围，业务/API 层不得使用，基础设施代码必须显式限定 `TenantId`。
+3. 原生 SQL 不会自动隔离，租户库写 SQL 必须通过 `ITenantSqlExecutor` 并包含 `TenantId` 条件。
 4. 当前没有独立的 `IGroupSharedEntity`。集团共享表建议只实现 `ITenantEntity`。如果业务需要“有 StoreId 归属但全集团可见”的表，建议新增专门标记接口。
 5. `DataScope` 计算的是当前门店的业务共享范围，不是用户所有授权门店范围。用户所有授权门店只用于门店选择和切换。
 
@@ -601,6 +601,7 @@ visibleStoreOnlyInventories = 1
 | 范围过滤器 | `src/Atlas.Data.Tenant/EntityScopeFilter.cs` |
 | 仓储统一查询入口 | `src/Atlas.Data.Tenant/Repositories/RepositoryBase.cs` |
 | ScopedSet 入口 | `src/Atlas.Data.Tenant/Context/AtlasTenantDbContext.cs` |
+| SQL 安全入口 | `src/Atlas.Data.Tenant/Sql/TenantSqlExecutor.cs` |
 | 实体范围接口 | `src/Atlas.Core/Entities/Interfaces/IEntity.cs` |
 | 共享/独享实体基类 | `src/Atlas.Core/Entities/Base/BaseEntity.cs` |
 | 本地数据初始化 | `tools/Atlas.LocalSetup/Program.cs` |

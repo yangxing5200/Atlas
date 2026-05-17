@@ -45,7 +45,9 @@ public sealed class BackgroundJobClient : IBackgroundJobClient
         {
             var existing = await _dbContext.BackgroundJobs
                 .AsNoTracking()
-                .Where(x => x.DeduplicationKey == deduplicationKey)
+                .Where(x =>
+                    x.TenantId == request.TenantId &&
+                    x.DeduplicationKey == deduplicationKey)
                 .OrderByDescending(x => x.CreatedAt)
                 .FirstOrDefaultAsync(ct);
 
@@ -88,7 +90,9 @@ public sealed class BackgroundJobClient : IBackgroundJobClient
 
             var existing = await _dbContext.BackgroundJobs
                 .AsNoTracking()
-                .Where(x => x.DeduplicationKey == deduplicationKey)
+                .Where(x =>
+                    x.TenantId == request.TenantId &&
+                    x.DeduplicationKey == deduplicationKey)
                 .OrderByDescending(x => x.CreatedAt)
                 .FirstOrDefaultAsync(ct);
 

@@ -1,63 +1,38 @@
 using System.Text.Json;
+using Atlas.Consumers;
 using Atlas.Core.Entities.Tenant;
-using Atlas.Data.Tenant.Context;
+using Atlas.Data.Abstractions;
 using Atlas.Messaging.Abstractions;
 using Atlas.Services.Tenant;
 using MassTransit;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace Atlas.Consumers.Orders;
 
-public sealed class OrderPlacedEventConsumer : IConsumer<OrderPlacedEvent>
+public sealed class OrderPlacedEventConsumer : TenantConsumerBase<OrderPlacedEvent>
 {
-    private const string ConsumerName = nameof(OrderPlacedEventConsumer);
-
-    private readonly ITenantDbContextFactory _dbContextFactory;
+    private readonly IRepository<OperationLog> _operationLogs;
     private readonly ILogger<OrderPlacedEventConsumer> _logger;
 
     public OrderPlacedEventConsumer(
-        ITenantDbContextFactory dbContextFactory,
+        ITenantConsumerRuntime runtime,
+        IRepository<OperationLog> operationLogs,
         ILogger<OrderPlacedEventConsumer> logger)
+        : base(runtime)
     {
-        _dbContextFactory = dbContextFactory ?? throw new ArgumentNullException(nameof(dbContextFactory));
+        _operationLogs = operationLogs ?? throw new ArgumentNullException(nameof(operationLogs));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    public async Task Consume(ConsumeContext<OrderPlacedEvent> context)
+    protected override string ConsumerName => nameof(OrderPlacedEventConsumer);
+
+    protected override async Task ConsumeTenantMessageAsync(
+        ConsumeContext<OrderPlacedEvent> context,
+        long tenantId,
+        Guid messageId,
+        CancellationToken ct)
     {
         var message = context.Message;
-
-        if (!message.TenantId.HasValue)
-            throw new InvalidOperationException("Order placed event must include tenant id.");
-
-        var tenantId = message.TenantId.Value;
-        var messageId = context.MessageId ?? message.EventId;
-        var db = await _dbContextFactory.GetDbContextAsync(tenantId, context.CancellationToken);
-        await using var transaction = await db.Database.BeginTransactionAsync(context.CancellationToken);
-
-        var alreadyConsumed = await db.Set<TenantInboxMessage>()
-            .AnyAsync(
-                x => x.MessageId == messageId && x.ConsumerName == ConsumerName,
-                context.CancellationToken);
-
-        if (alreadyConsumed)
-        {
-            _logger.LogInformation(
-                "Skipped duplicate order placed event {EventId} for consumer {ConsumerName}.",
-                messageId,
-                ConsumerName);
-            return;
-        }
-
-        db.Set<TenantInboxMessage>().Add(new TenantInboxMessage
-        {
-            TenantId = tenantId,
-            MessageId = messageId,
-            ConsumerName = ConsumerName,
-            ReceivedAtUtc = DateTime.UtcNow
-        });
-
         var operationLog = new OperationLog
         {
             TenantId = tenantId,
@@ -70,14 +45,11 @@ public sealed class OrderPlacedEventConsumer : IConsumer<OrderPlacedEvent>
             IsSuccess = true
         };
 
-        db.Set<OperationLog>().Add(operationLog);
-        await db.SaveChangesAsync(context.CancellationToken);
-        await transaction.CommitAsync(context.CancellationToken);
+        await _operationLogs.AddAsync(operationLog, tenantId, ct);
 
         _logger.LogInformation(
-            "Consumed order placed event {EventId} and wrote operation log {OperationLogId}: tenant={TenantId}, store={StoreId}, order={OrderId}",
+            "Consumed order placed event {EventId}: tenant={TenantId}, store={StoreId}, order={OrderId}",
             message.EventId,
-            operationLog.Id,
             tenantId,
             message.StoreId,
             message.OrderId);

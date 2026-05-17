@@ -2,6 +2,7 @@ using Atlas.BackgroundTasks;
 using Atlas.Core.Enums;
 using Atlas.Data.Global;
 using Atlas.Data.Tenant.Context;
+using Atlas.Data.Tenant.Sql;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -22,17 +23,20 @@ public sealed class TenantOutboxMaintenanceTask : IRecurringTask
 {
     private readonly AtlasGlobalDbContext _globalDbContext;
     private readonly ITenantDbContextFactory _tenantDbContextFactory;
+    private readonly ITenantSqlExecutor _tenantSqlExecutor;
     private readonly TenantOutboxMaintenanceOptions _options;
     private readonly ILogger<TenantOutboxMaintenanceTask> _logger;
 
     public TenantOutboxMaintenanceTask(
         AtlasGlobalDbContext globalDbContext,
         ITenantDbContextFactory tenantDbContextFactory,
+        ITenantSqlExecutor tenantSqlExecutor,
         IOptions<TenantOutboxMaintenanceOptions> options,
         ILogger<TenantOutboxMaintenanceTask> logger)
     {
         _globalDbContext = globalDbContext ?? throw new ArgumentNullException(nameof(globalDbContext));
         _tenantDbContextFactory = tenantDbContextFactory ?? throw new ArgumentNullException(nameof(tenantDbContextFactory));
+        _tenantSqlExecutor = tenantSqlExecutor ?? throw new ArgumentNullException(nameof(tenantSqlExecutor));
         _options = options?.Value ?? new TenantOutboxMaintenanceOptions();
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
@@ -77,19 +81,25 @@ public sealed class TenantOutboxMaintenanceTask : IRecurringTask
                 lastTenantId = tenantId;
 
                 var tenantDb = await _tenantDbContextFactory.GetDbContextAsync(tenantId, ct);
-                deletedOutbox += await tenantDb.Database.ExecuteSqlInterpolatedAsync(
+                deletedOutbox += await _tenantSqlExecutor.ExecuteTenantCommandAsync(
+                    tenantDb,
+                    tenantId,
                     $"""
                      DELETE FROM TenantOutboxMessages
-                     WHERE ProcessedAtUtc IS NOT NULL
+                     WHERE TenantId = {tenantId}
+                       AND ProcessedAtUtc IS NOT NULL
                        AND ProcessedAtUtc < {cutoff}
                      LIMIT {deleteBatchSize}
                      """,
                     ct);
 
-                deletedInbox += await tenantDb.Database.ExecuteSqlInterpolatedAsync(
+                deletedInbox += await _tenantSqlExecutor.ExecuteTenantCommandAsync(
+                    tenantDb,
+                    tenantId,
                     $"""
                      DELETE FROM TenantInboxMessages
-                     WHERE ReceivedAtUtc < {cutoff}
+                     WHERE TenantId = {tenantId}
+                       AND ReceivedAtUtc < {cutoff}
                      LIMIT {deleteBatchSize}
                      """,
                     ct);

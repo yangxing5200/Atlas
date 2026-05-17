@@ -21,21 +21,17 @@ namespace Atlas.Data.Tenant.Context
             : base(options)
         {
         }
-        internal DbSet<TEntity> GetDbSet<TEntity>() where TEntity : class
-        {
-            return Set<TEntity>();
-        }
 
         public IQueryable<TEntity> ScopedSet<TEntity>(IDataScope dataScope)
             where TEntity : class
         {
-            return Set<TEntity>().ApplyScope(dataScope);
+            return base.Set<TEntity>().ApplyScope(dataScope);
         }
 
         public IQueryable<TEntity> ScopedSet<TEntity>(DataScopeSnapshot dataScope)
             where TEntity : class
         {
-            return Set<TEntity>().ApplyScope(dataScope);
+            return base.Set<TEntity>().ApplyScope(dataScope);
         }
 
         public IQueryable<TEntity> ScopedSet<TEntity>(
@@ -44,7 +40,7 @@ namespace Atlas.Data.Tenant.Context
             long? explicitStoreId = null)
             where TEntity : class
         {
-            return Set<TEntity>().ApplyScope(dataScope, explicitTenantId, explicitStoreId);
+            return base.Set<TEntity>().ApplyScope(dataScope, explicitTenantId, explicitStoreId);
         }
 
         public IQueryable<TEntity> ScopedSet<TEntity>(
@@ -53,7 +49,7 @@ namespace Atlas.Data.Tenant.Context
             long? explicitStoreId = null)
             where TEntity : class
         {
-            return Set<TEntity>().ApplyScope(dataScope, explicitTenantId, explicitStoreId);
+            return base.Set<TEntity>().ApplyScope(dataScope, explicitTenantId, explicitStoreId);
         }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)

@@ -13,7 +13,7 @@ namespace Atlas.Infrastructure.Security
     {
         public string TokenHeaderName { get; set; } = "Authorization";
         public string TokenPrefix { get; set; } = "Bearer";
-        public bool EnableQueryStringToken { get; set; } = true;
+        public bool EnableQueryStringToken { get; set; }
         public bool EnableCustomHeader { get; set; } = true;
         public string CookieName { get; set; } = "atlas-auth-token";
         public string LoginPath { get; set; } = "/login";

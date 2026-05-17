@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore Atlas.sln
+
+      - name: Build
+        run: dotnet build Atlas.sln --no-restore --configuration Release
+
+      - name: Test core
+        run: dotnet test tests/Atlas.Core.Tests/Atlas.Core.Tests.csproj --no-build --configuration Release
+
+      - name: Test data
+        run: dotnet test tests/Atlas.Data.Tests/Atlas.Data.Tests.csproj --no-build --configuration Release
+
+      - name: Test services
+        run: dotnet test tests/Atlas.Services.Tests/Atlas.Services.Tests.csproj --no-build --configuration Release

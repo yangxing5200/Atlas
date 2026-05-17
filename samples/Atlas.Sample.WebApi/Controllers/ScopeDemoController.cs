@@ -1,10 +1,8 @@
 using Atlas.Core.Entities.Tenant;
 using Atlas.Core.Enums;
 using Atlas.Data.Abstractions;
-using Atlas.Data.Tenant.Context;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace Atlas.Sample.WebApi.Controllers;
 
@@ -14,86 +12,99 @@ namespace Atlas.Sample.WebApi.Controllers;
 [Authorize]
 public sealed class ScopeDemoController : ControllerBase
 {
-    private readonly ITenantDbContextFactory _dbFactory;
-    private readonly IDataScope _dataScope;
-    private readonly ILogger<ScopeDemoController> _logger;
+    private readonly IScopeDemoService _scopeDemoService;
 
     public ScopeDemoController(
-        ITenantDbContextFactory dbFactory,
-        IDataScope dataScope,
-        ILogger<ScopeDemoController> logger)
+        IScopeDemoService scopeDemoService)
     {
-        _dbFactory = dbFactory;
-        _dataScope = dataScope;
-        _logger = logger;
+        _scopeDemoService = scopeDemoService ?? throw new ArgumentNullException(nameof(scopeDemoService));
     }
 
     [HttpGet("visibility")]
     [ProducesResponseType(typeof(ScopeDemoVisibilityResponse), StatusCodes.Status200OK)]
     public async Task<ActionResult<ScopeDemoVisibilityResponse>> GetVisibility(CancellationToken ct = default)
     {
-        try
-        {
-            var scope = await _dataScope.ResolveAsync(ct);
-            if (!scope.TenantId.HasValue || !scope.StoreId.HasValue)
-            {
-                return BadRequest(new { message = "Token 中缺少租户或门店上下文。" });
-            }
+        return Ok(await _scopeDemoService.GetVisibilityAsync(ct));
+    }
+}
 
-            var db = await _dbFactory.GetReadonlyDbContextAsync(ct);
-            var stores = await db.Set<Store>()
-                .AsNoTracking()
-                .Where(s => s.TenantId == scope.TenantId.Value)
-                .OrderBy(s => s.Id)
-                .Select(s => new StoreSummary(
-                    s.Id,
-                    s.Code,
-                    s.Name,
-                    s.Type,
-                    s.ParentStoreId))
-                .ToListAsync(ct);
+public interface IScopeDemoService
+{
+    Task<ScopeDemoVisibilityResponse> GetVisibilityAsync(CancellationToken ct = default);
+}
 
-            var storeMap = stores.ToDictionary(s => s.Id);
-            var currentStore = storeMap.GetValueOrDefault(scope.StoreId.Value);
+public sealed class ScopeDemoService : IScopeDemoService
+{
+    private readonly IDataScope _dataScope;
+    private readonly IRepository<Store> _stores;
+    private readonly IRepository<Product> _products;
+    private readonly IRepository<Inventory> _inventories;
 
-            var products = await db.ScopedSet<Product>(scope)
-                .AsNoTracking()
-                .OrderBy(p => p.StoreId)
-                .ThenBy(p => p.Id)
-                .Select(p => new VisibleProduct(
-                    p.Id,
-                    p.StoreId,
-                    p.Name,
-                    p.Price,
-                    p.IsCustomized,
-                    p.SourceStoreId))
-                .ToListAsync(ct);
+    public ScopeDemoService(
+        IDataScope dataScope,
+        IRepository<Store> stores,
+        IRepository<Product> products,
+        IRepository<Inventory> inventories)
+    {
+        _dataScope = dataScope ?? throw new ArgumentNullException(nameof(dataScope));
+        _stores = stores ?? throw new ArgumentNullException(nameof(stores));
+        _products = products ?? throw new ArgumentNullException(nameof(products));
+        _inventories = inventories ?? throw new ArgumentNullException(nameof(inventories));
+    }
 
-            var inventories = await db.ScopedSet<Inventory>(scope)
-                .AsNoTracking()
-                .OrderBy(i => i.StoreId)
-                .ThenBy(i => i.Id)
-                .Select(i => new VisibleInventory(
-                    i.Id,
-                    i.StoreId,
-                    i.ProductId,
-                    i.Quantity,
-                    i.SafetyStock))
-                .ToListAsync(ct);
+    public async Task<ScopeDemoVisibilityResponse> GetVisibilityAsync(CancellationToken ct = default)
+    {
+        var scope = await _dataScope.ResolveAsync(ct);
+        if (!scope.TenantId.HasValue || !scope.StoreId.HasValue)
+            throw new InvalidOperationException("Token 中缺少租户或门店上下文。");
 
-            return Ok(new ScopeDemoVisibilityResponse(
-                scope.TenantId.Value,
-                currentStore,
-                scope.ShareStoreIds,
-                ExplainRule(currentStore?.Type),
-                products.Select(p => p.WithStoreName(storeMap)).ToList(),
-                inventories.Select(i => i.WithStoreName(storeMap)).ToList()));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to load scope demo visibility.");
-            return StatusCode(500, new { message = "读取数据范围演示数据失败。" });
-        }
+        var visibleStoreIds = scope.ShareStoreIds
+            .Append(scope.StoreId.Value)
+            .Distinct()
+            .ToArray();
+
+        var storeQuery = await _stores.QueryAsync(ct);
+        var stores = await storeQuery
+            .Where(s => visibleStoreIds.Contains(s.Id))
+            .OrderBy(s => s.Id)
+            .SelectToListAsync(s => new StoreSummary(
+                s.Id,
+                s.Code,
+                s.Name,
+                s.Type,
+                s.ParentStoreId), ct);
+
+        var storeMap = stores.ToDictionary(s => s.Id);
+        var currentStore = storeMap.GetValueOrDefault(scope.StoreId.Value);
+
+        var productQuery = await _products.QueryAsync(ct);
+        var products = await productQuery
+            .OrderBy(p => p.StoreId)
+            .SelectToListAsync(p => new VisibleProduct(
+                p.Id,
+                p.StoreId,
+                p.Name,
+                p.Price,
+                p.IsCustomized,
+                p.SourceStoreId), ct);
+
+        var inventoryQuery = await _inventories.QueryAsync(ct);
+        var inventories = await inventoryQuery
+            .OrderBy(i => i.StoreId)
+            .SelectToListAsync(i => new VisibleInventory(
+                i.Id,
+                i.StoreId,
+                i.ProductId,
+                i.Quantity,
+                i.SafetyStock), ct);
+
+        return new ScopeDemoVisibilityResponse(
+            scope.TenantId.Value,
+            currentStore,
+            scope.ShareStoreIds,
+            ExplainRule(currentStore?.Type),
+            products.Select(p => p.WithStoreName(storeMap)).ToList(),
+            inventories.Select(i => i.WithStoreName(storeMap)).ToList());
     }
 
     private static string ExplainRule(StoreType? storeType)

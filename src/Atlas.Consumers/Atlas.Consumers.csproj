@@ -8,13 +8,12 @@
 
   <ItemGroup>
     <PackageReference Include="MassTransit" Version="8.4.1" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Atlas.Core\Atlas.Core.csproj" />
-    <ProjectReference Include="..\Atlas.Data.Tenant\Atlas.Data.Tenant.csproj" />
+    <ProjectReference Include="..\Atlas.Data.Abstractions\Atlas.Data.Abstractions.csproj" />
     <ProjectReference Include="..\Atlas.Messaging.Abstractions\Atlas.Messaging.Abstractions.csproj" />
     <ProjectReference Include="..\Atlas.Services.Tenant\Atlas.Services.Tenant.csproj" />
   </ItemGroup>

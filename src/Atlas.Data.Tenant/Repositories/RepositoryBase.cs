@@ -32,6 +32,7 @@ namespace Atlas.Data.Tenant.Repositories
         public virtual async Task AddAsync(TEntity entity, CancellationToken ct = default)
         {
             if (entity == null) throw new ArgumentNullException(nameof(entity));
+            EnsureCurrentTenant(entity);
             var db = await _dbFactory.GetDbContextAsync(ct);
             await db.Set<TEntity>().AddAsync(entity, ct);
         }
@@ -39,8 +40,14 @@ namespace Atlas.Data.Tenant.Repositories
         public virtual async Task AddRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default)
         {
             if (entities == null) throw new ArgumentNullException(nameof(entities));
+            var entityList = entities.ToList();
+            foreach (var entity in entityList)
+            {
+                EnsureCurrentTenant(entity);
+            }
+
             var db = await _dbFactory.GetDbContextAsync(ct);
-            await db.Set<TEntity>().AddRangeAsync(entities, ct);
+            await db.Set<TEntity>().AddRangeAsync(entityList, ct);
         }
 
         /// <summary>
@@ -49,6 +56,7 @@ namespace Atlas.Data.Tenant.Repositories
         public virtual async Task AddAsync(TEntity entity, long tenantId, CancellationToken ct = default)
         {
             if (entity == null) throw new ArgumentNullException(nameof(entity));
+            EnsureExplicitTenant(entity, tenantId);
             var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
             await db.Set<TEntity>().AddAsync(entity, ct);
         }
@@ -59,8 +67,14 @@ namespace Atlas.Data.Tenant.Repositories
         public virtual async Task AddRangeAsync(IEnumerable<TEntity> entities, long tenantId, CancellationToken ct = default)
         {
             if (entities == null) throw new ArgumentNullException(nameof(entities));
+            var entityList = entities.ToList();
+            foreach (var entity in entityList)
+            {
+                EnsureExplicitTenant(entity, tenantId);
+            }
+
             var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
-            await db.Set<TEntity>().AddRangeAsync(entities, ct);
+            await db.Set<TEntity>().AddRangeAsync(entityList, ct);
         }
 
         #endregion
@@ -146,6 +160,7 @@ namespace Atlas.Data.Tenant.Repositories
         public virtual async Task RemoveAsync(TEntity entity, CancellationToken ct = default)
         {
             if (entity == null) throw new ArgumentNullException(nameof(entity));
+            EnsureCurrentTenant(entity);
             var db = await _dbFactory.GetDbContextAsync(ct);
             MarkForDeletion(db, entity);
         }
@@ -153,8 +168,14 @@ namespace Atlas.Data.Tenant.Repositories
         public virtual async Task RemoveRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default)
         {
             if (entities == null) throw new ArgumentNullException(nameof(entities));
+            var entityList = entities.ToList();
+            foreach (var entity in entityList)
+            {
+                EnsureCurrentTenant(entity);
+            }
+
             var db = await _dbFactory.GetDbContextAsync(ct);
-            foreach (var entity in entities)
+            foreach (var entity in entityList)
             {
                 MarkForDeletion(db, entity);
             }
@@ -166,6 +187,7 @@ namespace Atlas.Data.Tenant.Repositories
         public virtual async Task RemoveAsync(TEntity entity, long tenantId, CancellationToken ct = default)
         {
             if (entity == null) throw new ArgumentNullException(nameof(entity));
+            EnsureExplicitTenant(entity, tenantId);
             var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
             MarkForDeletion(db, entity);
         }
@@ -176,14 +198,55 @@ namespace Atlas.Data.Tenant.Repositories
         public virtual async Task RemoveRangeAsync(IEnumerable<TEntity> entities, long tenantId, CancellationToken ct = default)
         {
             if (entities == null) throw new ArgumentNullException(nameof(entities));
+            var entityList = entities.ToList();
+            foreach (var entity in entityList)
+            {
+                EnsureExplicitTenant(entity, tenantId);
+            }
+
             var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
-            foreach (var entity in entities)
+            foreach (var entity in entityList)
             {
                 MarkForDeletion(db, entity);
             }
         }
 
-        private static void MarkForDeletion(DbContext db, TEntity entity)
+        private static void EnsureExplicitTenant(TEntity entity, long tenantId)
+        {
+            EnsureTenant(entity, tenantId, "explicit");
+        }
+
+        private void EnsureCurrentTenant(TEntity entity)
+        {
+            if (entity is not ITenantEntity)
+                return;
+
+            var tenantId = _dataScope.TenantId
+                ?? throw new InvalidOperationException(
+                    $"Current tenant id is required to write tenant entity {typeof(TEntity).Name}. Use the explicit tenant overload for system or login flows.");
+
+            EnsureTenant(entity, tenantId, "current");
+        }
+
+        private static void EnsureTenant(TEntity entity, long tenantId, string source)
+        {
+            if (entity is not ITenantEntity tenantEntity)
+                return;
+
+            if (tenantEntity.TenantId == 0)
+            {
+                tenantEntity.TenantId = tenantId;
+                return;
+            }
+
+            if (tenantEntity.TenantId != tenantId)
+            {
+                throw new InvalidOperationException(
+                    $"Entity {typeof(TEntity).Name} tenant id '{tenantEntity.TenantId}' does not match {source} tenant id '{tenantId}'.");
+            }
+        }
+
+        private static void MarkForDeletion(AtlasTenantDbContext db, TEntity entity)
         {
             if (entity is not ISoftDelete softDelete)
             {

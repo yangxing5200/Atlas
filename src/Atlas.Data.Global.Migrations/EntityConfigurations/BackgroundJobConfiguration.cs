@@ -82,9 +82,9 @@ public sealed class BackgroundJobConfiguration : IEntityTypeConfiguration<Backgr
         builder.HasIndex(x => x.Queue)
             .HasDatabaseName("IX_BackgroundJobs_Queue");
 
-        builder.HasIndex(x => x.DeduplicationKey)
+        builder.HasIndex(x => new { x.TenantId, x.DeduplicationKey })
             .IsUnique()
-            .HasDatabaseName("UX_BackgroundJobs_DeduplicationKey");
+            .HasDatabaseName("UX_BackgroundJobs_Tenant_DeduplicationKey");
 
         builder.HasIndex(x => new { x.Queue, x.Status, x.AvailableAtUtc, x.NextAttemptAtUtc, x.Priority })
             .HasDatabaseName("IX_BackgroundJobs_DispatchDue");
