@@ -1,4 +1,4 @@
-﻿using Serilog.Core;
+using Serilog.Core;
 using Serilog.Events;
 using System.Text.RegularExpressions;
 
@@ -7,6 +7,9 @@ namespace Atlas.Infrastructure.Logging.Filters
     /// <summary>
     /// 敏感数据过滤器
     /// </summary>
+    /// <remarks>
+    /// 过滤器在日志事件写出前运行，可标记或替换敏感属性；它不应阻止日志写出，否则会影响故障排查完整性。
+    /// </remarks>
     public class SensitiveDataFilter : ILogEventFilter
     {
         private readonly HashSet<string> _sensitiveFields;
@@ -37,7 +40,7 @@ namespace Atlas.Infrastructure.Logging.Filters
                 }
             }
 
-            // 过滤消息模板中的敏感信息
+            // 对已经渲染的消息做模式检测，只标记事件，不修改原始 MessageTemplate。
             var message = logEvent.RenderMessage();
             if (ContainsSensitivePattern(message))
             {

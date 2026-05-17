@@ -9,6 +9,12 @@ using Microsoft.Extensions.Options;
 
 namespace Atlas.BackgroundTasks;
 
+/// <summary>
+/// 轮询全局任务表并执行一次性后台任务的托管服务。
+/// </summary>
+/// <remarks>
+/// Worker 通过数据库原子 UPDATE 领取任务，支持多实例部署；任务处理器必须自行保证业务幂等。
+/// </remarks>
 public sealed class BackgroundJobWorker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
@@ -73,6 +79,7 @@ public sealed class BackgroundJobWorker : BackgroundService
         var staleLockedBefore = now.AddSeconds(-Math.Max(30, _options.ProcessingTimeoutSeconds));
         var batchSize = Math.Max(1, _options.BatchSize);
 
+        // 查询候选任务时包含超时 Running 任务，用于回收崩溃或长时间失联 Worker 留下的锁。
         var jobs = await db.BackgroundJobs
             .Where(x =>
                 queues.Contains(x.Queue) &&
@@ -96,6 +103,7 @@ public sealed class BackgroundJobWorker : BackgroundService
             if (!await TryClaimAsync(db, job.Id, job.Queue, now, staleLockedBefore, ct))
                 continue;
 
+            // 领取成功后重新加载，确保当前 DbContext 中的实体状态与数据库锁定结果一致。
             await db.Entry(job).ReloadAsync(ct);
 
             try
@@ -143,6 +151,7 @@ public sealed class BackgroundJobWorker : BackgroundService
         var running = (int)BackgroundJobStatus.Running;
         var failed = (int)BackgroundJobStatus.Failed;
 
+        // 用单条条件 UPDATE 完成抢占，避免多个 Worker 同时执行同一个任务。
         var updated = await db.Database.ExecuteSqlInterpolatedAsync(
             $"""
              UPDATE BackgroundJobs
@@ -181,6 +190,7 @@ public sealed class BackgroundJobWorker : BackgroundService
 
         if (job.AttemptCount >= job.MaxAttempts)
         {
+            // 达到最大重试次数后进入 Dead 状态，后续需要人工或维护任务介入。
             job.Status = BackgroundJobStatus.Dead;
             job.CompletedAtUtc = DateTime.UtcNow;
             job.NextAttemptAtUtc = null;
@@ -189,6 +199,7 @@ public sealed class BackgroundJobWorker : BackgroundService
         else
         {
             job.Status = BackgroundJobStatus.Failed;
+            // 指数退避减少故障依赖持续异常时的数据库和外部服务压力。
             job.NextAttemptAtUtc = DateTime.UtcNow.Add(GetRetryDelay(job.AttemptCount));
         }
 

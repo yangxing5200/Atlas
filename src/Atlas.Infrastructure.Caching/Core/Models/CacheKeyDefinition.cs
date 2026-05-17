@@ -1,4 +1,4 @@
-﻿// Core/Models/CacheKeyDefinition.cs
+// Core/Models/CacheKeyDefinition.cs
 using System;
 using System.Collections.Generic;
 
@@ -7,6 +7,10 @@ namespace Atlas.Infrastructure.Caching.Core.Models
     /// <summary>
     /// 缓存键定义（所有缓存必须通过定义访问）
     /// </summary>
+    /// <remarks>
+    /// Definition 是缓存治理的最小单元：键模板、作用域、默认 TTL、随机过期偏移和标签都在这里声明。
+    /// 新增业务缓存时应先在 Registry 中定义，再通过 ICacheService 使用。
+    /// </remarks>
     public sealed class CacheKeyDefinition
     {
         /// <summary>
@@ -85,7 +89,7 @@ namespace Atlas.Infrastructure.Caching.Core.Models
             if (string.IsNullOrEmpty(InstanceKeyName) || instanceValue == null)
                 return Name;
 
-            // 替换占位符
+            // 只构建业务段，作用域前缀由 ICacheKeyGenerator 统一添加。
             return Name.Replace($"{{{InstanceKeyName}}}", instanceValue.ToString());
         }
 
@@ -96,7 +100,7 @@ namespace Atlas.Infrastructure.Caching.Core.Models
         {
             var expiration = DefaultExpiration;
 
-            // 添加随机偏移（防止缓存雪崩）
+            // 添加随机偏移，避免大量同类键在同一时间过期造成集中回源。
             if (MaxRandomOffsetSeconds > 0)
             {
                 var random = new Random();
@@ -110,7 +114,7 @@ namespace Atlas.Infrastructure.Caching.Core.Models
                 AbsoluteExpiration = expiration
             };
 
-            // 生成标签
+            // 标签基于当前作用域和实例值生成，后续通过 tag version 判断缓存是否逻辑过期。
             if (TagGenerator != null && context != null)
             {
                 var tags = TagGenerator(context, instanceValue);
@@ -128,6 +132,9 @@ namespace Atlas.Infrastructure.Caching.Core.Models
         /// <summary>
         /// Builder 模式用于创建 CacheKeyDefinition
         /// </summary>
+        /// <remarks>
+        /// 默认作用域为 Tenant，默认过期时间为 1 小时，默认启用随机偏移。
+        /// </remarks>
         public class Builder
         {
             private readonly string _name;

@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Entities.Tenant;
+using Atlas.Core.Entities.Tenant;
 using Atlas.Core.Enums;
 using Atlas.Core.Extensions;
 using Atlas.Core.Services;
@@ -18,6 +18,10 @@ namespace Atlas.Data.Tenant
     /// <summary>
     /// 数据范围服务 - 基于门店类型控制数据访问权限
     /// </summary>
+    /// <remarks>
+    /// 该服务是仓储查询和中间件预加载之间的边界：异步路径负责计算完整范围，
+    /// 同步路径只作为兼容旧代码的保守兜底，避免在缺少缓存时扩大可见数据。
+    /// </remarks>
     public class DataScope : IDataScope
     {
         private readonly ICurrentIdentity _currentIdentity;
@@ -74,6 +78,7 @@ namespace Atlas.Data.Tenant
                     return cached;
                 }
 
+                // ResolveAsync 可能被同一请求内多个仓储调用；快照只按当前身份缓存一次。
                 var shareStoreIds = storeId.HasValue
                     ? await GetShareStoreIdsAsync(ct)
                     : new List<long>();
@@ -104,6 +109,7 @@ namespace Atlas.Data.Tenant
             var storeId = StoreId;
             if (!storeId.HasValue) return new List<long>();
 
+            // 共享门店范围与当前门店强相关，缓存实例值使用 StoreId 做分片。
             var cacheKey = TenantCacheKeys.ShareStoresCacheKey;
 
             var cachedShareStoreIds = await _cache.Value.GetAsync<List<long>>(
@@ -157,7 +163,8 @@ namespace Atlas.Data.Tenant
                     return new List<long> { storeId };
                 }
 
-                // 查询当前门店信息（仅应用租户过滤）
+                // 这里直接使用 DbContext，避免 DataScope -> Repository -> DataScope 的循环依赖。
+                // 查询条件显式带上 TenantId，确保不会跨租户解析门店关系。
                 var currentStore = await db.Set<Store>()
                     .AsNoTracking()
                     .Where(x => x.TenantId == tenantId.Value && x.Id == storeId)

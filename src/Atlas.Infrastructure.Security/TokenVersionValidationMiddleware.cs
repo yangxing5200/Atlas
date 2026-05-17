@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -18,12 +18,16 @@ namespace Atlas.Infrastructure.Security
     /// Token version validation middleware.
     /// Must be registered after TenantConnectionPreloadMiddleware.
     /// </summary>
+    /// <remarks>
+    /// 认证处理器只证明 Token 本身有效；该中间件再次确认用户当前 TokenVersion 和 Session 状态，
+    /// 用于支持修改密码、管理员踢下线、退出登录等服务端主动撤销场景。
+    /// </remarks>
     public class TokenVersionValidationMiddleware
     {
         private readonly RequestDelegate _next;
         private readonly ILogger<TokenVersionValidationMiddleware> _logger;
         
-        // Default path prefixes to skip token validation
+        // 默认跳过公开入口和基础设施端点，避免登录、健康检查等请求被版本校验拦截。
         private static readonly string[] DefaultSkipPaths = new[]
         {
             "/api/user/login",
@@ -74,7 +78,7 @@ namespace Atlas.Infrastructure.Security
             {
                 var tokenCache = context.RequestServices.GetRequiredService<ITokenCacheService>();
 
-                // Step 1: Check session blacklist (memory only, fastest)
+                // 先检查 Session 黑名单：这是最高频的主动失效路径，通常只访问本地缓存。
                 if (!string.IsNullOrEmpty(sessionIdClaim))
                 {
                     if (!tokenCache.IsSessionValid(sessionIdClaim))
@@ -87,7 +91,7 @@ namespace Atlas.Infrastructure.Security
                     }
                 }
 
-                // Step 2: Check cached TokenVersion (L1 memory, ~99% hit rate)
+                // 再检查缓存中的 TokenVersion，避免每个请求都访问租户数据库。
                 var cachedVersion = tokenCache.GetUserTokenVersion(userId);
 
                 if (cachedVersion.HasValue)
@@ -103,7 +107,7 @@ namespace Atlas.Infrastructure.Security
                 }
                 else
                 {
-                    // Step 3: Cache miss - load from database
+                    // 缓存未命中时回源数据库，并使用显式 tenantId 查询以支持当前认证上下文初始化阶段。
                     var userRepo = context.RequestServices.GetRequiredService<IRepository<User>>();
                     var queryBuilder = await userRepo.QueryAsync(tenantId);
                     var user = await queryBuilder
@@ -118,7 +122,7 @@ namespace Atlas.Infrastructure.Security
 
                     var currentVersion = user.TokenVersion;
 
-                    // Verify before caching
+                    // 先比对再写入缓存，避免把已经失效的版本重新推广到 L1。
                     if (currentVersion != tokenVersion)
                     {
                         _logger.LogWarning(
@@ -129,7 +133,6 @@ namespace Atlas.Infrastructure.Security
                         return;
                     }
 
-                    // Cache valid version
                     tokenCache.SetUserTokenVersion(userId, currentVersion);
                     _logger.LogDebug("TokenVersion validated from DB - UserId: {UserId}", userId);
                 }
@@ -137,7 +140,7 @@ namespace Atlas.Infrastructure.Security
             catch (Exception ex)
             {
                 _logger.LogError(ex, "TokenVersion validation error - UserId: {UserId}", userId);
-                await HandleInvalidToken(context); // Fail-safe: reject on error
+                await HandleInvalidToken(context); // Fail-safe: 校验链路异常时拒绝请求，避免放大权限风险。
                 return;
             }
 

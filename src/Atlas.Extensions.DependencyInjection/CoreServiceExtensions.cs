@@ -64,6 +64,7 @@ public static class AtlasCoreServiceExtensions
         IConfiguration configuration,
         params Assembly[] messagingConsumerAssemblies)
     {
+        // 注册顺序体现运行时依赖：身份、缓存和消息等基础设施先于业务服务。
         services.AddLogging();
         services.AddHttpContextAccessor();
         services.AddAtlasSnowflakeId(configuration);
@@ -146,7 +147,7 @@ public static class AtlasCoreServiceExtensions
 
         services.AddAtlasCaching();
         
-        // Register distributed lock provider (memory-based for single instance)
+        // 默认内存锁只适合单实例；Redis/数据库锁接入后应在这里替换为跨实例实现。
         services.TryAddSingleton<IDistributedLockProvider, MemoryDistributedLockProvider>();
 
         return provider switch
@@ -211,6 +212,7 @@ public static class AtlasCoreServiceExtensions
         if (provider is not "none" and not "noop")
             throw new InvalidOperationException($"Unsupported messaging provider '{provider}'.");
 
+        // 未启用消息时使用 NoOp，保证领域服务可依赖发布接口而不关心部署形态。
         services.TryAddSingleton<IDomainEventPublisher, NoOpDomainEventPublisher>();
         services.TryAddSingleton<IDomainEventTransport, NoOpDomainEventTransport>();
         return services;
@@ -236,6 +238,7 @@ public static class AtlasCoreServiceExtensions
                 configurator.AddConsumers(assembly);
             }
 
+            // 全局 outbox 保护请求内发布，避免数据库提交成功但消息发布失败造成不一致。
             configurator.AddEntityFrameworkOutbox<AtlasGlobalDbContext>(outbox =>
             {
                 outbox.UseMySql();
@@ -271,6 +274,7 @@ public static class AtlasCoreServiceExtensions
             });
         });
 
+        // Publisher 使用 Scoped IPublishEndpoint；Transport 使用 Singleton IBus 供后台 outbox 分发。
         services.RemoveAll<IDomainEventPublisher>();
         services.AddScoped<IDomainEventPublisher, MassTransitDomainEventPublisher>();
         services.RemoveAll<IDomainEventTransport>();
@@ -420,6 +424,7 @@ public static class AtlasCoreServiceExtensions
         // Data scope with lazy dependencies to avoid circular references
         services.AddScoped<IDataScope>(sp =>
         {
+            // DataScope 使用 Lazy 包装缓存服务，避免与仓储/租户上下文初始化形成构造期循环依赖。
             var cache = sp.GetRequiredService<ICacheService>();
             var identity = sp.GetRequiredService<ICurrentIdentity>();
             var dbFactory = sp.GetRequiredService<ITenantDbContextFactory>();

@@ -16,6 +16,12 @@ using Atlas.Infrastructure.Caching.Tags;
 
 namespace Atlas.Infrastructure.Caching.Extensions
 {
+    /// <summary>
+    /// Atlas 缓存模块的依赖注入入口。
+    /// </summary>
+    /// <remarks>
+    /// AddAtlasCaching 注册抽象和默认组件；AddMemory/AddRedis/AddHybrid 负责选择具体 Provider。
+    /// </remarks>
     public static class ServiceCollectionExtensions
     {
         /// <summary>
@@ -28,7 +34,7 @@ namespace Atlas.Infrastructure.Caching.Extensions
             var builder = new CachingOptionsBuilder(services);
             configure?.Invoke(builder);
 
-            // Core services.
+            // Core services. TryAdd 允许宿主在调用前预先替换序列化、键生成或作用域解析策略。
             services.TryAddSingleton<ICacheSerializer>(sp => new JsonCacheSerializer());
             services.TryAddSingleton<ICacheKeyGenerator>(sp => new CacheKeyGenerator());
             services.TryAddSingleton<ICacheKeyParser>(sp => new CacheKeyParser());
@@ -38,7 +44,7 @@ namespace Atlas.Infrastructure.Caching.Extensions
             services.TryAddSingleton<ITagVersionStore, TagVersionStore>();
             services.TryAddSingleton<ITagManager, TagManager>();
 
-            // Cache invalidation.
+            // Cache invalidation. 分布式通知总线由具体 Provider 注册。
             services.TryAddSingleton<ICacheInvalidator, CacheInvalidator>();
 
             // Main cache service.
@@ -53,11 +59,13 @@ namespace Atlas.Infrastructure.Caching.Extensions
         public static IServiceCollection AddMemoryCaching(this IServiceCollection services)
         {
             services.AddMemoryCache();
+            // 切换 Provider 前移除旧注册，确保容器中只有一个 ICacheProvider 生效。
             services.RemoveAll<ICacheProvider>();
             services.AddSingleton<ICacheProvider, MemoryCacheProvider>();
 
             services.RemoveAll<ITagVersionStore>();
             services.AddSingleton<ITagVersionStore, TagVersionStore>();
+            // 单机内存缓存没有跨实例通知能力，显式移除失效总线。
             services.RemoveAll<ICacheInvalidationBus>();
             return services;
         }
@@ -100,6 +108,7 @@ namespace Atlas.Infrastructure.Caching.Extensions
             services.RemoveAll<ICacheInvalidationBus>();
             if (enableInvalidationBus)
             {
+                // Redis Pub/Sub 用于通知其他实例清理本地 L1 或内存副本。
                 services.AddSingleton<ICacheInvalidationBus>(sp =>
                 {
                     var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<RedisInvalidationBus>>();
@@ -155,6 +164,7 @@ namespace Atlas.Infrastructure.Caching.Extensions
             services.RemoveAll<ICacheProvider>();
             services.AddSingleton<ICacheProvider>(sp =>
             {
+                // Hybrid Provider 将内存作为 L1、Redis 作为 L2，兼顾读性能和跨实例共享。
                 var memoryCache = sp.GetRequiredService<IMemoryCache>();
                 var l1 = new MemoryCacheProvider(memoryCache);
                 var l2 = new RedisCacheProvider(redis, "atlas");

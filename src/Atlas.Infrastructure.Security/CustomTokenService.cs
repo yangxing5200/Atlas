@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Security;
+using Atlas.Core.Security;
 using Atlas.Core.Services;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,6 +12,13 @@ using System.Threading.Tasks;
 
 namespace Atlas.Infrastructure.Security
 {
+    /// <summary>
+    /// 自定义 Token 服务，负责生成、签名、加密和验证登录凭据。
+    /// </summary>
+    /// <remarks>
+    /// Token 格式为 version.timestamp.encryptedPayload.signature。
+    /// payload 加密保护用户上下文，signature 防篡改；TokenVersion 和 SessionId 用于服务端主动失效。
+    /// </remarks>
     public class CustomTokenService : ITokenService, IDisposable
     {
         private readonly ICryptoService _cryptoService;
@@ -96,13 +103,12 @@ namespace Atlas.Infrastructure.Security
 
             var cacheKey = GetSecureCacheKey(token);
 
-            // ✅ 优化1：使用复合缓存键，包含TokenVersion信息
+            // 验证结果短暂缓存，降低高频请求重复解密、验签和查版本的开销。
             if (_cache.TryGetValue<TokenInfo>(cacheKey, out var cachedInfo))
             {
                 if (!cachedInfo.IsExpired)
                 {
-                    // ✅ 优化2：只检查Session黑名单（内存操作，极快）
-                    // TokenVersion已通过缓存键验证
+                    // 命中缓存仍检查 Session 黑名单，确保退出登录能快速生效。
                     if (!string.IsNullOrEmpty(cachedInfo.SessionId) &&
                         !WithTokenCache(tokenCache => tokenCache.IsSessionValid(cachedInfo.SessionId)))
                     {
@@ -120,7 +126,7 @@ namespace Atlas.Infrastructure.Security
 
             if (result != null)
             {
-                // ✅ 优化3：验证前先检查Session
+                // 首次解析成功后再校验 Session 和 TokenVersion，保证服务端可主动撤销历史 Token。
                 if (!string.IsNullOrEmpty(result.SessionId) &&
                     !WithTokenCache(tokenCache => tokenCache.IsSessionValid(result.SessionId)))
                 {
@@ -128,7 +134,6 @@ namespace Atlas.Infrastructure.Security
                     return null;
                 }
 
-                // ✅ 优化4：验证TokenVersion（只在首次验证时）
                 var currentVersion = WithTokenCache(tokenCache => tokenCache.GetUserTokenVersion(result.UserId ?? 0));
                 if (currentVersion.HasValue && currentVersion.Value != result.TokenVersion)
                 {
@@ -137,7 +142,6 @@ namespace Atlas.Infrastructure.Security
                     return null;
                 }
 
-                // ✅ 优化5：缓存包含TokenVersion的验证状态
                 var cacheOptions = new MemoryCacheEntryOptions
                 {
                     AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30),
@@ -266,6 +270,7 @@ namespace Atlas.Infrastructure.Security
                     return null;
                 }
 
+                // 先验签再解密，避免对明显伪造的输入执行更重的解密和解析流程。
                 var dataToVerify = tokenSpan.Slice(0, indices[2]).ToString();
                 var expectedSignature = GenerateSignature(dataToVerify);
 
@@ -304,6 +309,9 @@ namespace Atlas.Infrastructure.Security
             }
         }
 
+        /// <summary>
+        /// 使用 HMAC-SHA256 生成 URL-safe 签名。
+        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private string GenerateSignature(string data)
         {
@@ -332,6 +340,9 @@ namespace Atlas.Infrastructure.Security
         }
     }
 
+    /// <summary>
+    /// Token 生成和读取配置。
+    /// </summary>
     public class TokenOptions
     {
         public string SecretKey { get; set; } = string.Empty;

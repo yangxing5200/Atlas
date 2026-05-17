@@ -6,6 +6,9 @@ using Microsoft.Extensions.Options;
 
 namespace Atlas.BackgroundTasks;
 
+/// <summary>
+/// 周期性任务 Runner 配置。
+/// </summary>
 public sealed class RecurringTaskRunnerOptions
 {
     public bool Enabled { get; set; }
@@ -13,6 +16,9 @@ public sealed class RecurringTaskRunnerOptions
     public int LockSeconds { get; set; } = 300;
 }
 
+/// <summary>
+/// 周期性任务执行上下文。
+/// </summary>
 public sealed class RecurringTaskContext
 {
     public RecurringTaskContext(DateTimeOffset startedAt)
@@ -23,6 +29,12 @@ public sealed class RecurringTaskContext
     public DateTimeOffset StartedAt { get; }
 }
 
+/// <summary>
+/// 周期性后台任务契约。
+/// </summary>
+/// <remarks>
+/// Name 需要在应用内唯一，并会参与分布式锁资源名；任务实现应能容忍重复执行和延迟执行。
+/// </remarks>
 public interface IRecurringTask
 {
     string Name { get; }
@@ -31,6 +43,12 @@ public interface IRecurringTask
     Task ExecuteAsync(RecurringTaskContext context, CancellationToken ct = default);
 }
 
+/// <summary>
+/// 扫描并执行已到期周期性任务的托管服务。
+/// </summary>
+/// <remarks>
+/// 本地 _nextRuns 只负责当前进程调度；跨实例互斥依赖 IDistributedLockProvider。
+/// </remarks>
 public sealed class RecurringTaskRunner : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
@@ -95,6 +113,7 @@ public sealed class RecurringTaskRunner : BackgroundService
             if (nextRun > now)
                 continue;
 
+            // 分布式锁保证同一任务在多实例环境中同一时间只由一个进程执行。
             var lockResource = $"atlas:recurring-task:{task.Name}";
             await using var taskLock = await lockProvider.TryAcquireAsync(
                 lockResource,

@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Entities.Interfaces;
+using Atlas.Core.Entities.Interfaces;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Tenant.Context;
 using Atlas.Models.Tenant.Responses;
@@ -14,6 +14,12 @@ namespace Atlas.Data.Tenant.Repositories
 {
     #region RepositoryBase Implementation
 
+    /// <summary>
+    /// 租户库仓储基类，统一处理查询范围、租户写入校验和软删除。
+    /// </summary>
+    /// <remarks>
+    /// 派生仓储只应补充特定聚合的查询方法；基础 CRUD 必须经过这里，以保持租户隔离策略一致。
+    /// </remarks>
     public abstract class RepositoryBase<TEntity, TKey> : IRepository<TEntity, TKey>
         where TEntity : class, IBaseEntity<TKey>
         where TKey : IEquatable<TKey>
@@ -32,6 +38,7 @@ namespace Atlas.Data.Tenant.Repositories
         public virtual async Task AddAsync(TEntity entity, CancellationToken ct = default)
         {
             if (entity == null) throw new ArgumentNullException(nameof(entity));
+            // 写入租户实体前先绑定或校验 TenantId，避免实体被写入错误租户库。
             EnsureCurrentTenant(entity);
             var db = await _dbFactory.GetDbContextAsync(ct);
             await db.Set<TEntity>().AddAsync(entity, ct);
@@ -246,6 +253,9 @@ namespace Atlas.Data.Tenant.Repositories
             }
         }
 
+        /// <summary>
+        /// 根据实体能力选择软删除或物理删除。
+        /// </summary>
         private static void MarkForDeletion(AtlasTenantDbContext db, TEntity entity)
         {
             if (entity is not ISoftDelete softDelete)

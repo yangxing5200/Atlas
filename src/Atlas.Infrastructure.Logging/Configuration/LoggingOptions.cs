@@ -1,8 +1,11 @@
-﻿namespace Atlas.Infrastructure.Logging.Configuration
+namespace Atlas.Infrastructure.Logging.Configuration
 {
     /// <summary>
     /// 日志配置选项
     /// </summary>
+    /// <remarks>
+    /// 配置路径为 Logging:Atlas。文件输出按日滚动，审计日志保留周期默认长于应用日志。
+    /// </remarks>
     public class LoggingOptions
     {
         public const string SectionName = "Logging:Atlas";

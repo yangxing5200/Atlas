@@ -1,4 +1,4 @@
-﻿// Abstractions/ICacheService.cs
+// Abstractions/ICacheService.cs
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -10,6 +10,10 @@ namespace Atlas.Infrastructure.Caching.Abstractions
     /// <summary>
     /// 缓存服务接口（支持同步和异步方法）
     /// </summary>
+    /// <remarks>
+    /// 推荐业务代码优先使用 CacheKeyDefinition 入口，统一作用域、过期时间、标签和键命名。
+    /// Raw key 方法保留给基础设施或迁移代码使用。
+    /// </remarks>
     public interface ICacheService
     {
         // ========== 基础同步方法 ==========
@@ -98,6 +102,9 @@ namespace Atlas.Infrastructure.Caching.Abstractions
         /// <summary>
         /// 获取或设置缓存值
         /// </summary>
+        /// <remarks>
+        /// 实现会对相同物理键加局部锁，降低缓存击穿时的并发回源压力。
+        /// </remarks>
         Task<CacheResult<T>> GetOrSetAsync<T>(
             CacheKeyDefinition definition,
             Func<Task<T>> factory,
@@ -153,6 +160,9 @@ namespace Atlas.Infrastructure.Caching.Abstractions
         /// <summary>
         /// 按标签失效缓存
         /// </summary>
+        /// <remarks>
+        /// 标签失效通常通过提升 tag version 完成，不要求立即扫描删除所有物理键。
+        /// </remarks>
         Task InvalidateByTagAsync(string tag, CancellationToken cancellationToken = default);
 
         /// <summary>
@@ -165,6 +175,9 @@ namespace Atlas.Infrastructure.Caching.Abstractions
         /// <summary>
         /// 失效整个作用域的缓存
         /// </summary>
+        /// <remarks>
+        /// 作用域失效依赖缓存键前缀约定，调用前需确保当前 ScopeContext 包含对应租户/门店/用户信息。
+        /// </remarks>
         Task InvalidateScopeAsync(CacheScope scope, CancellationToken cancellationToken = default);
 
         /// <summary>

@@ -1,5 +1,11 @@
 namespace Atlas.Messaging.RabbitMQ;
 
+/// <summary>
+/// RabbitMQ 消息总线配置。
+/// </summary>
+/// <remarks>
+/// Uri 优先级高于 Host/Port/VirtualHost；PrefetchCount 和 Retry* 影响消费者吞吐和失败重试节奏。
+/// </remarks>
 public sealed class RabbitMqMessagingOptions
 {
     public string Host { get; set; } = "localhost";

@@ -1,4 +1,4 @@
-﻿// Invalidation/CacheInvalidator.cs
+// Invalidation/CacheInvalidator.cs
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -9,6 +9,12 @@ using Atlas.Infrastructure.Caching.Core.Models;
 
 namespace Atlas.Infrastructure.Caching.Invalidation
 {
+    /// <summary>
+    /// 统一缓存失效器，封装按键、标签、作用域和模式的失效策略。
+    /// </summary>
+    /// <remarks>
+    /// 按键/模式失效会删除物理键并发布跨实例通知；按标签失效通过 TagManager 提升版本实现逻辑失效。
+    /// </remarks>
     public class CacheInvalidator : ICacheInvalidator
     {
         private readonly ICacheProvider _provider;
@@ -58,6 +64,7 @@ namespace Atlas.Infrastructure.Caching.Invalidation
 
         public async Task InvalidateByPatternAsync(string pattern, CancellationToken cancellationToken = default)
         {
+            // 模式失效依赖底层 Provider 支持按前缀/通配符枚举键；大规模场景需谨慎使用。
             var keys = (await _provider.GetKeysByPatternAsync(pattern, cancellationToken))
                 .Distinct()
                 .ToList();
@@ -80,6 +87,9 @@ namespace Atlas.Infrastructure.Caching.Invalidation
             }
         }
 
+        /// <summary>
+        /// 将缓存作用域转换为物理键前缀匹配模式。
+        /// </summary>
         private static string BuildScopePattern(CacheScope scope, string? scopeId)
         {
             return scope switch

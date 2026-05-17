@@ -8,6 +8,12 @@ using Microsoft.Extensions.Options;
 
 namespace Atlas.BackgroundTasks;
 
+/// <summary>
+/// 将一次性后台任务写入全局任务表的客户端。
+/// </summary>
+/// <remarks>
+/// 只负责入队和查询，不直接执行任务；执行由 BackgroundJobWorker 轮询完成。
+/// </remarks>
 public sealed class BackgroundJobClient : IBackgroundJobClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -43,6 +49,7 @@ public sealed class BackgroundJobClient : IBackgroundJobClient
 
         if (deduplicationKey != null)
         {
+            // 先查询一遍可避免常规重复请求触发数据库唯一约束异常。
             var existing = await _dbContext.BackgroundJobs
                 .AsNoTracking()
                 .Where(x =>
@@ -86,6 +93,7 @@ public sealed class BackgroundJobClient : IBackgroundJobClient
         }
         catch (DbUpdateException) when (deduplicationKey != null)
         {
+            // 并发入队时仍可能撞上唯一索引；失败后回读已有任务作为幂等结果返回。
             _dbContext.Entry(job).State = EntityState.Detached;
 
             var existing = await _dbContext.BackgroundJobs

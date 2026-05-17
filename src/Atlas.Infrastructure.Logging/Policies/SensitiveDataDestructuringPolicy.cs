@@ -1,4 +1,4 @@
-﻿using Serilog.Core;
+using Serilog.Core;
 using Serilog.Events;
 using System.Collections;
 using System.Reflection;
@@ -9,6 +9,10 @@ namespace Atlas.Infrastructure.Logging.Policies
     /// <summary>
     /// 敏感数据脱敏策略 - 用于对象属性脱敏
     /// </summary>
+    /// <remarks>
+    /// 该策略在 Serilog 解构对象时运行，适合处理 {@Object} 这类结构化日志。
+    /// 普通消息模板中的敏感片段应继续依赖调用方避免记录，或使用过滤器补充检测。
+    /// </remarks>
     public class SensitiveDataDestructuringPolicy : IDestructuringPolicy
     {
         private readonly HashSet<string> _sensitiveFields;
@@ -41,7 +45,7 @@ namespace Atlas.Infrastructure.Logging.Policies
 
             var type = value.GetType();
 
-            // 只处理自定义对象，不处理基础类型和系统类型
+            // 只处理自定义对象，避免拦截 string、DateTime、集合等 Serilog 已有的标准解构路径。
             if (type.IsPrimitive || type == typeof(string) || type.Namespace?.StartsWith("System") == true)
             {
                 result = null!;
@@ -83,7 +87,7 @@ namespace Atlas.Infrastructure.Logging.Policies
                 }
                 catch
                 {
-                    // 如果无法读取属性，跳过
+                    // 属性 getter 可能包含业务逻辑或抛异常，日志脱敏不应影响主流程。
                     continue;
                 }
             }

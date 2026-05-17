@@ -7,15 +7,27 @@ using Microsoft.Extensions.Logging;
 
 namespace Atlas.Infrastructure.Security;
 
+/// <summary>
+/// Atlas 内置授权策略名称。
+/// </summary>
 public static class AuthorizationPolicies
 {
     public const string RequireTenantAdmin = nameof(RequireTenantAdmin);
 }
 
+/// <summary>
+/// 要求当前用户是租户管理员或系统管理员。
+/// </summary>
 public sealed class TenantAdminRequirement : IAuthorizationRequirement
 {
 }
 
+/// <summary>
+/// 基于租户库用户状态验证租户管理员权限。
+/// </summary>
+/// <remarks>
+/// 不完全信任 Token 中的角色声明，而是回查当前租户库，确保禁用、删除或降权能及时生效。
+/// </remarks>
 public sealed class TenantAdminAuthorizationHandler : AuthorizationHandler<TenantAdminRequirement>
 {
     private readonly IRepository<User> _users;

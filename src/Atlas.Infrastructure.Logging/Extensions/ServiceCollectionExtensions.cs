@@ -1,4 +1,4 @@
-﻿using Atlas.Infrastructure.Logging.Configuration;
+using Atlas.Infrastructure.Logging.Configuration;
 using Atlas.Infrastructure.Logging.Enrichers;
 using Atlas.Infrastructure.Logging.Middleware;
 using Atlas.Infrastructure.Logging.Policies;
@@ -11,6 +11,9 @@ using Serilog.Formatting.Compact;
 
 namespace Atlas.Infrastructure.Logging.Extensions
 {
+    /// <summary>
+    /// Atlas 日志模块的注册和中间件入口。
+    /// </summary>
     public static class ServiceCollectionExtensions
     {
         /// <summary>
@@ -28,7 +31,7 @@ namespace Atlas.Infrastructure.Logging.Extensions
             services.Configure<LoggingOptions>(
                 configuration.GetSection(LoggingOptions.SectionName));
 
-            // 配置 Serilog
+            // 在宿主启动阶段创建全局 Serilog Logger，确保后续框架日志也进入同一管道。
             Log.Logger = CreateLogger(configuration, options);
 
             // 注册自定义服务
@@ -67,7 +70,7 @@ namespace Atlas.Infrastructure.Logging.Extensions
                 .MinimumLevel.Override("System", LogEventLevel.Warning)
                 .MinimumLevel.Override("Microsoft.AspNetCore.Authentication", LogEventLevel.Information);
 
-            // 敏感数据脱敏策略
+            // 脱敏策略作用在对象结构化输出阶段，避免敏感属性进入任何 sink。
             if (options.EnableSensitiveDataFilter)
             {
                 loggerConfig.Destructure.With(new SensitiveDataDestructuringPolicy(options.SensitiveFields));
@@ -99,7 +102,7 @@ namespace Atlas.Infrastructure.Logging.Extensions
                     outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{SourceContext}] {Message:lj} {Properties:j}{NewLine}{Exception}",
                     restrictedToMinimumLevel: LogEventLevel.Error));
 
-                // 审计日志（JSON 格式）
+                // 审计日志使用紧凑 JSON，便于后续被日志平台或归档任务解析。
                 loggerConfig.WriteTo.Async(a => a.File(
                     formatter: new CompactJsonFormatter(),
                     path: options.AuditFilePath,
@@ -131,7 +134,7 @@ namespace Atlas.Infrastructure.Logging.Extensions
                 .GetService<Microsoft.Extensions.Options.IOptions<LoggingOptions>>()?.Value
                 ?? new LoggingOptions();
 
-            // 添加 Serilog 请求日志
+            // Serilog 请求日志负责记录 HTTP 摘要；LogContextMiddleware 负责补充业务上下文。
             app.UseSerilogRequestLogging(opts =>
             {
                 opts.MessageTemplate =
@@ -139,6 +142,7 @@ namespace Atlas.Infrastructure.Logging.Extensions
 
                 opts.GetLevel = (httpContext, elapsed, ex) =>
                 {
+                    // 慢请求提升为 Warning，便于无需 APM 时也能从日志中定位性能问题。
                     if (ex != null) return LogEventLevel.Error;
                     if (httpContext.Response.StatusCode >= 500) return LogEventLevel.Error;
                     if (httpContext.Response.StatusCode >= 400) return LogEventLevel.Warning;

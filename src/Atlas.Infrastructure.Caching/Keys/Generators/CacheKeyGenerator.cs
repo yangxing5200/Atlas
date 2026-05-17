@@ -1,4 +1,4 @@
-﻿// Keys/Generators/CacheKeyGenerator.cs
+// Keys/Generators/CacheKeyGenerator.cs
 using System;
 using System.Collections.Generic;
 using Atlas.Infrastructure.Caching.Abstractions;
@@ -7,8 +7,18 @@ using Atlas.Infrastructure.Caching.Keys.Conventions;
 
 namespace Atlas.Infrastructure.Caching.Keys.Generators
 {
+    /// <summary>
+    /// 按缓存作用域生成稳定的物理缓存键。
+    /// </summary>
+    /// <remarks>
+    /// 生成结果必须与失效器中的通配符规则保持一致，例如 T:{tenant}:*、S:{tenant}:{store}:*。
+    /// Scope 值禁止包含分隔符，防止不同作用域之间发生键空间串扰。
+    /// </remarks>
     public class CacheKeyGenerator : ICacheKeyGenerator
     {
+        /// <summary>
+        /// 根据作用域路由到对应的键格式。
+        /// </summary>
         public string GenerateKey(string baseKey, CacheScope scope, IDictionary<string, string>? scopeValues = null)
         {
             ValidateBaseKey(baseKey);
@@ -66,8 +76,7 @@ namespace Atlas.Infrastructure.Caching.Keys.Generators
             if (string.IsNullOrWhiteSpace(baseKey))
                 throw new ArgumentException("Base key cannot be null or empty", nameof(baseKey));
 
-            // 允许 baseKey 包含冒号
-            // baseKey 可以是任意格式，例如 "product:123" 或 "user:settings:theme"
+            // baseKey 属于业务键，允许包含冒号，例如 "product:123" 或 "user:settings:theme"。
         }
 
         private static void ValidateScopeValue(string value, string paramName)
@@ -75,7 +84,7 @@ namespace Atlas.Infrastructure.Caching.Keys.Generators
             if (string.IsNullOrWhiteSpace(value))
                 throw new ArgumentException($"{paramName} cannot be null or empty", paramName);
 
-            // ⚠️ Scope 值（tenantId, storeId, userId）不能包含分隔符
+            // Scope 值参与键空间分段，不能包含分隔符，否则会破坏失效匹配边界。
             if (value.Contains(KeySeparators.Scope.ToString()) ||
                 value.Contains(KeySeparators.Segment.ToString()))
             {

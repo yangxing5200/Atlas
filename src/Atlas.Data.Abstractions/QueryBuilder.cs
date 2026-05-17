@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query;
 using System;
 using System.Collections.Generic;
@@ -11,6 +11,12 @@ namespace Atlas.Data.Abstractions
 {
     #region Query Builder (异步安全, 支持 Include / Select / Where / ToList / FirstOrDefault)
 
+    /// <summary>
+    /// 对外暴露受控的查询组合能力，避免仓储接口直接泄露 IQueryable。
+    /// </summary>
+    /// <remarks>
+    /// QueryBuilder 只负责追加表达式并延迟执行；租户、门店、软删除等基础过滤应在创建它之前完成。
+    /// </remarks>
     public class QueryBuilder<TEntity> where TEntity : class
     {
         private IQueryable<TEntity> _query;
@@ -38,6 +44,12 @@ namespace Atlas.Data.Abstractions
 
         private object? _lastIncludable;
 
+        /// <summary>
+        /// 继续包含上一段导航属性。
+        /// </summary>
+        /// <remarks>
+        /// EF Core 的 ThenInclude 返回类型会随集合导航和引用导航变化，这里通过保存最近一次 Include 结果来兼容两类路径。
+        /// </remarks>
         public QueryBuilder<TEntity> ThenInclude<TPreviousProperty, TProperty>(
             Expression<Func<TPreviousProperty, TProperty>> navigation)
             where TPreviousProperty : class
@@ -87,6 +99,9 @@ namespace Atlas.Data.Abstractions
             return this;
         }
 
+        /// <summary>
+        /// 投影为新的查询构建器，继续保持延迟执行。
+        /// </summary>
         public QueryBuilder<TResult> Select<TResult>(Expression<Func<TEntity, TResult>> selector) where TResult : class
         {
             return new QueryBuilder<TResult>(_query.Select(selector));

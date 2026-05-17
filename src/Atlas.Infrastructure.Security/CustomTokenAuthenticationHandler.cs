@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -9,6 +9,9 @@ using Microsoft.Net.Http.Headers;
 
 namespace Atlas.Infrastructure.Security
 {
+    /// <summary>
+    /// 自定义 Token 认证方案配置。
+    /// </summary>
     public class CustomTokenAuthenticationOptions : AuthenticationSchemeOptions
     {
         public string TokenHeaderName { get; set; } = "Authorization";
@@ -19,6 +22,12 @@ namespace Atlas.Infrastructure.Security
         public string LoginPath { get; set; } = "/login";
     }
 
+    /// <summary>
+    /// ASP.NET Core 认证处理器，将 Atlas Token 转换为 ClaimsPrincipal。
+    /// </summary>
+    /// <remarks>
+    /// 这里只做凭据提取和基础验证；TokenVersion 的数据库兜底校验由后续中间件完成。
+    /// </remarks>
     public sealed class CustomTokenAuthenticationHandler : AuthenticationHandler<CustomTokenAuthenticationOptions>
     {
         private readonly ITokenService _tokenService;
@@ -51,7 +60,7 @@ namespace Atlas.Infrastructure.Security
                     return AuthenticateResult.Fail("Invalid or expired token");
                 }
 
-                // ✅ 添加TokenVersion和SessionId到Claims
+                // 保留 Atlas 内部 claim 名称，后续租户上下文和版本校验中间件依赖这些字段。
                 var claims = new[]
                 {
                     new Claim(ClaimTypes.NameIdentifier, tokenInfo.UserId.ToString()),
@@ -82,7 +91,7 @@ namespace Atlas.Infrastructure.Security
         {
             string? token = null;
 
-            // 1. Authorization header
+            // 读取顺序体现安全优先级：标准 Authorization 头优先，其次 Cookie，再按配置允许低优先级来源。
             if (Request.Headers.TryGetValue(Options.TokenHeaderName, out var authHeader))
             {
                 var authHeaderString = authHeader.FirstOrDefault();
@@ -101,7 +110,7 @@ namespace Atlas.Infrastructure.Security
                 }
             }
 
-            // 2. Cookie
+            // Cookie 适合浏览器场景，仍复用同一套 Token 验证逻辑。
             if (string.IsNullOrEmpty(token))
             {
                 if (Request.Cookies.TryGetValue(Options.CookieName, out var cookieToken))
@@ -113,7 +122,7 @@ namespace Atlas.Infrastructure.Security
                 }
             }
 
-            // 3. Query string
+            // Query string 默认关闭，通常只用于 WebSocket/SSE 等无法设置请求头的场景。
             if (string.IsNullOrEmpty(token) && Options.EnableQueryStringToken)
             {
                 if (Request.Query.TryGetValue("access_token", out var queryToken))
@@ -126,7 +135,7 @@ namespace Atlas.Infrastructure.Security
                 }
             }
 
-            // 4. Custom header
+            // 自定义头用于兼容旧客户端或网关转发场景。
             if (string.IsNullOrEmpty(token) && Options.EnableCustomHeader)
             {
                 if (Request.Headers.TryGetValue("X-Access-Token", out var customHeader))

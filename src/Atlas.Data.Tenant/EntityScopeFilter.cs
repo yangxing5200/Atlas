@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Entities.Interfaces;
+using Atlas.Core.Entities.Interfaces;
 using Atlas.Data.Abstractions;
 using System;
 using System.Collections.Generic;
@@ -13,7 +13,7 @@ namespace Atlas.Data.Tenant
     internal static class EntityScopeFilter<TEntity>
         where TEntity : class
     {
-        // 用于优化性能（避免每次反射）
+        // 实体类型级别的接口判断只需计算一次，避免每次拼接查询都反射。
         private static readonly bool IsStoreOnly = typeof(IStoreOnlyEntity).IsAssignableFrom(typeof(TEntity));
         private static readonly bool IsShared = typeof(ISharedEntity).IsAssignableFrom(typeof(TEntity));
         private static readonly bool IsTenantScoped = typeof(ITenantEntity).IsAssignableFrom(typeof(TEntity));
@@ -21,7 +21,7 @@ namespace Atlas.Data.Tenant
 
         static EntityScopeFilter()
         {
-            // 验证接口互斥性
+            // IStoreOnlyEntity 和 ISharedEntity 表达两种不同的数据可见性，不能同时声明。
             if (IsStoreOnly && IsShared)
             {
                 throw new InvalidOperationException(
@@ -104,9 +104,7 @@ namespace Atlas.Data.Tenant
             IReadOnlyCollection<long> shareIds)
         {
 
-            // ----------------------------
-            // 租户过滤
-            // ----------------------------
+            // 租户过滤是所有门店过滤的前置条件；缺少 TenantId 时返回空结果是默认安全策略。
             if (IsTenantScoped)
             {
                 if (!tenantId.HasValue)
@@ -119,17 +117,13 @@ namespace Atlas.Data.Tenant
                 query = ApplyTenantFilter(query, tenantId.Value);
             }
 
-            // ----------------------------
-            // 非门店相关实体
-            // ----------------------------
+            // 非门店相关实体只需要租户级过滤，例如租户配置、租户级枚举等。
             if (!IsStoreScoped)
             {
                 return query;
             }
 
-            // ----------------------------
-            // IStoreOnlyEntity：只能当前门店
-            // ----------------------------
+            // 门店独享实体只能读取当前门店，不能使用共享范围。
             if (IsStoreOnly)
             {
                 if (!storeId.HasValue)
@@ -140,9 +134,7 @@ namespace Atlas.Data.Tenant
                 return ApplyStoreOnlyFilter(query, storeId.Value);
             }
 
-            // ----------------------------
-            // ISharedEntity：多个共享门店
-            // ----------------------------
+            // 共享实体读取当前门店可访问的完整门店集合；显式 StoreId 用于强制收窄范围。
             if (IsShared)
             {
                 // 如果有显式的 storeId，只过滤该门店

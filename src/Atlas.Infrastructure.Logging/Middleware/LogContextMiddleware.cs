@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Context;
+using Atlas.Core.Context;
 using Atlas.Core.Logging;
 using Atlas.Core.Services;
 using Microsoft.AspNetCore.Http;
@@ -10,6 +10,9 @@ namespace Atlas.Infrastructure.Logging.Middleware
     /// <summary>
     /// 日志上下文中间件 - 将业务上下文信息推送到日志系统
     /// </summary>
+    /// <remarks>
+    /// 该中间件应放在认证之后、业务处理之前，这样后续日志能自动携带租户、门店和用户信息。
+    /// </remarks>
     public class LogContextMiddleware
     {
         private readonly RequestDelegate _next;
@@ -33,8 +36,7 @@ namespace Atlas.Infrastructure.Logging.Middleware
                 return Task.CompletedTask;
             });
 
-            // 3. 推送日志上下文属性
-            // 这些属性会自动附加到后续所有日志中
+            // LogContext 基于 async flow 传播；using 作用域结束后属性会自动弹出，避免污染其他请求。
             using (LogContext.PushProperty(LogContextKeys.CorrelationId, correlationId))
             using (LogContext.PushProperty(LogContextKeys.OperationId, operationId))
             using (LogContext.PushProperty(LogContextKeys.RequestPath, context.Request.Path.Value))

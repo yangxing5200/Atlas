@@ -1,8 +1,12 @@
-﻿namespace Atlas.Core.IdGenerators;
+namespace Atlas.Core.IdGenerators;
 
 /// <summary>
-/// Snowflake ID 生成器（线程安全）
+/// Snowflake ID 生成器（线程安全）。
 /// </summary>
+/// <remarks>
+/// ID 结构为：时间戳差值 + 数据中心 ID + 工作节点 ID + 毫秒内序列号。
+/// 同一个生成器实例内部通过锁保证单调递增；跨节点唯一性依赖 workerId/datacenterId 配置不重复。
+/// </remarks>
 public class SnowflakeIdGenerator : IIdGenerator
 {
     // 各部分占用的位数
@@ -20,7 +24,7 @@ public class SnowflakeIdGenerator : IIdGenerator
     private const int DatacenterIdShift = SequenceBits + WorkerIdBits;                 // 17
     private const int TimestampLeftShift = SequenceBits + WorkerIdBits + DatacenterIdBits; // 22
 
-    // 起始时间戳（2024-01-01 00:00:00 UTC）
+    // 自定义纪元用于压缩时间戳位宽。修改该值会影响历史 ID 的解析结果，发布后不要变更。
     private const long Epoch = 1704067200000L;
 
     private readonly long _workerId;
@@ -62,7 +66,7 @@ public class SnowflakeIdGenerator : IIdGenerator
             {
                 _sequence = (_sequence + 1) & MaxSequence;
 
-                // 序列号溢出，等待下一毫秒
+                // 单毫秒内最多生成 4096 个 ID，超过后阻塞到下一毫秒保持唯一性。
                 if (_sequence == 0)
                 {
                     timestamp = WaitNextMillis(_lastTimestamp);
@@ -159,7 +163,7 @@ public class SnowflakeIdGenerator : IIdGenerator
     }
 
     /// <summary>
-    /// 从ID中解析时间戳
+    /// 从ID中解析 UTC 时间戳。
     /// </summary>
     public static DateTime ParseTimestamp(long id)
     {

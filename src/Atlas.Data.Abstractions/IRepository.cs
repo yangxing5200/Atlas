@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Entities.Interfaces;
+using Atlas.Core.Entities.Interfaces;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -8,9 +8,13 @@ using System.Threading.Tasks;
 
 namespace Atlas.Data.Abstractions
 {
-
-    /// 最基础的仓储接口（不暴露 IQueryable）
+    /// <summary>
+    /// 最基础的仓储接口，不向应用层直接暴露 IQueryable。
     /// </summary>
+    /// <remarks>
+    /// 查询入口返回 QueryBuilder，仓储实现负责在创建查询时先应用租户、门店等数据边界。
+    /// 显式 tenantId 重载仅用于登录、系统任务等尚无完整身份上下文的流程。
+    /// </remarks>
     public interface IRepository<TEntity, TKey>
         where TEntity : class
     {
@@ -29,6 +33,10 @@ namespace Atlas.Data.Abstractions
         /// <param name="ct"></param>
         /// <returns></returns>
         Task<QueryBuilder<TEntity>> QueryAsync(CancellationToken ct = default);
+
+        /// <summary>
+        /// 获取可追踪查询构建器，用于读取后修改并提交的场景。
+        /// </summary>
         Task<QueryBuilder<TEntity>> QueryTrackingAsync(CancellationToken ct = default);
 
         /// <summary>
