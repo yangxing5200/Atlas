@@ -1,12 +1,13 @@
+using System.Text.Json;
 using Atlas.Core.Entities.Tenant;
 using Atlas.Data.Tenant.Context;
 using Atlas.Messaging.Abstractions;
 using Atlas.Services.Tenant;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
+using Microsoft.Extensions.Logging;
 
-namespace Atlas.Sample.WebApi.Consumers;
+namespace Atlas.Consumers.Orders;
 
 public sealed class OrderPlacedEventConsumer : IConsumer<OrderPlacedEvent>
 {

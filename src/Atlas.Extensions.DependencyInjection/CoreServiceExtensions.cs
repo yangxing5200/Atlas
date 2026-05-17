@@ -22,6 +22,7 @@ using Atlas.Messaging.RabbitMQ;
 using Atlas.Services;
 using Atlas.Services.Abstractions;
 using Atlas.Services.Tenant;
+using Atlas.Services.Tenant.BackgroundJobs;
 using MassTransit;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -30,6 +31,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using System.Reflection;
+using Atlas.BackgroundTasks;
 
 namespace Atlas.Extensions.DependencyInjection;
 
@@ -69,6 +71,7 @@ public static class AtlasCoreServiceExtensions
         services.AddAtlasCache(configuration);
         services.AddAtlasMessaging(configuration, messagingConsumerAssemblies ?? Array.Empty<Assembly>());
         services.AddAtlasBusinessServices();
+        services.AddAtlasBackgroundTasks(configuration);
 
         return services;
     }
@@ -273,6 +276,19 @@ public static class AtlasCoreServiceExtensions
         services.AddSingleton<IDomainEventTransport, MassTransitDomainEventTransport>();
         services.AddHostedService<TenantOutboxDispatcher>();
         return services;
+    }
+
+    #endregion
+
+    #region Background Tasks
+
+    private static IServiceCollection AddAtlasBackgroundTasks(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        return services
+            .AddAtlasBackgroundTaskRuntime(configuration)
+            .AddAtlasTenantBackgroundJobs(configuration);
     }
 
     #endregion

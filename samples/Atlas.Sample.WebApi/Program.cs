@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Security;
+using Atlas.Core.Security;
 using Atlas.Data.Tenant.Middleware;
 using Atlas.Extensions.DependencyInjection;
 using Atlas.Infrastructure.Logging.Configuration;
@@ -11,7 +11,6 @@ using System.Text.Json.Serialization;
 using System.Text.Json;
 using Atlas.Core.Converter;
 using Atlas.Sample.WebApi.Security;
-using Atlas.Sample.WebApi.Consumers;
 using Microsoft.AspNetCore.Authorization;
 var builder = WebApplication.CreateBuilder(args);
 
@@ -89,7 +88,7 @@ builder.Services.AddScoped<IAuthorizationHandler, TenantAdminAuthorizationHandle
 // ============================================
 // 4. Add Atlas Core Services
 // ============================================
-builder.Services.AddAtlasCore(builder.Configuration, typeof(OrderPlacedEventConsumer).Assembly);
+builder.Services.AddAtlasCore(builder.Configuration);
 builder.Services.AddAtlasLogging(builder.Configuration);
 
 // ============================================

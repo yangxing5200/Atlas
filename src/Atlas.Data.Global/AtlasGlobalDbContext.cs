@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Entities.Global;
+using Atlas.Core.Entities.Global;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Common;
@@ -35,6 +35,7 @@ namespace Atlas.Data.Global
         public DbSet<DatabaseMasterServer> DatabaseMasterServers { get; set; }
         public DbSet<DatabaseReadonlyServer> DatabaseReadonlyServers { get; set; }
         public DbSet<DatabaseServerConfig> DatabaseServerConfigs { get; set; }
+        public DbSet<BackgroundJob> BackgroundJobs { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
