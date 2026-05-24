@@ -13,22 +13,54 @@ public static class BackgroundTaskServiceCollectionExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        services.Configure<RecurringTaskRunnerOptions>(configuration.GetSection("BackgroundTasks:Recurring"));
-        services.Configure<BackgroundJobWorkerOptions>(configuration.GetSection("BackgroundTasks:OneTimeJobs"));
+        var recurringOptions = configuration
+            .GetSection("BackgroundTasks:Recurring")
+            .Get<RecurringTaskRunnerOptions>() ?? new RecurringTaskRunnerOptions();
+        var workerOptions = configuration
+            .GetSection("BackgroundTasks:OneTimeJobs")
+            .Get<BackgroundJobWorkerOptions>() ?? new BackgroundJobWorkerOptions();
+
+        services.AddOptions<RecurringTaskRunnerOptions>()
+            .Bind(configuration.GetSection("BackgroundTasks:Recurring"))
+            .Validate(ValidateRecurringTaskRunnerOptions, "BackgroundTasks:Recurring is invalid.")
+            .ValidateOnStart();
+
+        services.AddOptions<BackgroundJobWorkerOptions>()
+            .Bind(configuration.GetSection("BackgroundTasks:OneTimeJobs"))
+            .Validate(ValidateBackgroundJobWorkerOptions, "BackgroundTasks:OneTimeJobs is invalid.")
+            .ValidateOnStart();
 
         // 入队客户端始终注册；是否启动 Worker 由配置控制，便于 Web/API 节点只写入任务不消费。
         services.TryAddScoped<IBackgroundJobClient, BackgroundJobClient>();
 
-        if (configuration.GetValue<bool>("BackgroundTasks:Recurring:Enabled"))
+        if (recurringOptions.Enabled)
         {
             services.AddHostedService<RecurringTaskRunner>();
         }
 
-        if (configuration.GetValue<bool>("BackgroundTasks:OneTimeJobs:Enabled"))
+        if (workerOptions.Enabled)
         {
             services.AddHostedService<BackgroundJobWorker>();
         }
 
         return services;
+    }
+
+    private static bool ValidateRecurringTaskRunnerOptions(RecurringTaskRunnerOptions options)
+    {
+        return options.PollIntervalSeconds > 0 &&
+               options.LockSeconds > 0;
+    }
+
+    private static bool ValidateBackgroundJobWorkerOptions(BackgroundJobWorkerOptions options)
+    {
+        return options.Queues.Length > 0 &&
+               options.Queues.All(queue => !string.IsNullOrWhiteSpace(queue)) &&
+               options.PollIntervalSeconds > 0 &&
+               options.BatchSize > 0 &&
+               options.ProcessingTimeoutSeconds > 0 &&
+               options.InitialRetryDelaySeconds > 0 &&
+               options.MaxRetryDelaySeconds >= options.InitialRetryDelaySeconds &&
+               options.DefaultMaxAttempts > 0;
     }
 }

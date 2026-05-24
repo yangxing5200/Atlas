@@ -29,6 +29,9 @@ bld/
 **/packages/*
 
 # Others
+.env
+.env.*
+!.env.example
 *.log
 *.sql
 *.cache

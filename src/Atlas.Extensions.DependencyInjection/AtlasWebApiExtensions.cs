@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Atlas.Core.Converter;
@@ -30,13 +31,63 @@ public static class AtlasWebApiExtensions
         this WebApplicationBuilder builder,
         params Assembly[] messagingConsumerAssemblies)
     {
-        return builder.AddAtlasWebApi(null, messagingConsumerAssemblies);
+        return builder.AddAtlasWebApi(
+            null,
+            AtlasModuleCatalog.Empty,
+            messagingConsumerAssemblies);
     }
 
     public static WebApplicationBuilder AddAtlasWebApi(
         this WebApplicationBuilder builder,
         Action<AtlasWebApiOptions>? configure,
         params Assembly[] messagingConsumerAssemblies)
+    {
+        return builder.AddAtlasWebApi(
+            configure,
+            AtlasModuleCatalog.Empty,
+            messagingConsumerAssemblies);
+    }
+
+    public static WebApplicationBuilder AddAtlasWebApi(
+        this WebApplicationBuilder builder,
+        IEnumerable<IAtlasModule> modules)
+    {
+        return builder.AddAtlasWebApi(null, modules);
+    }
+
+    public static WebApplicationBuilder AddAtlasWebApi(
+        this WebApplicationBuilder builder,
+        Action<AtlasWebApiOptions>? configure,
+        IEnumerable<IAtlasModule> modules)
+    {
+        return builder.AddAtlasWebApi(
+            configure,
+            AtlasModuleCatalog.Create(modules),
+            Array.Empty<Assembly>());
+    }
+
+    public static WebApplicationBuilder AddAtlasWebApi(
+        this WebApplicationBuilder builder,
+        Action<AtlasWebApiOptions>? configure,
+        Action<AtlasModuleRegistrationOptions> configureModules,
+        params Assembly[] messagingConsumerAssemblies)
+    {
+        ArgumentNullException.ThrowIfNull(configureModules);
+
+        var moduleOptions = new AtlasModuleRegistrationOptions();
+        configureModules(moduleOptions);
+
+        return builder.AddAtlasWebApi(
+            configure,
+            AtlasModuleCatalog.Create(moduleOptions.BuildModules()),
+            messagingConsumerAssemblies);
+    }
+
+    private static WebApplicationBuilder AddAtlasWebApi(
+        this WebApplicationBuilder builder,
+        Action<AtlasWebApiOptions>? configure,
+        AtlasModuleCatalog moduleCatalog,
+        Assembly[] messagingConsumerAssemblies)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
@@ -62,19 +113,23 @@ public static class AtlasWebApiExtensions
             };
         });
 
-        builder.Services.Configure<CryptoOptions>(cryptoOptions =>
-        {
-            cryptoOptions.Key = builder.Configuration["Security:Crypto:Key"]
-                ?? throw new InvalidOperationException("Security:Crypto:Key is required.");
-        });
+        builder.Services.AddOptions<CryptoOptions>()
+            .Bind(builder.Configuration.GetSection("Security:Crypto"))
+            .Validate(options => !string.IsNullOrWhiteSpace(options.Key), "Security:Crypto:Key is required.")
+            .Validate(
+                options => Encoding.UTF8.GetByteCount(options.Key) >= 32,
+                "Security:Crypto:Key must be at least 32 UTF-8 bytes.")
+            .ValidateOnStart();
 
-        builder.Services.Configure<TokenOptions>(tokenOptions =>
-        {
-            tokenOptions.SecretKey = builder.Configuration["Security:Token:SecretKey"]
-                ?? throw new InvalidOperationException("Security:Token:SecretKey is required.");
-            tokenOptions.ExpirationMinutes = builder.Configuration.GetValue<int>("Security:Token:ExpirationMinutes", 1440);
-            tokenOptions.CookieName = builder.Configuration["Security:Token:CookieName"] ?? "atlas-auth-token";
-        });
+        builder.Services.AddOptions<TokenOptions>()
+            .Bind(builder.Configuration.GetSection("Security:Token"))
+            .Validate(options => !string.IsNullOrWhiteSpace(options.SecretKey), "Security:Token:SecretKey is required.")
+            .Validate(
+                options => Encoding.UTF8.GetByteCount(options.SecretKey) >= 32,
+                "Security:Token:SecretKey must be at least 32 UTF-8 bytes.")
+            .Validate(options => options.ExpirationMinutes > 0, "Security:Token:ExpirationMinutes must be greater than 0.")
+            .Validate(options => !string.IsNullOrWhiteSpace(options.CookieName), "Security:Token:CookieName is required.")
+            .ValidateOnStart();
 
         builder.Services.AddSingleton<ICryptoService, CryptoService>();
         builder.Services.AddSingleton<ITokenService, CustomTokenService>();
@@ -111,19 +166,23 @@ public static class AtlasWebApiExtensions
         });
         builder.Services.AddScoped<IAuthorizationHandler, TenantAdminAuthorizationHandler>();
 
-        builder.Services
-            .AddControllers()
-            .AddJsonOptions(jsonOptions =>
-            {
-                jsonOptions.JsonSerializerOptions.Converters.Add(new JsonNumberConverter());
-                jsonOptions.JsonSerializerOptions.Converters.Add(new NullableJsonNumberConverter());
-                jsonOptions.JsonSerializerOptions.Converters.Add(new Iso8601DateTimeConverter());
-                jsonOptions.JsonSerializerOptions.Converters.Add(new NullableIso8601DateTimeConverter());
-                jsonOptions.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-                jsonOptions.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
-                jsonOptions.JsonSerializerOptions.AllowTrailingCommas = true;
-                jsonOptions.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
-            });
+        var mvcBuilder = builder.Services.AddControllers();
+        foreach (var assembly in moduleCatalog.ControllerAssemblies)
+        {
+            mvcBuilder.AddApplicationPart(assembly);
+        }
+
+        mvcBuilder.AddJsonOptions(jsonOptions =>
+        {
+            jsonOptions.JsonSerializerOptions.Converters.Add(new JsonNumberConverter());
+            jsonOptions.JsonSerializerOptions.Converters.Add(new NullableJsonNumberConverter());
+            jsonOptions.JsonSerializerOptions.Converters.Add(new Iso8601DateTimeConverter());
+            jsonOptions.JsonSerializerOptions.Converters.Add(new NullableIso8601DateTimeConverter());
+            jsonOptions.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+            jsonOptions.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+            jsonOptions.JsonSerializerOptions.AllowTrailingCommas = true;
+            jsonOptions.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+        });
 
         builder.Services.AddEndpointsApiExplorer();
         builder.Services.AddSwaggerGen(swaggerOptions =>
@@ -161,7 +220,10 @@ public static class AtlasWebApiExtensions
         });
 
         AddCors(builder, options.CorsPolicyName);
-        builder.Services.AddAtlasCore(builder.Configuration, messagingConsumerAssemblies);
+        builder.Services.AddAtlasCore(
+            builder.Configuration,
+            moduleCatalog.Modules,
+            messagingConsumerAssemblies);
         builder.Services.AddAtlasLogging(builder.Configuration);
         builder.Services.AddAtlasHealthChecks();
 

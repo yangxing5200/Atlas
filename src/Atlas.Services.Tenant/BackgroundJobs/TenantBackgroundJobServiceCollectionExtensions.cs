@@ -11,12 +11,22 @@ public static class TenantBackgroundJobServiceCollectionExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        services.Configure<TenantOutboxMaintenanceOptions>(
-            configuration.GetSection("BackgroundTasks:TenantOutboxMaintenance"));
+        services.AddOptions<TenantOutboxMaintenanceOptions>()
+            .Bind(configuration.GetSection("BackgroundTasks:TenantOutboxMaintenance"))
+            .Validate(ValidateTenantOutboxMaintenanceOptions, "BackgroundTasks:TenantOutboxMaintenance is invalid.")
+            .ValidateOnStart();
 
         services.TryAddEnumerable(ServiceDescriptor.Scoped<IBackgroundJobHandler, TenantCacheWarmupJobHandler>());
         services.TryAddEnumerable(ServiceDescriptor.Scoped<IRecurringTask, TenantOutboxMaintenanceTask>());
 
         return services;
+    }
+
+    private static bool ValidateTenantOutboxMaintenanceOptions(TenantOutboxMaintenanceOptions options)
+    {
+        return options.IntervalMinutes > 0 &&
+               options.RetentionDays > 0 &&
+               options.TenantBatchSize > 0 &&
+               options.DeleteBatchSize > 0;
     }
 }

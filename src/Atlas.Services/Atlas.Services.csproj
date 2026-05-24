@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\Atlas.Data.Global\Atlas.Data.Global.csproj" />
@@ -8,9 +8,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="AutoMapper" Version="16.1.1" />
-    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
-    <PackageReference Include="FluentValidation" Version="11.0.0" />
+    <PackageReference Include="AutoMapper" />
+    <PackageReference Include="BCrypt.Net-Next" />
+    <PackageReference Include="FluentValidation" />
   </ItemGroup>
 
   <PropertyGroup>

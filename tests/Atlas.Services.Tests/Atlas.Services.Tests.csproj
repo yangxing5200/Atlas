@@ -10,13 +10,16 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="coverlet.collector" Version="6.0.0" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
-    <PackageReference Include="xunit" Version="2.5.3" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Atlas.Extensions.DependencyInjection\Atlas.Extensions.DependencyInjection.csproj" />
     <ProjectReference Include="..\..\src\Atlas.Infrastructure.Common\Atlas.Infrastructure.Common.csproj" />
     <ProjectReference Include="..\..\src\Atlas.Messaging.Abstractions\Atlas.Messaging.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\Atlas.Services.Tenant\Atlas.Services.Tenant.csproj" />

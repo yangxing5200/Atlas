@@ -1,27 +1,14 @@
 using Atlas.Core.Configuration;
 using Atlas.Core.IdGenerators;
 using Atlas.Core.Services;
-using Atlas.Data.Abstractions;
 using Atlas.Data.Common.Interceptors;
 using Atlas.Data.Global;
-using Atlas.Data.Global.Repositories;
-using Atlas.Data.Global.Repositories.Impl;
-using Atlas.Data.Global.UnitOfWork;
-using Atlas.Data.Tenant;
-using Atlas.Data.Tenant.Context;
 using Atlas.Data.Tenant.Identity;
-using Atlas.Data.Tenant.Providers;
-using Atlas.Data.Tenant.Repositories;
-using Atlas.Data.Tenant.Repositories.Impl;
-using Atlas.Data.Tenant.Sql;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Extensions;
 using Atlas.Infrastructure.Caching.Locking;
-using Atlas.Infrastructure.Common.Tenants;
 using Atlas.Messaging.Abstractions;
 using Atlas.Messaging.RabbitMQ;
-using Atlas.Services;
-using Atlas.Services.Abstractions;
 using Atlas.Services.Tenant;
 using Atlas.Services.Tenant.BackgroundJobs;
 using MassTransit;
@@ -53,7 +40,10 @@ public static class AtlasCoreServiceExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        return services.AddAtlasCore(configuration, Array.Empty<Assembly>());
+        return services.AddAtlasCore(
+            configuration,
+            AtlasModuleCatalog.CreateWithBuiltInModules(Array.Empty<IAtlasModule>()),
+            Array.Empty<Assembly>());
     }
 
     /// <summary>
@@ -64,16 +54,129 @@ public static class AtlasCoreServiceExtensions
         IConfiguration configuration,
         params Assembly[] messagingConsumerAssemblies)
     {
+        return services.AddAtlasCore(
+            configuration,
+            AtlasModuleCatalog.CreateWithBuiltInModules(Array.Empty<IAtlasModule>()),
+            messagingConsumerAssemblies);
+    }
+
+    /// <summary>
+    /// Registers all Atlas core services and modules.
+    /// </summary>
+    public static IServiceCollection AddAtlasCore(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        params IAtlasModule[] modules)
+    {
+        return services.AddAtlasCore(configuration, modules.AsEnumerable());
+    }
+
+    /// <summary>
+    /// Registers all Atlas core services and modules.
+    /// </summary>
+    public static IServiceCollection AddAtlasCore(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        IEnumerable<IAtlasModule> modules)
+    {
+        return services.AddAtlasCore(configuration, modules, Array.Empty<Assembly>());
+    }
+
+    /// <summary>
+    /// Registers all Atlas core services and discovers modules from a registration callback.
+    /// </summary>
+    public static IServiceCollection AddAtlasCore(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        Action<AtlasModuleRegistrationOptions> configureModules)
+    {
+        return services.AddAtlasCore(configuration, configureModules, Array.Empty<Assembly>());
+    }
+
+    /// <summary>
+    /// Registers all Atlas core services, discovered modules, and optional MassTransit consumer assemblies.
+    /// </summary>
+    public static IServiceCollection AddAtlasCore(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        Action<AtlasModuleRegistrationOptions> configureModules,
+        params Assembly[] messagingConsumerAssemblies)
+    {
+        ArgumentNullException.ThrowIfNull(configureModules);
+
+        var moduleOptions = new AtlasModuleRegistrationOptions();
+        configureModules(moduleOptions);
+
+        return services.AddAtlasCore(
+            configuration,
+            moduleOptions.BuildModules(),
+            messagingConsumerAssemblies);
+    }
+
+    /// <summary>
+    /// Registers all Atlas core services, modules, and optional MassTransit consumer assemblies.
+    /// </summary>
+    public static IServiceCollection AddAtlasCore(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        IEnumerable<IAtlasModule> modules,
+        params Assembly[] messagingConsumerAssemblies)
+    {
+        return services.AddAtlasCore(
+            configuration,
+            AtlasModuleCatalog.CreateWithBuiltInModules(modules),
+            messagingConsumerAssemblies);
+    }
+
+    private static IServiceCollection AddAtlasCore(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        AtlasModuleCatalog moduleCatalog,
+        Assembly[] messagingConsumerAssemblies)
+    {
         // 注册顺序体现运行时依赖：身份、缓存和消息等基础设施先于业务服务。
         services.AddLogging();
         services.AddHttpContextAccessor();
+        services.AddAtlasRuntimeOptions(configuration);
         services.AddAtlasSnowflakeId(configuration);
         services.AddAtlasDatabase(configuration);
         services.AddAtlasIdentity();
         services.AddAtlasCache(configuration);
-        services.AddAtlasMessaging(configuration, messagingConsumerAssemblies ?? Array.Empty<Assembly>());
-        services.AddAtlasBusinessServices();
+        services.AddAtlasMessaging(
+            configuration,
+            CombineAssemblies(messagingConsumerAssemblies, moduleCatalog.ConsumerAssemblies));
+        moduleCatalog.AddServices(services, configuration);
+        services.AddAtlasModuleMapping(moduleCatalog.AutoMapperAssemblies);
         services.AddAtlasBackgroundTasks(configuration);
+
+        return services;
+    }
+
+    private static IServiceCollection AddAtlasRuntimeOptions(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.AddOptions<AtlasCacheSettingsOptions>()
+            .Bind(configuration.GetSection(AtlasCacheSettingsOptions.SectionName))
+            .Validate(options => IsSupportedCacheProvider(options.Provider), "CacheSettings:Provider must be Memory, Redis, or Hybrid.")
+            .Validate(
+                options => !IsCacheProvider(options.Provider, "redis") ||
+                           !string.IsNullOrWhiteSpace(options.Redis.ConnectionString),
+                "CacheSettings:Redis:ConnectionString is required when CacheSettings:Provider is Redis.")
+            .Validate(
+                options => !IsCacheProvider(options.Provider, "hybrid") ||
+                           !string.IsNullOrWhiteSpace(options.Hybrid.RedisConnectionString),
+                "CacheSettings:Hybrid:RedisConnectionString is required when CacheSettings:Provider is Hybrid.")
+            .Validate(
+                options => !options.Hybrid.L1ExpirationMinutes.HasValue ||
+                           options.Hybrid.L1ExpirationMinutes.Value > 0,
+                "CacheSettings:Hybrid:L1ExpirationMinutes must be greater than 0 when configured.")
+            .ValidateOnStart();
+
+        services.AddOptions<AtlasMessagingOptions>()
+            .Bind(configuration.GetSection(AtlasMessagingOptions.SectionName))
+            .Validate(options => IsSupportedMessagingProvider(options.Provider), "Messaging:Provider must be None, NoOp, or RabbitMQ.")
+            .ValidateOnStart();
 
         return services;
     }
@@ -142,47 +245,48 @@ public static class AtlasCoreServiceExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var provider = configuration["CacheSettings:Provider"]?.ToLowerInvariant()
-            ?? DefaultCacheProvider;
+        var options = configuration.GetSection(AtlasCacheSettingsOptions.SectionName).Get<AtlasCacheSettingsOptions>()
+            ?? new AtlasCacheSettingsOptions();
+        var provider = NormalizeProvider(options.Provider, DefaultCacheProvider);
 
         services.AddAtlasCaching();
-        
+
         // 默认内存锁只适合单实例；Redis/数据库锁接入后应在这里替换为跨实例实现。
         services.TryAddSingleton<IDistributedLockProvider, MemoryDistributedLockProvider>();
 
         return provider switch
         {
-            "redis" => services.AddAtlasRedisCache(configuration),
-            "hybrid" => services.AddAtlasHybridCache(configuration),
+            "redis" => services.AddAtlasRedisCache(options),
+            "hybrid" => services.AddAtlasHybridCache(options),
             _ => services.AddMemoryCaching()
         };
     }
 
     private static IServiceCollection AddAtlasRedisCache(
         this IServiceCollection services,
-        IConfiguration configuration)
+        AtlasCacheSettingsOptions options)
     {
-        var connectionString = configuration["CacheSettings:Redis:ConnectionString"];
+        var connectionString = options.Redis.ConnectionString;
         if (string.IsNullOrWhiteSpace(connectionString))
             throw new InvalidOperationException("Redis connection string is required.");
 
-        var instanceName = configuration["CacheSettings:Redis:InstanceName"];
+        var instanceName = options.Redis.InstanceName;
         return services.AddRedisCaching(connectionString, instanceName);
     }
 
     private static IServiceCollection AddAtlasHybridCache(
         this IServiceCollection services,
-        IConfiguration configuration)
+        AtlasCacheSettingsOptions options)
     {
-        var connectionString = configuration["CacheSettings:Hybrid:RedisConnectionString"];
+        var connectionString = options.Hybrid.RedisConnectionString;
         if (string.IsNullOrWhiteSpace(connectionString))
             throw new InvalidOperationException("Hybrid cache Redis connection string is required.");
 
-        return services.AddHybridCaching(connectionString, options =>
+        return services.AddHybridCaching(connectionString, hybridOptions =>
         {
-            var l1Minutes = configuration.GetValue<int?>("CacheSettings:Hybrid:L1ExpirationMinutes");
+            var l1Minutes = options.Hybrid.L1ExpirationMinutes;
             if (l1Minutes.HasValue)
-                options.L1Expiration = TimeSpan.FromMinutes(l1Minutes.Value);
+                hybridOptions.L1Expiration = TimeSpan.FromMinutes(l1Minutes.Value);
         });
     }
 
@@ -195,8 +299,9 @@ public static class AtlasCoreServiceExtensions
         IConfiguration configuration,
         Assembly[] messagingConsumerAssemblies)
     {
-        var provider = configuration["Messaging:Provider"]?.Trim().ToLowerInvariant()
-            ?? "none";
+        var options = configuration.GetSection(AtlasMessagingOptions.SectionName).Get<AtlasMessagingOptions>()
+            ?? new AtlasMessagingOptions();
+        var provider = NormalizeProvider(options.Provider, "none");
 
         if (provider is "rabbitmq" or "rabbit-mq" or "rabbit")
         {
@@ -226,8 +331,18 @@ public static class AtlasCoreServiceExtensions
         var rabbitMqSection = configuration.GetSection("Messaging:RabbitMQ");
         var options = rabbitMqSection.Get<RabbitMqMessagingOptions>() ?? new RabbitMqMessagingOptions();
 
-        services.Configure<RabbitMqMessagingOptions>(rabbitMqSection);
-        services.Configure<TenantOutboxDispatcherOptions>(configuration.GetSection("Messaging:TenantOutbox"));
+        if (!ValidateRabbitMqMessagingOptions(options))
+            throw new InvalidOperationException("Messaging:RabbitMQ is invalid.");
+
+        services.AddOptions<RabbitMqMessagingOptions>()
+            .Bind(rabbitMqSection)
+            .Validate(ValidateRabbitMqMessagingOptions, "Messaging:RabbitMQ is invalid.")
+            .ValidateOnStart();
+
+        services.AddOptions<TenantOutboxDispatcherOptions>()
+            .Bind(configuration.GetSection("Messaging:TenantOutbox"))
+            .Validate(ValidateTenantOutboxDispatcherOptions, "Messaging:TenantOutbox is invalid.")
+            .ValidateOnStart();
 
         services.AddMassTransit(configurator =>
         {
@@ -313,11 +428,14 @@ public static class AtlasCoreServiceExtensions
 
         options.Validate();
 
-        services.Configure<SnowflakeOptions>(opt =>
-        {
-            opt.WorkerId = options.WorkerId;
-            opt.DatacenterId = options.DatacenterId;
-        });
+        services.AddOptions<SnowflakeOptions>()
+            .Configure(opt =>
+            {
+                opt.WorkerId = options.WorkerId;
+                opt.DatacenterId = options.DatacenterId;
+            })
+            .Validate(ValidateSnowflakeOptions, "Snowflake WorkerId and DatacenterId must be in the 0-31 range.")
+            .ValidateOnStart();
 
         services.TryAddSingleton<IIdGenerator>(
             new SnowflakeIdGenerator(options.WorkerId, options.DatacenterId));
@@ -404,61 +522,83 @@ public static class AtlasCoreServiceExtensions
         return Math.Abs(Environment.MachineName.GetHashCode()) % (MaxWorkerId + 1);
     }
 
-    #endregion
-
-    #region Business Services
-
-    /// <summary>
-    /// Registers business layer services with proper dependency resolution order:
-    /// 1. TenantDbConnProvider
-    /// 2. TenantDbContextFactory
-    /// 3. DataScope (decoupled from repositories)
-    /// 4. Repositories and Unit of Work
-    /// </summary>
-    private static IServiceCollection AddAtlasBusinessServices(this IServiceCollection services)
+    private static string NormalizeProvider(string? provider, string fallback)
     {
-        // Data access foundation
-        services.AddScoped<ITenantDbConnProvider, TenantDbConnProvider>();
-        services.AddScoped<ITenantDbContextFactory, TenantDbContextFactory>();
+        return string.IsNullOrWhiteSpace(provider)
+            ? fallback
+            : provider.Trim().ToLowerInvariant();
+    }
 
-        // Data scope with lazy dependencies to avoid circular references
-        services.AddScoped<IDataScope>(sp =>
-        {
-            // DataScope 使用 Lazy 包装缓存服务，避免与仓储/租户上下文初始化形成构造期循环依赖。
-            var cache = sp.GetRequiredService<ICacheService>();
-            var identity = sp.GetRequiredService<ICurrentIdentity>();
-            var dbFactory = sp.GetRequiredService<ITenantDbContextFactory>();
-            var logger = sp.GetRequiredService<ILogger<DataScope>>();
+    private static Assembly[] CombineAssemblies(
+        IEnumerable<Assembly>? first,
+        IEnumerable<Assembly>? second)
+    {
+        return (first ?? Array.Empty<Assembly>())
+            .Concat(second ?? Array.Empty<Assembly>())
+            .Where(assembly => assembly is not null)
+            .Distinct()
+            .ToArray();
+    }
 
-            return new DataScope(
-                new Lazy<ICacheService>(() => cache),
-                identity,
-                dbFactory,
-                logger);
-        });
-        services.AddAutoMapper(_ => { }, typeof(ProductService).Assembly);
+    private static IServiceCollection AddAtlasModuleMapping(
+        this IServiceCollection services,
+        IEnumerable<Assembly> assemblies)
+    {
+        var mapperAssemblies = assemblies
+            .Where(assembly => assembly is not null)
+            .Distinct()
+            .ToArray();
 
-        // Global layer
-        services.AddScoped<ITenantRepository,TenantRepository>();
-        services.AddScoped<IGlobalUnitOfWork, GlobalUnitOfWork>();
+        if (mapperAssemblies.Length > 0)
+            services.AddAutoMapper(_ => { }, mapperAssemblies);
 
-        // Repository layer
-        services.AddScoped<IUnitOfWork, TenantUnitOfWork>();
-        services.AddScoped<ITenantSqlExecutor, TenantSqlExecutor>();
-        services.AddScoped(typeof(IRepository<>), typeof(RepositoryBase<>));
-        services.AddScoped<IStoreRepository, StoreRepository>();
-        services.AddScoped<IOperationLogRepository, OperationLogRepository>();
-        services.TryAddSingleton<ITenantCodeGenerator, TenantCodeGenerator>();
-        services.AddScoped<ITenantConsumerRuntime, TenantConsumerRuntime>();
-        services.AddScoped<ITenantDomainEventOutbox, TenantDomainEventOutbox>();
-        services.AddScoped<ITenantProvisioningService, TenantProvisioningService>();
-        services.AddScoped<IOrderCommandService, OrderCommandService>();
-        services.AddScoped<IStoreService, StoreService>();
-        services.AddScoped<IProductService, ProductService>();
-        services.AddScoped<IUserService, UserService>();
-        services.AddScoped<IUserLoginLogService, UserLoginLogService>();
-        services.AddScoped<IOperationLogService, OperationLogService>();
         return services;
+    }
+
+    private static bool IsSupportedCacheProvider(string? provider)
+    {
+        var normalized = NormalizeProvider(provider, DefaultCacheProvider);
+        return normalized is "memory" or "redis" or "hybrid";
+    }
+
+    private static bool IsCacheProvider(string? provider, string expected)
+    {
+        return NormalizeProvider(provider, DefaultCacheProvider) == expected;
+    }
+
+    private static bool IsSupportedMessagingProvider(string? provider)
+    {
+        var normalized = NormalizeProvider(provider, "none");
+        return normalized is "none" or "noop" or "rabbitmq" or "rabbit-mq" or "rabbit";
+    }
+
+    private static bool ValidateRabbitMqMessagingOptions(RabbitMqMessagingOptions options)
+    {
+        return (!string.IsNullOrWhiteSpace(options.Uri) || !string.IsNullOrWhiteSpace(options.Host)) &&
+               !string.IsNullOrWhiteSpace(options.VirtualHost) &&
+               !string.IsNullOrWhiteSpace(options.Username) &&
+               !string.IsNullOrWhiteSpace(options.Password) &&
+               options.Port > 0 &&
+               options.PrefetchCount > 0 &&
+               options.RetryLimit >= 0 &&
+               options.RetryIntervalSeconds > 0;
+    }
+
+    private static bool ValidateTenantOutboxDispatcherOptions(TenantOutboxDispatcherOptions options)
+    {
+        return options.PollIntervalSeconds > 0 &&
+               options.TenantBatchSize > 0 &&
+               options.MessageBatchSize > 0 &&
+               options.MaxAttempts > 0 &&
+               options.InitialRetryDelaySeconds > 0 &&
+               options.MaxRetryDelaySeconds >= options.InitialRetryDelaySeconds &&
+               options.ProcessingTimeoutSeconds > 0;
+    }
+
+    private static bool ValidateSnowflakeOptions(SnowflakeOptions options)
+    {
+        return options.WorkerId is >= 0 and <= MaxWorkerId &&
+               options.DatacenterId is >= 0 and <= MaxWorkerId;
     }
 
     #endregion

@@ -28,8 +28,10 @@ namespace Atlas.Infrastructure.Logging.Extensions
                 .GetSection(LoggingOptions.SectionName)
                 .Get<LoggingOptions>() ?? new LoggingOptions();
 
-            services.Configure<LoggingOptions>(
-                configuration.GetSection(LoggingOptions.SectionName));
+            services.AddOptions<LoggingOptions>()
+                .Bind(configuration.GetSection(LoggingOptions.SectionName))
+                .Validate(ValidateLoggingOptions, $"{LoggingOptions.SectionName} is invalid.")
+                .ValidateOnStart();
 
             // 在宿主启动阶段创建全局 Serilog Logger，确保后续框架日志也进入同一管道。
             Log.Logger = CreateLogger(configuration, options);
@@ -121,6 +123,22 @@ namespace Atlas.Infrastructure.Logging.Extensions
             }
 
             return loggerConfig.CreateLogger();
+        }
+
+        private static bool ValidateLoggingOptions(LoggingOptions options)
+        {
+            return !string.IsNullOrWhiteSpace(options.MinimumLevel) &&
+                   (!options.EnableFile ||
+                    (!string.IsNullOrWhiteSpace(options.FilePath) &&
+                     !string.IsNullOrWhiteSpace(options.ErrorFilePath) &&
+                     !string.IsNullOrWhiteSpace(options.AuditFilePath))) &&
+                   options.RetainedFileCount > 0 &&
+                   options.ErrorRetainedFileCount > 0 &&
+                   options.AuditRetainedFileCount > 0 &&
+                   (!options.EnableSeq || !string.IsNullOrWhiteSpace(options.SeqServerUrl)) &&
+                   options.SlowOperationThresholdMs > 0 &&
+                   options.MaxRequestBodyLength > 0 &&
+                   options.MaxResponseBodyLength > 0;
         }
 
         /// <summary>
