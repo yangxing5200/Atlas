@@ -122,3 +122,4 @@ finally {
 }
 
 Write-Host "Atlas module template verification passed for $ModuleName."
+exit 0
