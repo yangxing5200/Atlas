@@ -281,7 +281,7 @@ await app.RunAsync();
     "Atlas": {
         "EnableConsole": true,
         "EnableFile": true,
-        "EnableSeq": true,
+        "EnableSeq": false,
         "SensitiveFields": ["password", "token", "apikey"]
     }
 }

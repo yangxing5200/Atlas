@@ -14,8 +14,8 @@ dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj -- seed-prod
 
 | Command | Behavior |
 | --- | --- |
-| `init-global` | Creates the local Global database schema if needed. |
-| `create-tenant-db` | Creates the local tenant database schema if needed. |
+| `init-global` | Creates the local Global database schema from the current model if needed. |
+| `create-tenant-db` | Creates the local tenant database schema from the current model if needed. |
 | `seed-demo` / `seed-local` | Idempotently writes demo tenant, stores, users, products, and inventory. |
 | `reset-demo` | Drops and recreates local demo databases, then writes demo data. |
 | `seed-production` | Schema-only production-safe seed. Demo tenant data is intentionally excluded. |
@@ -42,3 +42,5 @@ Connection-string passwords are masked in console output.
 - Demo/local seed may create demo tenant, demo users, stores, products, and inventory.
 - Production seed must not create demo tenants, demo users, or demo business data.
 - Demo seed is idempotent by stable IDs and can be run repeatedly.
+- Local setup creates schema from the current model and removes indexes to stay compatible with older local MySQL/InnoDB limits. It is not a replacement for the production migration flow.
+- If local schema drifts after model changes, use `reset-demo` to recreate demo databases from the current model.
