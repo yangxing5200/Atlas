@@ -1,4 +1,5 @@
-﻿using Atlas.Infrastructure.Security;
+using Atlas.Infrastructure.Security;
+using Atlas.ModuleTemplate;
 using Atlas.ModuleTemplate.Models;
 using Atlas.ModuleTemplate.Queries;
 using Atlas.ModuleTemplate.Services;
@@ -22,13 +23,14 @@ public sealed class TenantRecordsController : ControllerBase
         _queries = queries ?? throw new ArgumentNullException(nameof(queries));
     }
 
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + ModuleTemplatePermissionCodes.TenantRecordsRead)]
     [HttpGet]
     public Task<IActionResult> SearchAsync([FromQuery] TenantRecordSearchQuery query, CancellationToken ct)
     {
         return ExecuteSearchAsync(query, ct);
     }
 
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + ModuleTemplatePermissionCodes.TenantRecordsCreate)]
     [HttpPost]
     public async Task<ActionResult<TenantRecordDto>> CreateAsync(
         [FromBody] CreateTenantRecordRequest request,
@@ -38,7 +40,7 @@ public sealed class TenantRecordsController : ControllerBase
         return CreatedAtAction(nameof(SearchAsync), new { id = created.Id }, created);
     }
 
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + ModuleTemplatePermissionCodes.TenantRecordsUpdate)]
     [HttpPut("{id:long}")]
     public async Task<IActionResult> UpdateAsync(
         long id,

@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+using System.Reflection;
+using Atlas.Core.Authorization;
 
 namespace Atlas.Extensions.DependencyInjection;
 
@@ -15,4 +16,6 @@ public interface IAtlasModule
     IReadOnlyCollection<Assembly> AutoMapperAssemblies { get; }
 
     void AddServices(AtlasModuleContext context);
+
+    void ConfigureAuthorization(AtlasAuthorizationCatalogBuilder builder);
 }

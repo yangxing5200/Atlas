@@ -1,4 +1,5 @@
-﻿using Atlas.Core.Entities.Tenant;
+using Atlas.Core.Authorization;
+using Atlas.Core.Entities.Tenant;
 using Atlas.Core.Enums;
 using Atlas.Core.IdGenerators;
 using Atlas.Data.Abstractions;
@@ -8,7 +9,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Atlas.Infrastructure.Security.Permissions;
 
-public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
+public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService, IAtlasPermissionCacheInvalidator
 {
     private const string TenantAdminRoleCode = "tenant-admin";
     private const string DefaultPermissionCacheVersion = "0";
@@ -22,6 +23,8 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
     private readonly ICacheService _cache;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IIdGenerator _idGenerator;
+    private readonly IAtlasAuthorizationCatalog _authorizationCatalog;
+    private readonly IEntitlementService _entitlementService;
     private readonly ILogger<RbacPermissionService> _logger;
 
     public RbacPermissionService(
@@ -33,6 +36,8 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
         ICacheService cache,
         IUnitOfWork unitOfWork,
         IIdGenerator idGenerator,
+        IAtlasAuthorizationCatalog authorizationCatalog,
+        IEntitlementService entitlementService,
         ILogger<RbacPermissionService> logger)
     {
         _users = users ?? throw new ArgumentNullException(nameof(users));
@@ -43,6 +48,8 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
         _idGenerator = idGenerator ?? throw new ArgumentNullException(nameof(idGenerator));
+        _authorizationCatalog = authorizationCatalog ?? throw new ArgumentNullException(nameof(authorizationCatalog));
+        _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -64,9 +71,22 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
         if (user == null)
             return false;
 
+        if (string.Equals(normalizedPermission, AtlasPermissionCodes.IdentitySelf, StringComparison.OrdinalIgnoreCase))
+        {
+            return await _entitlementService.IsPermissionAvailableAsync(
+                new EntitlementCheckContext(context.TenantId, context.StoreId),
+                normalizedPermission,
+                ct);
+        }
+
         // Compatibility path: existing TenantAdmin/SystemAdmin users keep access while teams migrate to explicit RBAC rows.
         if (user.Type is UserType.SystemAdmin or UserType.TenantAdmin)
-            return true;
+        {
+            return await _entitlementService.IsPermissionAvailableAsync(
+                new EntitlementCheckContext(context.TenantId, context.StoreId),
+                normalizedPermission,
+                ct);
+        }
 
         var permissionCodes = await GetUserPermissionCodesAsync(
             context.TenantId,
@@ -74,7 +94,13 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
             context.StoreId,
             ct);
 
-        return permissionCodes.Contains(normalizedPermission, StringComparer.OrdinalIgnoreCase);
+        if (!permissionCodes.Contains(normalizedPermission, StringComparer.OrdinalIgnoreCase))
+            return false;
+
+        return await _entitlementService.IsPermissionAvailableAsync(
+            new EntitlementCheckContext(context.TenantId, context.StoreId),
+            normalizedPermission,
+            ct);
     }
 
     public Task InvalidateUserPermissionsAsync(
@@ -112,7 +138,7 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
             .Select(x => NormalizeCode(x.Code))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var definition in AtlasPermissionCodes.All)
+        foreach (var definition in _authorizationCatalog.Permissions.Values)
         {
             if (existingCodes.Contains(NormalizeCode(definition.Code)))
                 continue;
@@ -124,10 +150,16 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
                 Code = NormalizeCode(definition.Code),
                 Name = definition.Name,
                 Description = definition.Description,
+                CapabilityCode = definition.CapabilityCode,
                 Module = definition.Module,
                 Scope = definition.Scope,
+                Resource = definition.Resource,
+                Action = definition.Action,
+                IsAssignable = definition.IsAssignable,
+                IsSystem = definition.IsSystem,
+                RiskLevel = definition.RiskLevel,
                 IsBuiltIn = true,
-                IsEnabled = true
+                IsEnabled = definition.IsEnabled
             }, tenantId, ct);
         }
 
@@ -179,6 +211,8 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
                 TenantId = tenantId,
                 RoleId = adminRole.Id,
                 PermissionId = permission.Id,
+                Effect = RolePermissionEffect.Allow,
+                DataScopeType = AtlasDataScopeType.AllTenant,
                 GrantedAt = DateTime.UtcNow
             }, tenantId, ct);
         }
@@ -230,7 +264,15 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
         var rolePermissions = await rolePermissionQuery
             .Where(x => x.TenantId == tenantId && enabledRoleIds.Contains(x.RoleId))
             .ToListAsync(ct);
-        var permissionIds = rolePermissions.Select(x => x.PermissionId).Distinct().ToArray();
+        var deniedPermissionIds = rolePermissions
+            .Where(x => x.Effect == RolePermissionEffect.Deny)
+            .Select(x => x.PermissionId)
+            .ToHashSet();
+        var permissionIds = rolePermissions
+            .Where(x => x.Effect == RolePermissionEffect.Allow && !deniedPermissionIds.Contains(x.PermissionId))
+            .Select(x => x.PermissionId)
+            .Distinct()
+            .ToArray();
         if (permissionIds.Length == 0)
         {
             _cache.Set(cacheKey, Array.Empty<string>(), PermissionCacheExpiration);

@@ -1,9 +1,19 @@
-﻿using Atlas.Extensions.DependencyInjection;
+using Atlas.Core.Authorization;
+using Atlas.Core.Enums;
+using Atlas.Extensions.DependencyInjection;
+using Atlas.ModuleTemplate.Entities;
 using Atlas.ModuleTemplate.Queries;
 using Atlas.ModuleTemplate.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Atlas.ModuleTemplate;
+
+public static class ModuleTemplatePermissionCodes
+{
+    public const string TenantRecordsRead = "module-template.tenant-record.read";
+    public const string TenantRecordsCreate = "module-template.tenant-record.create";
+    public const string TenantRecordsUpdate = "module-template.tenant-record.update";
+}
 
 public sealed class ModuleEntry : AtlasModule
 {
@@ -11,5 +21,49 @@ public sealed class ModuleEntry : AtlasModule
     {
         context.Services.AddScoped<ITenantRecordService, TenantRecordService>();
         context.Services.AddScoped<ITenantRecordQueryService, TenantRecordQueryService>();
+    }
+
+    public override void ConfigureAuthorization(AtlasAuthorizationCatalogBuilder builder)
+    {
+        builder
+            .AddPackage("atlas.standard", "Atlas Standard", AtlasPackageType.Edition)
+            .AddCapability("module-template.tenant-record", "Tenant records", "ModuleTemplate")
+            .AddPermission(
+                ModuleTemplatePermissionCodes.TenantRecordsRead,
+                "Read tenant records",
+                "module-template.tenant-record",
+                "ModuleTemplate",
+                PermissionScope.Tenant,
+                resource: "module-template.tenant-record",
+                action: "read")
+            .AddPermission(
+                ModuleTemplatePermissionCodes.TenantRecordsCreate,
+                "Create tenant records",
+                "module-template.tenant-record",
+                "ModuleTemplate",
+                PermissionScope.Tenant,
+                resource: "module-template.tenant-record",
+                action: "create",
+                riskLevel: AtlasPermissionRiskLevel.Medium)
+            .AddPermission(
+                ModuleTemplatePermissionCodes.TenantRecordsUpdate,
+                "Update tenant records",
+                "module-template.tenant-record",
+                "ModuleTemplate",
+                PermissionScope.Tenant,
+                resource: "module-template.tenant-record",
+                action: "update",
+                riskLevel: AtlasPermissionRiskLevel.Medium)
+            .AddPackageCapability("atlas.standard", "module-template.tenant-record")
+            .AddMenuItem(
+                "module-template.tenant-records",
+                "Tenant records",
+                "/tenant-records",
+                visibleWhen: AtlasAuthorizationCondition.RequirePermission(ModuleTemplatePermissionCodes.TenantRecordsRead))
+            .AddDataResource(
+                "module-template.tenant-record",
+                "Tenant record",
+                entityType: typeof(TenantRecord).FullName,
+                supportedScopes: new[] { AtlasDataScopeType.AllTenant });
     }
 }

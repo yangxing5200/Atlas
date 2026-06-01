@@ -57,7 +57,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpPost("logout")]
-    [Authorize]
+    [Authorize(Policy = AuthorizationPolicies.RequireIdentitySelf)]
     [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
     public async Task<ActionResult<OperationResult>> Logout()
     {
@@ -68,7 +68,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpPost("switch-store")]
-    [Authorize]
+    [Authorize(Policy = AuthorizationPolicies.RequireIdentitySelf)]
     [ProducesResponseType(typeof(SwitchStoreResponse), StatusCodes.Status200OK)]
     public async Task<ActionResult<SwitchStoreResponse>> SwitchStore([FromBody] SwitchStoreRequest request)
     {
@@ -80,7 +80,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpGet("accessible-stores")]
-    [Authorize]
+    [Authorize(Policy = AuthorizationPolicies.RequireIdentitySelf)]
     [ProducesResponseType(typeof(List<StoreInfoDto>), StatusCodes.Status200OK)]
     public async Task<ActionResult<List<StoreInfoDto>>> GetMyAccessibleStores()
     {
@@ -177,7 +177,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpPost("change-password")]
-    [Authorize]
+    [Authorize(Policy = AuthorizationPolicies.RequireIdentitySelf)]
     [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
     public async Task<ActionResult<OperationResult>> ChangePassword([FromBody] ChangePasswordRequest request)
     {

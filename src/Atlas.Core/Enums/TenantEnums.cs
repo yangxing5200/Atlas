@@ -199,6 +199,12 @@ public enum PermissionScope
     Store = 2
 }
 
+public enum RolePermissionEffect
+{
+    Allow = 1,
+    Deny = 2
+}
+
 public enum AuditEventOutcome
 {
     Succeeded = 1,

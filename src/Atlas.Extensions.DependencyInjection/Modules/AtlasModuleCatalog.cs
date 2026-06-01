@@ -1,6 +1,8 @@
-﻿using System.Reflection;
+using System.Reflection;
+using Atlas.Core.Authorization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Atlas.Extensions.DependencyInjection;
 
@@ -12,6 +14,7 @@ internal sealed class AtlasModuleCatalog
         ControllerAssemblies = GetDistinctAssemblies(modules, module => module.ControllerAssemblies);
         ConsumerAssemblies = GetDistinctAssemblies(modules, module => module.ConsumerAssemblies);
         AutoMapperAssemblies = GetDistinctAssemblies(modules, module => module.AutoMapperAssemblies);
+        AuthorizationCatalog = BuildAuthorizationCatalog(modules);
     }
 
     public static AtlasModuleCatalog Empty { get; } = new(Array.Empty<IAtlasModule>());
@@ -23,6 +26,8 @@ internal sealed class AtlasModuleCatalog
     public IReadOnlyCollection<Assembly> ConsumerAssemblies { get; }
 
     public IReadOnlyCollection<Assembly> AutoMapperAssemblies { get; }
+
+    public AtlasAuthorizationCatalog AuthorizationCatalog { get; }
 
     public static AtlasModuleCatalog Create(IEnumerable<IAtlasModule>? modules)
     {
@@ -48,12 +53,29 @@ internal sealed class AtlasModuleCatalog
 
     public IServiceCollection AddServices(IServiceCollection services, IConfiguration configuration)
     {
+        services.TryAddSingleton(AuthorizationCatalog);
+        services.TryAddSingleton<IAtlasAuthorizationCatalog>(AuthorizationCatalog);
+
         foreach (var module in Modules)
         {
             module.AddServices(new AtlasModuleContext(services, configuration, module));
         }
 
         return services;
+    }
+
+    private static AtlasAuthorizationCatalog BuildAuthorizationCatalog(IEnumerable<IAtlasModule> modules)
+    {
+        var catalogBuilder = new AtlasAuthorizationCatalogBuilder("Atlas.ModuleCatalog");
+
+        foreach (var module in modules)
+        {
+            var moduleBuilder = new AtlasAuthorizationCatalogBuilder(module.Name);
+            module.ConfigureAuthorization(moduleBuilder);
+            catalogBuilder.Merge(moduleBuilder.Build(validateReferences: false));
+        }
+
+        return catalogBuilder.Build();
     }
 
     private static IReadOnlyCollection<Assembly> GetDistinctAssemblies(

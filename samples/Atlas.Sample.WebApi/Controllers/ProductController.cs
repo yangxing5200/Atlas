@@ -1,7 +1,9 @@
-﻿using Atlas.Core.Exceptions;
+using Atlas.Core.Exceptions;
+using Atlas.Infrastructure.Security;
 using Atlas.Models.DTOs;
 using Atlas.Models.Tenant.Requests;
 using Atlas.Models.Tenant.Responses;
+using Atlas.Sample.ECommerce;
 using Atlas.Services.Abstractions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -21,6 +23,7 @@ public sealed class ProductController : ControllerBase
         _productService = productService ?? throw new ArgumentNullException(nameof(productService));
     }
 
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + SampleECommercePermissionCodes.ProductsRead)]
     [HttpGet("{id:long}")]
     [ProducesResponseType(typeof(ProductDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -32,6 +35,7 @@ public sealed class ProductController : ControllerBase
             : Ok(product);
     }
 
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + SampleECommercePermissionCodes.ProductsRead)]
     [HttpGet]
     [ProducesResponseType(typeof(PagedResult<ProductDto>), StatusCodes.Status200OK)]
     public Task<PagedResult<ProductDto>> GetPaged(
@@ -41,6 +45,7 @@ public sealed class ProductController : ControllerBase
         return _productService.PageQueryAsync(x => x.Id > 0, pageIndex, pageSize);
     }
 
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + SampleECommercePermissionCodes.ProductsCreate)]
     [HttpPost]
     [ProducesResponseType(typeof(ProductDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -50,6 +55,7 @@ public sealed class ProductController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
     }
 
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + SampleECommercePermissionCodes.ProductsUpdate)]
     [HttpPut("{id:long}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -68,6 +74,7 @@ public sealed class ProductController : ControllerBase
         }
     }
 
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + SampleECommercePermissionCodes.ProductsDelete)]
     [HttpDelete("{id:long}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -84,6 +91,7 @@ public sealed class ProductController : ControllerBase
         }
     }
 
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + SampleECommercePermissionCodes.ProductsRead)]
     [HttpGet("{id:long}/exists")]
     [ProducesResponseType(typeof(bool), StatusCodes.Status200OK)]
     public Task<bool> Exists([FromRoute] long id, CancellationToken ct = default)
@@ -91,6 +99,7 @@ public sealed class ProductController : ControllerBase
         return _productService.ExistsAsync(p => p.Id == id, ct);
     }
 
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + SampleECommercePermissionCodes.ProductsRead)]
     [HttpGet("count")]
     [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
     public Task<int> Count(CancellationToken ct = default)
@@ -98,6 +107,7 @@ public sealed class ProductController : ControllerBase
         return _productService.CountAsync(p => true, ct);
     }
 
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + SampleECommercePermissionCodes.ProductsRead)]
     [HttpGet("search")]
     [ProducesResponseType(typeof(PagedResult<ProductDto>), StatusCodes.Status200OK)]
     public Task<PagedResult<ProductDto>> Search(

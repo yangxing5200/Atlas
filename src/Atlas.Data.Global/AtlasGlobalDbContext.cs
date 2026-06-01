@@ -37,6 +37,11 @@ namespace Atlas.Data.Global
         public DbSet<DatabaseServerConfig> DatabaseServerConfigs { get; set; }
         public DbSet<BackgroundJob> BackgroundJobs { get; set; }
         public DbSet<TenantSchemaMigrationState> TenantSchemaMigrationStates { get; set; }
+        public DbSet<Capability> Capabilities { get; set; }
+        public DbSet<FeaturePackage> FeaturePackages { get; set; }
+        public DbSet<PackageCapability> PackageCapabilities { get; set; }
+        public DbSet<TenantEntitlement> TenantEntitlements { get; set; }
+        public DbSet<MenuItem> MenuItems { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

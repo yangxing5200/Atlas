@@ -1,3 +1,4 @@
+using Atlas.Core.Authorization;
 using Atlas.Core.Entities.Tenant;
 using Atlas.Core.IdGenerators;
 using Atlas.Data.Abstractions;
@@ -54,6 +55,8 @@ public sealed class RbacPermissionServiceCacheTests
             cache,
             Mock.Of<IUnitOfWork>(),
             Mock.Of<IIdGenerator>(),
+            AtlasAuthorizationCatalog.Empty,
+            Mock.Of<IEntitlementService>(),
             NullLogger<RbacPermissionService>.Instance);
     }
 }

@@ -46,11 +46,29 @@ public sealed class TenantBoundaryAnalyzer : DiagnosticAnalyzer
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    private static readonly DiagnosticDescriptor MissingActionPermissionRule = new(
+        id: "ATL004",
+        title: "HTTP actions must declare an explicit permission policy",
+        messageFormat: "HTTP action '{0}' must use an explicit 'Permission:' authorization policy or AllowAnonymous.",
+        category: "Atlas.Authorization",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor PackagePermissionRule = new(
+        id: "ATL005",
+        title: "Package codes must not be used as operation permissions",
+        messageFormat: "Permission policy '{0}' uses a package-style code. Declare an operation permission instead.",
+        category: "Atlas.Authorization",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
         ImmutableArray.Create(
             ForbiddenTenantDataTypeRule,
             ForbiddenDbSetRule,
-            ForbiddenRawSqlRule);
+            ForbiddenRawSqlRule,
+            MissingActionPermissionRule,
+            PackagePermissionRule);
 
     /// <summary>
     /// 注册 Analyzer 使用的语法节点回调。
@@ -97,6 +115,10 @@ public sealed class TenantBoundaryAnalyzer : DiagnosticAnalyzer
             startContext.RegisterSyntaxNodeAction(
                 ctx => AnalyzeInvocation(ctx, efDbContext),
                 SyntaxKind.InvocationExpression);
+
+            startContext.RegisterSyntaxNodeAction(
+                AnalyzeHttpActionAuthorization,
+                SyntaxKind.MethodDeclaration);
         });
     }
 
@@ -178,6 +200,58 @@ public sealed class TenantBoundaryAnalyzer : DiagnosticAnalyzer
         }
     }
 
+    private static void AnalyzeHttpActionAuthorization(SyntaxNodeAnalysisContext context)
+    {
+        if (context.Node is not MethodDeclarationSyntax methodDeclaration)
+            return;
+
+        var method = context.SemanticModel.GetDeclaredSymbol(methodDeclaration, context.CancellationToken);
+        if (method == null || !HasHttpMethodAttribute(method))
+            return;
+
+        if (HasAttribute(method, "Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute") ||
+            HasAttribute(method.ContainingType, "Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute"))
+        {
+            return;
+        }
+
+        var typeAttributes = method.ContainingType?.GetAttributes() ?? ImmutableArray<AttributeData>.Empty;
+        var authorizeAttributes = method.GetAttributes()
+            .Concat(typeAttributes)
+            .Where(IsAuthorizeAttribute)
+            .ToArray();
+        var hasPermissionPolicy = false;
+
+        foreach (var attribute in authorizeAttributes)
+        {
+            var policy = GetPolicy(attribute);
+            if (string.IsNullOrWhiteSpace(policy))
+                continue;
+
+            var policyText = policy!;
+            if (!policyText.StartsWith("Permission:", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            hasPermissionPolicy = true;
+            var permissionCode = policyText.Substring("Permission:".Length).Trim();
+            if (permissionCode.StartsWith("package.", StringComparison.OrdinalIgnoreCase))
+            {
+                context.ReportDiagnostic(Diagnostic.Create(
+                    PackagePermissionRule,
+                    GetAttributeLocation(attribute) ?? methodDeclaration.Identifier.GetLocation(),
+                    policyText));
+            }
+        }
+
+        if (!hasPermissionPolicy)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(
+                MissingActionPermissionRule,
+                methodDeclaration.Identifier.GetLocation(),
+                method.Name));
+        }
+    }
+
     /// <summary>
     /// 判断解析后的类型符号是否跨越了租户数据访问边界。
     /// </summary>
@@ -214,6 +288,60 @@ public sealed class TenantBoundaryAnalyzer : DiagnosticAnalyzer
         }
 
         return false;
+    }
+
+    private static bool HasHttpMethodAttribute(IMethodSymbol method)
+    {
+        return method.GetAttributes().Any(attribute =>
+            attribute.AttributeClass?.ContainingNamespace.ToDisplayString() == "Microsoft.AspNetCore.Mvc" &&
+            attribute.AttributeClass.Name is
+                "HttpGetAttribute" or
+                "HttpPostAttribute" or
+                "HttpPutAttribute" or
+                "HttpPatchAttribute" or
+                "HttpDeleteAttribute" or
+                "HttpHeadAttribute" or
+                "HttpOptionsAttribute");
+    }
+
+    private static bool HasAttribute(ISymbol symbol, string metadataName)
+    {
+        return symbol.GetAttributes().Any(attribute =>
+            string.Equals(
+                attribute.AttributeClass?.ToDisplayString(),
+                metadataName,
+                StringComparison.Ordinal));
+    }
+
+    private static bool IsAuthorizeAttribute(AttributeData attribute)
+    {
+        return string.Equals(
+            attribute.AttributeClass?.ToDisplayString(),
+            "Microsoft.AspNetCore.Authorization.AuthorizeAttribute",
+            StringComparison.Ordinal);
+    }
+
+    private static string? GetPolicy(AttributeData attribute)
+    {
+        foreach (var argument in attribute.NamedArguments)
+        {
+            if (argument.Key == "Policy" &&
+                argument.Value.Value is string policy)
+            {
+                return policy;
+            }
+        }
+
+        return attribute.ConstructorArguments.Length > 0 &&
+               attribute.ConstructorArguments[0].Value is string constructorPolicy
+            ? constructorPolicy
+            : null;
+    }
+
+    private static Location? GetAttributeLocation(AttributeData attribute)
+    {
+        var syntaxReference = attribute.ApplicationSyntaxReference;
+        return syntaxReference?.GetSyntax().GetLocation();
     }
 
     /// <summary>

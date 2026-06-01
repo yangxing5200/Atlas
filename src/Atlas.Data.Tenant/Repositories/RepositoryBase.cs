@@ -9,6 +9,8 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Atlas.Core.Authorization;
+using Atlas.Core.Services;
 
 namespace Atlas.Data.Tenant.Repositories
 {
@@ -26,11 +28,19 @@ namespace Atlas.Data.Tenant.Repositories
     {
         protected readonly ITenantDbContextFactory _dbFactory;
         protected readonly IDataScope _dataScope;
+        private readonly IAtlasDataScopePredicateBuilder _dataScopePredicateBuilder;
+        private readonly ICurrentIdentity _currentIdentity;
 
-        protected RepositoryBase(ITenantDbContextFactory dbFactory, IDataScope dataScope)
+        protected RepositoryBase(
+            ITenantDbContextFactory dbFactory,
+            IDataScope dataScope,
+            IAtlasDataScopePredicateBuilder dataScopePredicateBuilder,
+            ICurrentIdentity currentIdentity)
         {
             _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
             _dataScope = dataScope ?? throw new ArgumentNullException(nameof(dataScope));
+            _dataScopePredicateBuilder = dataScopePredicateBuilder ?? throw new ArgumentNullException(nameof(dataScopePredicateBuilder));
+            _currentIdentity = currentIdentity ?? throw new ArgumentNullException(nameof(currentIdentity));
         }
 
         #region Add
@@ -108,6 +118,31 @@ namespace Atlas.Data.Tenant.Repositories
             var db = await _dbFactory.GetDbContextAsync(ct);
             var scope = await _dataScope.ResolveAsync(ct);
             var query = db.ScopedSet<TEntity>(scope);
+            return new QueryBuilder<TEntity>(query);
+        }
+
+        public virtual async Task<QueryBuilder<TEntity>> QueryDataScopeAsync(
+            string resourceCode,
+            AtlasDataScopeType scopeType,
+            CancellationToken ct = default)
+        {
+            var db = await _dbFactory.GetReadonlyDbContextAsync(ct);
+            var scope = await _dataScope.ResolveAsync(ct);
+            var query = db.ScopedSet<TEntity>(scope)
+                .AsNoTracking()
+                .Where(BuildDataScopePredicate(resourceCode, scopeType, scope));
+            return new QueryBuilder<TEntity>(query);
+        }
+
+        public virtual async Task<QueryBuilder<TEntity>> QueryDataScopeTrackingAsync(
+            string resourceCode,
+            AtlasDataScopeType scopeType,
+            CancellationToken ct = default)
+        {
+            var db = await _dbFactory.GetDbContextAsync(ct);
+            var scope = await _dataScope.ResolveAsync(ct);
+            var query = db.ScopedSet<TEntity>(scope)
+                .Where(BuildDataScopePredicate(resourceCode, scopeType, scope));
             return new QueryBuilder<TEntity>(query);
         }
 
@@ -253,6 +288,26 @@ namespace Atlas.Data.Tenant.Repositories
             }
         }
 
+        private Expression<Func<TEntity, bool>> BuildDataScopePredicate(
+            string resourceCode,
+            AtlasDataScopeType scopeType,
+            DataScopeSnapshot scope)
+        {
+            if (!scope.TenantId.HasValue)
+                return _ => false;
+
+            var context = new AtlasDataAccessContext(
+                scope.TenantId.Value,
+                _currentIdentity.UserId ?? 0,
+                scope.StoreId,
+                resourceCode,
+                scopeType,
+                scope.ShareStoreIds,
+                scope.ShareStoreIds);
+
+            return _dataScopePredicateBuilder.BuildPredicate<TEntity>(context);
+        }
+
         /// <summary>
         /// 根据实体能力选择软删除或物理删除。
         /// </summary>
@@ -281,7 +336,12 @@ namespace Atlas.Data.Tenant.Repositories
     public class RepositoryBase<TEntity> : RepositoryBase<TEntity, long>, IRepository<TEntity>
         where TEntity : class, IBaseEntity<long>
     {
-        public RepositoryBase(ITenantDbContextFactory dbFactory, IDataScope dataScope) : base(dbFactory, dataScope)
+        public RepositoryBase(
+            ITenantDbContextFactory dbFactory,
+            IDataScope dataScope,
+            IAtlasDataScopePredicateBuilder dataScopePredicateBuilder,
+            ICurrentIdentity currentIdentity)
+            : base(dbFactory, dataScope, dataScopePredicateBuilder, currentIdentity)
         {
         }
     }

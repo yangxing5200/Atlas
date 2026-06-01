@@ -321,6 +321,107 @@ public sealed class TenantBoundaryAnalyzerTests
         Assert.Contains(diagnostics, diagnostic => diagnostic.Id == "ATL002");
     }
 
+    [Fact]
+    public async Task Http_action_without_permission_policy_reports_atl004()
+    {
+        var diagnostics = await AnalyzeAsync(
+            AuthorizationMvcSource +
+            """
+
+            namespace Atlas.Sample.WebApi.Controllers
+            {
+                using Microsoft.AspNetCore.Authorization;
+                using Microsoft.AspNetCore.Mvc;
+
+                public sealed class ProductsController
+                {
+                    [Authorize]
+                    [HttpGet]
+                    public string Search() => "";
+                }
+            }
+            """,
+            "Atlas.Sample.WebApi");
+
+        Assert.Contains(diagnostics, diagnostic => diagnostic.Id == "ATL004");
+    }
+
+    [Fact]
+    public async Task Http_action_with_permission_policy_is_allowed()
+    {
+        var diagnostics = await AnalyzeAsync(
+            AuthorizationMvcSource +
+            """
+
+            namespace Atlas.Sample.WebApi.Controllers
+            {
+                using Microsoft.AspNetCore.Authorization;
+                using Microsoft.AspNetCore.Mvc;
+
+                public sealed class ProductsController
+                {
+                    [Authorize(Policy = "Permission:products.read")]
+                    [HttpGet]
+                    public string Search() => "";
+                }
+            }
+            """,
+            "Atlas.Sample.WebApi");
+
+        Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id == "ATL004");
+        Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id == "ATL005");
+    }
+
+    [Fact]
+    public async Task Http_action_with_allow_anonymous_is_allowed()
+    {
+        var diagnostics = await AnalyzeAsync(
+            AuthorizationMvcSource +
+            """
+
+            namespace Atlas.Sample.WebApi.Controllers
+            {
+                using Microsoft.AspNetCore.Authorization;
+                using Microsoft.AspNetCore.Mvc;
+
+                public sealed class UsersController
+                {
+                    [AllowAnonymous]
+                    [HttpPost]
+                    public string Login() => "";
+                }
+            }
+            """,
+            "Atlas.Sample.WebApi");
+
+        Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id == "ATL004");
+    }
+
+    [Fact]
+    public async Task Package_style_permission_policy_reports_atl005()
+    {
+        var diagnostics = await AnalyzeAsync(
+            AuthorizationMvcSource +
+            """
+
+            namespace Atlas.Sample.WebApi.Controllers
+            {
+                using Microsoft.AspNetCore.Authorization;
+                using Microsoft.AspNetCore.Mvc;
+
+                public sealed class ProductsController
+                {
+                    [Authorize(Policy = "Permission:package.standard")]
+                    [HttpGet]
+                    public string Search() => "";
+                }
+            }
+            """,
+            "Atlas.Sample.WebApi");
+
+        Assert.Contains(diagnostics, diagnostic => diagnostic.Id == "ATL005");
+    }
+
     private const string TenantInfrastructureSource =
         """
         namespace Atlas.Data.Tenant.Context
@@ -330,6 +431,32 @@ public sealed class TenantBoundaryAnalyzerTests
             }
 
             public sealed class AtlasTenantDbContext : Microsoft.EntityFrameworkCore.DbContext
+            {
+            }
+        }
+        """;
+
+    private const string AuthorizationMvcSource =
+        """
+        namespace Microsoft.AspNetCore.Authorization
+        {
+            public sealed class AuthorizeAttribute : System.Attribute
+            {
+                public string? Policy { get; set; }
+            }
+
+            public sealed class AllowAnonymousAttribute : System.Attribute
+            {
+            }
+        }
+
+        namespace Microsoft.AspNetCore.Mvc
+        {
+            public sealed class HttpGetAttribute : System.Attribute
+            {
+            }
+
+            public sealed class HttpPostAttribute : System.Attribute
             {
             }
         }

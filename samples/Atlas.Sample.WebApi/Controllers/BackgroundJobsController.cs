@@ -1,5 +1,7 @@
 ﻿using Atlas.BackgroundTasks;
 using Atlas.Core.Services;
+using Atlas.Infrastructure.Security;
+using Atlas.Infrastructure.Security.Permissions;
 using Atlas.Services.Tenant.Runtime.BackgroundJobs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -24,6 +26,7 @@ public sealed class BackgroundJobsController : ControllerBase
     }
 
     [HttpPost("tenant-cache-warmup")]
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + AtlasPermissionCodes.TenantAdmin)]
     public async Task<ActionResult<BackgroundJobEnqueueResult>> EnqueueTenantCacheWarmup(
         [FromBody] EnqueueTenantCacheWarmupRequest request,
         CancellationToken ct)
@@ -59,6 +62,7 @@ public sealed class BackgroundJobsController : ControllerBase
     }
 
     [HttpGet("{jobId:long}")]
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + AtlasPermissionCodes.TenantAdmin)]
     public async Task<ActionResult<BackgroundJobStatusResponse>> Get(long jobId, CancellationToken ct)
     {
         var tenantId = _currentIdentity.TenantId;

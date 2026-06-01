@@ -1,4 +1,7 @@
-﻿using System.Reflection;
+using System.Reflection;
+using Atlas.Core.Authorization;
+using Atlas.Core.Entities.Tenant;
+using Atlas.Core.Enums;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Global.Repositories;
@@ -20,6 +23,7 @@ using Atlas.Services;
 using Atlas.Services.Abstractions;
 using Atlas.Services.Tenant;
 using Atlas.Services.Tenant.Runtime.Messaging;
+using Atlas.Services.Tenant.Runtime.Authorization;
 using Atlas.Services.Tenant.Runtime.Migrations;
 using Atlas.Services.Tenant.Runtime.Provisioning;
 using Microsoft.Extensions.DependencyInjection;
@@ -32,7 +36,7 @@ internal sealed class AtlasBuiltInModule : AtlasModule
 {
     public override string Name => "Atlas.BuiltIn";
 
-    public override IReadOnlyCollection<Assembly> ControllerAssemblies => Array.Empty<Assembly>();
+    public override IReadOnlyCollection<Assembly> ControllerAssemblies => new[] { typeof(AtlasBuiltInModule).Assembly };
 
     public override IReadOnlyCollection<Assembly> ConsumerAssemblies => Array.Empty<Assembly>();
 
@@ -81,9 +85,197 @@ internal sealed class AtlasBuiltInModule : AtlasModule
         services.AddScoped<IOperationLogService, OperationLogService>();
         services.AddScoped<IAuditEventService, AuditEventService>();
         services.AddScoped<ISensitiveDataAccessAuditService, SensitiveDataAccessAuditService>();
+        services.AddScoped<IAuthorizationCatalogSyncService, AuthorizationCatalogSyncService>();
+        services.AddScoped<IEntitlementService, EntitlementService>();
+        services.AddSingleton<IAtlasAuthorizationConditionEvaluator, AtlasAuthorizationConditionEvaluator>();
+        services.AddScoped<IAtlasDataAccessEvaluator, AtlasDataAccessEvaluator>();
+        services.AddScoped<IAtlasDataScopePredicateBuilder, AtlasDataScopePredicateBuilder>();
+        services.AddScoped<AuthorizationRuntimeService>();
+        services.AddScoped<IAtlasAuthorizationContextService>(sp => sp.GetRequiredService<AuthorizationRuntimeService>());
+        services.AddScoped<IAtlasAuthorizationManagementService>(sp => sp.GetRequiredService<AuthorizationRuntimeService>());
         services.AddScoped<RbacPermissionService>();
         services.AddScoped<IPermissionChecker>(sp => sp.GetRequiredService<RbacPermissionService>());
         services.AddScoped<IRbacSeedService>(sp => sp.GetRequiredService<RbacPermissionService>());
+        services.AddScoped<IAtlasPermissionCacheInvalidator>(sp => sp.GetRequiredService<RbacPermissionService>());
         services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+    }
+
+    public override void ConfigureAuthorization(AtlasAuthorizationCatalogBuilder builder)
+    {
+        builder
+            .AddPackage("atlas.core", "Atlas Core", AtlasPackageType.Edition, "Atlas built-in platform capabilities")
+            .AddCapability("tenant.management", "Tenant management", "Platform")
+            .AddCapability("identity.users", "User management", "Security")
+            .AddCapability("security.roles", "Role management", "Security")
+            .AddCapability("store.management", "Store management", "Organization")
+            .AddCapability("audit.security", "Security audit", "Security")
+            .AddCapability("sensitive.data", "Sensitive data governance", "Security")
+            .AddCapability("authorization.governance", "Authorization governance", "Security")
+            .AddPermission(
+                AtlasPermissionCodes.TenantAdmin,
+                "Tenant administration",
+                "tenant.management",
+                "Tenant",
+                PermissionScope.Tenant,
+                resource: "tenant",
+                action: "admin",
+                riskLevel: AtlasPermissionRiskLevel.High)
+            .AddPermission(
+                AtlasPermissionCodes.IdentitySelf,
+                "Manage own identity session",
+                "identity.users",
+                "User",
+                PermissionScope.Tenant,
+                resource: "identity",
+                action: "self",
+                isAssignable: false)
+            .AddPermission(
+                AtlasPermissionCodes.TenantProvisioning,
+                "Provision tenants",
+                "tenant.management",
+                "Tenant",
+                PermissionScope.Platform,
+                resource: "tenant",
+                action: "provision",
+                riskLevel: AtlasPermissionRiskLevel.High)
+            .AddPermission(
+                AtlasPermissionCodes.UsersRead,
+                "Read users",
+                "identity.users",
+                "User",
+                PermissionScope.Tenant,
+                resource: "user",
+                action: "read")
+            .AddPermission(
+                AtlasPermissionCodes.UsersManage,
+                "Manage users",
+                "identity.users",
+                "User",
+                PermissionScope.Tenant,
+                resource: "user",
+                action: "manage",
+                riskLevel: AtlasPermissionRiskLevel.High)
+            .AddPermission(
+                AtlasPermissionCodes.RolesManage,
+                "Manage roles and permissions",
+                "security.roles",
+                "Security",
+                PermissionScope.Tenant,
+                resource: "role",
+                action: "manage",
+                riskLevel: AtlasPermissionRiskLevel.High)
+            .AddPermission(
+                AtlasPermissionCodes.StoresRead,
+                "Read stores",
+                "store.management",
+                "Store",
+                PermissionScope.Store,
+                resource: "store",
+                action: "read")
+            .AddPermission(
+                AtlasPermissionCodes.StoresManage,
+                "Manage stores",
+                "store.management",
+                "Store",
+                PermissionScope.Store,
+                resource: "store",
+                action: "manage",
+                riskLevel: AtlasPermissionRiskLevel.High)
+            .AddPermission(
+                AtlasPermissionCodes.AuditRead,
+                "Read audit events",
+                "audit.security",
+                "Audit",
+                PermissionScope.Tenant,
+                resource: "audit-event",
+                action: "read",
+                riskLevel: AtlasPermissionRiskLevel.Medium)
+            .AddPermission(
+                AtlasPermissionCodes.UsersSensitiveReveal,
+                "Reveal user sensitive data",
+                "sensitive.data",
+                "User",
+                PermissionScope.Tenant,
+                resource: "user",
+                action: "sensitive.reveal",
+                riskLevel: AtlasPermissionRiskLevel.High)
+            .AddPermission(
+                AtlasPermissionCodes.AuditSensitiveReveal,
+                "Reveal audit sensitive data",
+                "sensitive.data",
+                "Audit",
+                PermissionScope.Tenant,
+                resource: "audit-event",
+                action: "sensitive.reveal",
+                riskLevel: AtlasPermissionRiskLevel.High)
+            .AddPermission(
+                AtlasPermissionCodes.SensitiveDataExport,
+                "Export sensitive data",
+                "sensitive.data",
+                "Security",
+                PermissionScope.Tenant,
+                resource: "sensitive-data",
+                action: "export",
+                riskLevel: AtlasPermissionRiskLevel.High)
+            .AddPermission(
+                AtlasPermissionCodes.AuthorizationRead,
+                "Read authorization catalog and diagnostics",
+                "authorization.governance",
+                "Security",
+                PermissionScope.Tenant,
+                resource: "authorization",
+                action: "read",
+                riskLevel: AtlasPermissionRiskLevel.Medium)
+            .AddPermission(
+                AtlasPermissionCodes.AuthorizationManage,
+                "Manage entitlements and role permissions",
+                "authorization.governance",
+                "Security",
+                PermissionScope.Tenant,
+                resource: "authorization",
+                action: "manage",
+                riskLevel: AtlasPermissionRiskLevel.High)
+            .AddPackageCapability("atlas.core", "tenant.management")
+            .AddPackageCapability("atlas.core", "identity.users")
+            .AddPackageCapability("atlas.core", "security.roles")
+            .AddPackageCapability("atlas.core", "store.management")
+            .AddPackageCapability("atlas.core", "audit.security")
+            .AddPackageCapability("atlas.core", "sensitive.data")
+            .AddPackageCapability("atlas.core", "authorization.governance")
+            .AddMenuItem(
+                "admin.users",
+                "Users",
+                "/admin/users",
+                visibleWhen: AtlasAuthorizationCondition.RequirePermission(AtlasPermissionCodes.UsersRead),
+                sortOrder: 100)
+            .AddMenuItem(
+                "admin.stores",
+                "Stores",
+                "/admin/stores",
+                visibleWhen: AtlasAuthorizationCondition.RequirePermission(AtlasPermissionCodes.StoresRead),
+                sortOrder: 110)
+            .AddDataResource(
+                "user",
+                "User",
+                entityType: typeof(User).FullName,
+                supportedScopes: new[] { AtlasDataScopeType.AllTenant, AtlasDataScopeType.AssignedStores })
+            .AddDataResource(
+                "store",
+                "Store",
+                entityType: typeof(Store).FullName,
+                supportedScopes: new[] { AtlasDataScopeType.AllTenant, AtlasDataScopeType.AssignedStores })
+            .AddDataResource(
+                "audit-event",
+                "Audit event",
+                entityType: typeof(AuditEvent).FullName,
+                storeField: "StoreId",
+                ownerField: "UserId",
+                supportedScopes: new[]
+                {
+                    AtlasDataScopeType.AllTenant,
+                    AtlasDataScopeType.CurrentStore,
+                    AtlasDataScopeType.SharedStores,
+                    AtlasDataScopeType.Own
+                });
     }
 }

@@ -1,4 +1,5 @@
-﻿using Atlas.Core.Entities.Tenant;
+using Atlas.Core.Authorization;
+using Atlas.Core.Entities.Tenant;
 using Atlas.Core.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -43,8 +44,14 @@ public sealed class PermissionConfiguration : BaseEntityConfiguration<Permission
         builder.Property(x => x.Code).IsRequired().HasMaxLength(150);
         builder.Property(x => x.Name).IsRequired().HasMaxLength(100);
         builder.Property(x => x.Description).HasMaxLength(500);
+        builder.Property(x => x.CapabilityCode).IsRequired().HasMaxLength(150).HasDefaultValue(string.Empty);
         builder.Property(x => x.Module).IsRequired().HasMaxLength(100);
         builder.Property(x => x.Scope).IsRequired().HasConversion<int>().HasDefaultValue(PermissionScope.Tenant);
+        builder.Property(x => x.Resource).IsRequired().HasMaxLength(150).HasDefaultValue(string.Empty);
+        builder.Property(x => x.Action).IsRequired().HasMaxLength(100).HasDefaultValue(string.Empty);
+        builder.Property(x => x.IsAssignable).IsRequired().HasDefaultValue(true);
+        builder.Property(x => x.IsSystem).IsRequired().HasDefaultValue(false);
+        builder.Property(x => x.RiskLevel).IsRequired().HasConversion<int>().HasDefaultValue(AtlasPermissionRiskLevel.Low);
         builder.Property(x => x.IsBuiltIn).IsRequired().HasDefaultValue(true);
         builder.Property(x => x.IsEnabled).IsRequired().HasDefaultValue(true);
 
@@ -54,6 +61,9 @@ public sealed class PermissionConfiguration : BaseEntityConfiguration<Permission
 
         builder.HasIndex(x => new { x.TenantId, x.Module, x.Scope })
             .HasDatabaseName("IX_Permissions_Tenant_Module_Scope");
+
+        builder.HasIndex(x => new { x.TenantId, x.CapabilityCode })
+            .HasDatabaseName("IX_Permissions_Tenant_Capability");
     }
 }
 
@@ -68,6 +78,9 @@ public sealed class RolePermissionConfiguration : BaseEntityConfiguration<RolePe
         builder.Property(x => x.TenantId).IsRequired();
         builder.Property(x => x.RoleId).IsRequired();
         builder.Property(x => x.PermissionId).IsRequired();
+        builder.Property(x => x.Effect).IsRequired().HasConversion<int>().HasDefaultValue(RolePermissionEffect.Allow);
+        builder.Property(x => x.DataScopeType).IsRequired().HasConversion<int>().HasDefaultValue(AtlasDataScopeType.AllTenant);
+        builder.Property(x => x.DataScopeJson).HasColumnType("longtext");
         builder.Property(x => x.GrantedAt).IsRequired();
         builder.Property(x => x.GrantedBy).IsRequired(false);
 

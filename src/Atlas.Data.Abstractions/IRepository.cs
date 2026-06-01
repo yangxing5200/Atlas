@@ -5,6 +5,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Text;
 using System.Threading.Tasks;
+using Atlas.Core.Authorization;
 
 namespace Atlas.Data.Abstractions
 {
@@ -38,6 +39,22 @@ namespace Atlas.Data.Abstractions
         /// 获取可追踪查询构建器，用于读取后修改并提交的场景。
         /// </summary>
         Task<QueryBuilder<TEntity>> QueryTrackingAsync(CancellationToken ct = default);
+
+        /// <summary>
+        /// 获取已应用声明式数据权限的不可追踪查询构建器。
+        /// </summary>
+        Task<QueryBuilder<TEntity>> QueryDataScopeAsync(
+            string resourceCode,
+            AtlasDataScopeType scopeType,
+            CancellationToken ct = default);
+
+        /// <summary>
+        /// 获取已应用声明式数据权限的可追踪查询构建器。
+        /// </summary>
+        Task<QueryBuilder<TEntity>> QueryDataScopeTrackingAsync(
+            string resourceCode,
+            AtlasDataScopeType scopeType,
+            CancellationToken ct = default);
 
         /// <summary>
         /// 获取不可追踪查询构建器（用于只读查询）- 显式传入 tenantId，用于登录等场景

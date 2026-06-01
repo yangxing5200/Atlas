@@ -7,6 +7,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Atlas.Core.Authorization;
 
 namespace Atlas.Data.Global
 {
@@ -92,6 +93,22 @@ namespace Atlas.Data.Global
         {
             var query = _dbSet.AsQueryable();
             return Task.FromResult(new QueryBuilder<TEntity>(query));
+        }
+
+        public virtual Task<QueryBuilder<TEntity>> QueryDataScopeAsync(
+            string resourceCode,
+            AtlasDataScopeType scopeType,
+            CancellationToken ct = default)
+        {
+            throw new NotSupportedException("全局仓储不支持租户数据权限裁剪");
+        }
+
+        public virtual Task<QueryBuilder<TEntity>> QueryDataScopeTrackingAsync(
+            string resourceCode,
+            AtlasDataScopeType scopeType,
+            CancellationToken ct = default)
+        {
+            throw new NotSupportedException("全局仓储不支持租户数据权限裁剪");
         }
 
         /// <summary>

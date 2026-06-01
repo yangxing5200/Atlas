@@ -1,4 +1,7 @@
-﻿using System.Reflection;
+using System.Reflection;
+using Atlas.Core.Authorization;
+using Atlas.Core.Entities.Tenant;
+using Atlas.Core.Enums;
 using Atlas.Extensions.DependencyInjection;
 using Atlas.Services;
 using Atlas.Services.Abstractions;
@@ -8,6 +11,15 @@ using Atlas.Services.Tenant;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Atlas.Sample.ECommerce;
+
+public static class SampleECommercePermissionCodes
+{
+    public const string ProductsRead = "product.read";
+    public const string ProductsCreate = "product.create";
+    public const string ProductsUpdate = "product.update";
+    public const string ProductsDelete = "product.delete";
+    public const string OrdersPlace = "order.place";
+}
 
 public sealed class SampleECommerceModule : AtlasModule
 {
@@ -26,5 +38,81 @@ public sealed class SampleECommerceModule : AtlasModule
         services.AddScoped<IProductQueryService, ProductQueryService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IOrderCommandService, OrderCommandService>();
+    }
+
+    public override void ConfigureAuthorization(AtlasAuthorizationCatalogBuilder builder)
+    {
+        builder
+            .AddPackage("atlas.standard", "Atlas Standard", AtlasPackageType.Edition)
+            .AddCapability("product.catalog", "Product catalog", "ECommerce")
+            .AddCapability("order.sales", "Sales orders", "ECommerce")
+            .AddPermission(
+                SampleECommercePermissionCodes.ProductsRead,
+                "Read products",
+                "product.catalog",
+                "Product",
+                PermissionScope.Store,
+                resource: "product",
+                action: "read")
+            .AddPermission(
+                SampleECommercePermissionCodes.ProductsCreate,
+                "Create products",
+                "product.catalog",
+                "Product",
+                PermissionScope.Store,
+                resource: "product",
+                action: "create",
+                riskLevel: AtlasPermissionRiskLevel.Medium)
+            .AddPermission(
+                SampleECommercePermissionCodes.ProductsUpdate,
+                "Update products",
+                "product.catalog",
+                "Product",
+                PermissionScope.Store,
+                resource: "product",
+                action: "update",
+                riskLevel: AtlasPermissionRiskLevel.Medium)
+            .AddPermission(
+                SampleECommercePermissionCodes.ProductsDelete,
+                "Delete products",
+                "product.catalog",
+                "Product",
+                PermissionScope.Store,
+                resource: "product",
+                action: "delete",
+                riskLevel: AtlasPermissionRiskLevel.High)
+            .AddPermission(
+                SampleECommercePermissionCodes.OrdersPlace,
+                "Place orders",
+                "order.sales",
+                "Order",
+                PermissionScope.Store,
+                resource: "order",
+                action: "place",
+                riskLevel: AtlasPermissionRiskLevel.Medium)
+            .AddPackageCapability("atlas.standard", "product.catalog")
+            .AddPackageCapability("atlas.standard", "order.sales")
+            .AddMenuItem(
+                "ecommerce.products",
+                "Products",
+                "/products",
+                visibleWhen: AtlasAuthorizationCondition.RequirePermission(SampleECommercePermissionCodes.ProductsRead),
+                sortOrder: 200)
+            .AddDataResource(
+                "product",
+                "Product",
+                entityType: typeof(Product).FullName,
+                storeField: "StoreId",
+                supportedScopes: new[]
+                {
+                    AtlasDataScopeType.CurrentStore,
+                    AtlasDataScopeType.SharedStores
+                })
+            .AddDataResource(
+                "inventory",
+                "Inventory",
+                entityType: typeof(Inventory).FullName,
+                storeField: "StoreId",
+                supportedScopes: new[] { AtlasDataScopeType.CurrentStore });
     }
 }
