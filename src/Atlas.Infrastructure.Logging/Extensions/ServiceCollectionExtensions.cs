@@ -31,7 +31,25 @@ namespace Atlas.Infrastructure.Logging.Extensions
 
             services.AddOptions<LoggingOptions>()
                 .Bind(configuration.GetSection(LoggingOptions.SectionName))
-                .Validate(ValidateLoggingOptions, $"{LoggingOptions.SectionName} is invalid.")
+                .Validate(options => !string.IsNullOrWhiteSpace(options.MinimumLevel), "Logging:Atlas:MinimumLevel is required.")
+                .Validate(
+                    options => !options.EnableFile || !string.IsNullOrWhiteSpace(options.FilePath),
+                    "Logging:Atlas:FilePath is required when Logging:Atlas:EnableFile is true.")
+                .Validate(
+                    options => !options.EnableFile || !string.IsNullOrWhiteSpace(options.ErrorFilePath),
+                    "Logging:Atlas:ErrorFilePath is required when Logging:Atlas:EnableFile is true.")
+                .Validate(
+                    options => !options.EnableFile || !string.IsNullOrWhiteSpace(options.AuditFilePath),
+                    "Logging:Atlas:AuditFilePath is required when Logging:Atlas:EnableFile is true.")
+                .Validate(options => options.RetainedFileCount > 0, "Logging:Atlas:RetainedFileCount must be greater than 0.")
+                .Validate(options => options.ErrorRetainedFileCount > 0, "Logging:Atlas:ErrorRetainedFileCount must be greater than 0.")
+                .Validate(options => options.AuditRetainedFileCount > 0, "Logging:Atlas:AuditRetainedFileCount must be greater than 0.")
+                .Validate(
+                    options => !options.EnableSeq || !string.IsNullOrWhiteSpace(options.SeqServerUrl),
+                    "Logging:Atlas:SeqServerUrl is required when Logging:Atlas:EnableSeq is true.")
+                .Validate(options => options.SlowOperationThresholdMs > 0, "Logging:Atlas:SlowOperationThresholdMs must be greater than 0.")
+                .Validate(options => options.MaxRequestBodyLength > 0, "Logging:Atlas:MaxRequestBodyLength must be greater than 0.")
+                .Validate(options => options.MaxResponseBodyLength > 0, "Logging:Atlas:MaxResponseBodyLength must be greater than 0.")
                 .ValidateOnStart();
 
             // 在宿主启动阶段创建全局 Serilog Logger，确保后续框架日志也进入同一管道。
@@ -125,22 +143,6 @@ namespace Atlas.Infrastructure.Logging.Extensions
             }
 
             return loggerConfig.CreateLogger();
-        }
-
-        private static bool ValidateLoggingOptions(LoggingOptions options)
-        {
-            return !string.IsNullOrWhiteSpace(options.MinimumLevel) &&
-                   (!options.EnableFile ||
-                    (!string.IsNullOrWhiteSpace(options.FilePath) &&
-                     !string.IsNullOrWhiteSpace(options.ErrorFilePath) &&
-                     !string.IsNullOrWhiteSpace(options.AuditFilePath))) &&
-                   options.RetainedFileCount > 0 &&
-                   options.ErrorRetainedFileCount > 0 &&
-                   options.AuditRetainedFileCount > 0 &&
-                   (!options.EnableSeq || !string.IsNullOrWhiteSpace(options.SeqServerUrl)) &&
-                   options.SlowOperationThresholdMs > 0 &&
-                   options.MaxRequestBodyLength > 0 &&
-                   options.MaxResponseBodyLength > 0;
         }
 
         /// <summary>
