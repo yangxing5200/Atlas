@@ -12,6 +12,9 @@ public static class AtlasPermissionCodes
     public const string StoresManage = "stores.manage";
     public const string TenantProvisioning = "tenant.provisioning";
     public const string AuditRead = "audit.read";
+    public const string UsersSensitiveReveal = "users.sensitive.reveal";
+    public const string AuditSensitiveReveal = "audit.sensitive.reveal";
+    public const string SensitiveDataExport = "sensitive.export";
 
     public static IReadOnlyList<BuiltInPermissionDefinition> All { get; } =
     [
@@ -22,7 +25,10 @@ public static class AtlasPermissionCodes
         new(StoresRead, "Read stores", "Store", PermissionScope.Store),
         new(StoresManage, "Manage stores", "Store", PermissionScope.Store),
         new(TenantProvisioning, "Provision tenants", "Tenant", PermissionScope.Platform),
-        new(AuditRead, "Read audit events", "Audit", PermissionScope.Tenant)
+        new(AuditRead, "Read audit events", "Audit", PermissionScope.Tenant),
+        new(UsersSensitiveReveal, "Reveal user sensitive data", "User", PermissionScope.Tenant),
+        new(AuditSensitiveReveal, "Reveal audit sensitive data", "Audit", PermissionScope.Tenant),
+        new(SensitiveDataExport, "Export sensitive data", "Security", PermissionScope.Tenant)
     ];
 }
 

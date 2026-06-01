@@ -28,6 +28,7 @@ public sealed class AtlasExceptionHandler : IExceptionHandler
         {
             Atlas.Core.Exceptions.ValidationException => (StatusCodes.Status400BadRequest, "Validation failed"),
             ArgumentException => (StatusCodes.Status400BadRequest, "Invalid request"),
+            UnauthorizedAccessException => (StatusCodes.Status403Forbidden, "Forbidden"),
             InvalidOperationException => (StatusCodes.Status400BadRequest, "Invalid operation"),
             TenantNotFoundException => (StatusCodes.Status404NotFound, "Tenant not found"),
             AtlasException => (StatusCodes.Status400BadRequest, "Request failed"),

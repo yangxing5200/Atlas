@@ -1,4 +1,5 @@
-﻿using Atlas.Core.Enums;
+﻿using Atlas.Core.DataMasking;
+using Atlas.Core.Enums;
 
 namespace Atlas.Models.DTOs
 {
@@ -12,7 +13,10 @@ namespace Atlas.Models.DTOs
         public string UserName { get; set; } = string.Empty;
         public string RealName { get; set; } = string.Empty;
         public string? NickName { get; set; }
+        [SensitiveData(MaskKind.Phone)]
         public string? Phone { get; set; }
+
+        [SensitiveData(MaskKind.Email)]
         public string? Email { get; set; }
         public string? Avatar { get; set; }
         public Gender Gender { get; set; }
@@ -75,7 +79,10 @@ namespace Atlas.Models.DTOs
     public class UserLoginLogDto
     {
         public long Id { get; set; }
+        [SensitiveData(MaskKind.Token)]
         public string? SessionId { get; set; }
+
+        [SensitiveData(MaskKind.IpAddress)]
         public string IpAddress { get; set; } = string.Empty;
         public string? DeviceType { get; set; }
         public string? Browser { get; set; }

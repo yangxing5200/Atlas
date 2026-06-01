@@ -8,6 +8,7 @@ using Atlas.Data.Tenant.Middleware;
 using Atlas.Extensions.DependencyInjection.HealthChecks;
 using Atlas.Infrastructure.Logging.Extensions;
 using Atlas.Infrastructure.Security;
+using Atlas.Infrastructure.Security.DataMasking;
 using Atlas.Infrastructure.Security.Permissions;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
@@ -171,7 +172,10 @@ public static class AtlasWebApiExtensions
         builder.Services.AddScoped<IAuthorizationHandler, TenantAdminAuthorizationHandler>();
         builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
-        var mvcBuilder = builder.Services.AddControllers();
+        var mvcBuilder = builder.Services.AddControllers(mvcOptions =>
+        {
+            mvcOptions.Filters.AddService<DataMaskingResultFilter>();
+        });
         foreach (var assembly in moduleCatalog.ControllerAssemblies)
         {
             mvcBuilder.AddApplicationPart(assembly);
@@ -230,6 +234,7 @@ public static class AtlasWebApiExtensions
             AtlasModuleCatalog.CreateWithBuiltInModules(moduleCatalog.Modules),
             messagingConsumerAssemblies,
             AtlasRuntimeMode.WebApi);
+        builder.Services.AddAtlasDataMasking(builder.Configuration);
         builder.Services.AddAtlasLogging(builder.Configuration);
         builder.Services.AddAtlasHealthChecks(builder.Configuration);
 
