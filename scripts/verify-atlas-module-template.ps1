@@ -18,6 +18,44 @@ if (-not $resolvedTmpRoot.StartsWith($repoRoot, [StringComparison]::OrdinalIgnor
     throw "Refusing to use temp directory outside repository: $resolvedTmpRoot"
 }
 
+function Find-TemplateMatches {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Pattern
+    )
+
+    $ripgrep = Get-Command rg -CommandType Application -ErrorAction SilentlyContinue
+    if ($ripgrep) {
+        try {
+            $matches = & $ripgrep.Source $Pattern . -g "*.cs" -g "*.csproj" --glob "!bin/**" --glob "!obj/**"
+            if ($LASTEXITCODE -le 1) {
+                return @($matches)
+            }
+        }
+        catch {
+            Write-Verbose "ripgrep is unavailable; falling back to Select-String. $($_.Exception.Message)"
+        }
+    }
+
+    $files = Get-ChildItem -Path . -Recurse -File |
+        Where-Object {
+            $_.Extension -in ".cs", ".csproj" -and
+            $_.FullName -notmatch "[\\/](bin|obj)[\\/]"
+        }
+
+    if (-not $files) {
+        return @()
+    }
+
+    return @(
+        $files |
+            Select-String -Pattern $Pattern |
+            ForEach-Object {
+                "$($_.Path):$($_.LineNumber):$($_.Line.TrimEnd())"
+            }
+    )
+}
+
 if (Test-Path -LiteralPath $outputPath) {
     $resolvedOutput = (Resolve-Path -LiteralPath $outputPath).Path
     if (-not $resolvedOutput.StartsWith($resolvedTmpRoot, [StringComparison]::OrdinalIgnoreCase)) {
@@ -39,13 +77,13 @@ try {
     dotnet restore $testProject
     dotnet test $testProject --no-restore
 
-    $forbidden = & rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" . -g "*.cs" -g "*.csproj" --glob "!bin/**" --glob "!obj/**"
-    if ($LASTEXITCODE -eq 0) {
+    $forbidden = Find-TemplateMatches "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters"
+    if ($forbidden.Count -gt 0) {
         throw "Generated template output contains forbidden data-access APIs:`n$($forbidden -join [Environment]::NewLine)"
     }
 
-    $dbSetMatches = & rg "DbSet<" . -g "*.cs" -g "*.csproj" --glob "!bin/**" --glob "!obj/**"
-    if ($LASTEXITCODE -eq 0) {
+    $dbSetMatches = Find-TemplateMatches "DbSet<"
+    if ($dbSetMatches.Count -gt 0) {
         throw "Generated template output contains DbSet declarations:`n$($dbSetMatches -join [Environment]::NewLine)"
     }
 
