@@ -18,6 +18,7 @@ using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Common.Tenants;
 using Atlas.Infrastructure.Security;
 using Atlas.Infrastructure.Security.Permissions;
+using Atlas.Infrastructure.Security.DataMasking;
 using Atlas.Services;
 using Atlas.Services.Abstractions;
 using Atlas.Services.Tenant;
@@ -79,9 +80,11 @@ internal sealed class AtlasBuiltInModule : AtlasModule
         services.AddScoped<ITenantProvisioningService, TenantProvisioningService>();
         services.AddScoped<IStoreService, StoreService>();
         services.AddScoped<IUserService, UserService>();
+        services.AddScoped<IUserSensitiveDataRevealService, UserSensitiveDataRevealService>();
         services.AddScoped<IUserLoginLogService, UserLoginLogService>();
         services.AddScoped<IOperationLogService, OperationLogService>();
         services.AddScoped<IAuditEventService, AuditEventService>();
+        services.AddScoped<ISensitiveDataAccessAuditService, SensitiveDataAccessAuditService>();
         services.AddScoped<IAuthorizationCatalogSyncService, AuthorizationCatalogSyncService>();
         services.AddScoped<IEntitlementService, EntitlementService>();
         services.AddSingleton<IAtlasAuthorizationConditionEvaluator, AtlasAuthorizationConditionEvaluator>();
@@ -106,6 +109,7 @@ internal sealed class AtlasBuiltInModule : AtlasModule
             .AddCapability("security.roles", "Role management", "Security")
             .AddCapability("store.management", "Store management", "Organization")
             .AddCapability("audit.security", "Security audit", "Security")
+            .AddCapability("sensitive.data", "Sensitive data governance", "Security")
             .AddCapability("authorization.governance", "Authorization governance", "Security")
             .AddPermission(
                 AtlasPermissionCodes.TenantAdmin,
@@ -187,6 +191,33 @@ internal sealed class AtlasBuiltInModule : AtlasModule
                 action: "read",
                 riskLevel: AtlasPermissionRiskLevel.Medium)
             .AddPermission(
+                AtlasPermissionCodes.UsersSensitiveReveal,
+                "Reveal user sensitive data",
+                "sensitive.data",
+                "User",
+                PermissionScope.Tenant,
+                resource: "user",
+                action: "sensitive.reveal",
+                riskLevel: AtlasPermissionRiskLevel.High)
+            .AddPermission(
+                AtlasPermissionCodes.AuditSensitiveReveal,
+                "Reveal audit sensitive data",
+                "sensitive.data",
+                "Audit",
+                PermissionScope.Tenant,
+                resource: "audit-event",
+                action: "sensitive.reveal",
+                riskLevel: AtlasPermissionRiskLevel.High)
+            .AddPermission(
+                AtlasPermissionCodes.SensitiveDataExport,
+                "Export sensitive data",
+                "sensitive.data",
+                "Security",
+                PermissionScope.Tenant,
+                resource: "sensitive-data",
+                action: "export",
+                riskLevel: AtlasPermissionRiskLevel.High)
+            .AddPermission(
                 AtlasPermissionCodes.AuthorizationRead,
                 "Read authorization catalog and diagnostics",
                 "authorization.governance",
@@ -209,6 +240,7 @@ internal sealed class AtlasBuiltInModule : AtlasModule
             .AddPackageCapability("atlas.core", "security.roles")
             .AddPackageCapability("atlas.core", "store.management")
             .AddPackageCapability("atlas.core", "audit.security")
+            .AddPackageCapability("atlas.core", "sensitive.data")
             .AddPackageCapability("atlas.core", "authorization.governance")
             .AddMenuItem(
                 "admin.users",

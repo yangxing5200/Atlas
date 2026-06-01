@@ -25,6 +25,8 @@ public static class AuthorizationPolicies
     public const string RequireAuditRead = PermissionPrefix + AtlasPermissionCodes.AuditRead;
     public const string RequireAuthorizationRead = PermissionPrefix + AtlasPermissionCodes.AuthorizationRead;
     public const string RequireAuthorizationManage = PermissionPrefix + AtlasPermissionCodes.AuthorizationManage;
+    public const string RequireUsersSensitiveReveal = PermissionPrefix + AtlasPermissionCodes.UsersSensitiveReveal;
+    public const string RequireAuditSensitiveReveal = PermissionPrefix + AtlasPermissionCodes.AuditSensitiveReveal;
 
     public static string RequirePermission(string permissionCode)
     {

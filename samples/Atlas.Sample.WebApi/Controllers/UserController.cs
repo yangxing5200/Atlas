@@ -1,4 +1,5 @@
-﻿using Atlas.Core.Services;
+﻿using Atlas.Core.DataMasking;
+using Atlas.Core.Services;
 using Atlas.Infrastructure.Security;
 using Atlas.Infrastructure.Security.Permissions;
 using Atlas.Models.DTOs;
@@ -16,13 +17,16 @@ namespace Atlas.Sample.WebApi.Controllers;
 public sealed class UserController : ControllerBase
 {
     private readonly IUserService _userService;
+    private readonly IUserSensitiveDataRevealService _sensitiveDataRevealService;
     private readonly ICurrentIdentity _currentIdentity;
 
     public UserController(
         IUserService userService,
+        IUserSensitiveDataRevealService sensitiveDataRevealService,
         ICurrentIdentity currentIdentity)
     {
         _userService = userService ?? throw new ArgumentNullException(nameof(userService));
+        _sensitiveDataRevealService = sensitiveDataRevealService ?? throw new ArgumentNullException(nameof(sensitiveDataRevealService));
         _currentIdentity = currentIdentity ?? throw new ArgumentNullException(nameof(currentIdentity));
     }
 
@@ -145,6 +149,33 @@ public sealed class UserController : ControllerBase
         return _userService.GetUsersAsync(request);
     }
 
+
+    [HttpPost("{userId:long}/sensitive-fields/reveal")]
+    [Authorize(Policy = AuthorizationPolicies.RequireUsersSensitiveReveal)]
+    [DisableDataMasking]
+    [ProducesResponseType(typeof(RevealSensitiveFieldsResponse), StatusCodes.Status200OK)]
+    public async Task<ActionResult<RevealSensitiveFieldsResponse>> RevealSensitiveFields(
+        [FromRoute] long userId,
+        [FromBody] RevealSensitiveFieldsRequest request,
+        CancellationToken ct)
+    {
+        SetNoStoreHeaders();
+        return Ok(await _sensitiveDataRevealService.RevealUserFieldsAsync(userId, request, ct));
+    }
+
+    [HttpPost("login-logs/{loginLogId:long}/sensitive-fields/reveal")]
+    [Authorize(Policy = AuthorizationPolicies.RequireAuditSensitiveReveal)]
+    [DisableDataMasking]
+    [ProducesResponseType(typeof(RevealSensitiveFieldsResponse), StatusCodes.Status200OK)]
+    public async Task<ActionResult<RevealSensitiveFieldsResponse>> RevealLoginLogSensitiveFields(
+        [FromRoute] long loginLogId,
+        [FromBody] RevealSensitiveFieldsRequest request,
+        CancellationToken ct)
+    {
+        SetNoStoreHeaders();
+        return Ok(await _sensitiveDataRevealService.RevealLoginLogFieldsAsync(loginLogId, request, ct));
+    }
+
     [HttpPost("change-password")]
     [Authorize(Policy = AuthorizationPolicies.RequireIdentitySelf)]
     [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
@@ -220,6 +251,12 @@ public sealed class UserController : ControllerBase
     public Task<List<UserLoginLogDto>> GetActiveSessions([FromRoute] long userId)
     {
         return _userService.GetActiveSessionsAsync(userId);
+    }
+
+    private void SetNoStoreHeaders()
+    {
+        Response.Headers["Cache-Control"] = "no-store";
+        Response.Headers["Pragma"] = "no-cache";
     }
 
     private ActionResult<OperationResult> ToActionResult(OperationResult result)
