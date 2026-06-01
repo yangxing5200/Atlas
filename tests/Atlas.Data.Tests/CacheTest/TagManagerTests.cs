@@ -1,4 +1,4 @@
-using Atlas.Infrastructure.Caching.Abstractions;
+﻿using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Tags;
 using FluentAssertions;
 using Moq;

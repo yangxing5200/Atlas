@@ -1,4 +1,4 @@
-# Atlas 模块系统接入指南
+﻿# Atlas 模块系统接入指南
 
 本文说明 PR-07/PR-08 引入的模块接入方式。模块用于把业务能力从宿主启动代码中拆出来，由模块自行声明服务注册、Controller 程序集、MassTransit Consumer 程序集和 AutoMapper Profile 程序集。
 

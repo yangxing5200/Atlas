@@ -1,4 +1,4 @@
-using Atlas.Core.Entities.Tenant;
+﻿using Atlas.Core.Entities.Tenant;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 

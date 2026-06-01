@@ -1,5 +1,6 @@
-using Atlas.Core.Services;
+﻿using Atlas.Core.Services;
 using Atlas.Infrastructure.Security;
+using Atlas.Infrastructure.Security.Permissions;
 using Atlas.Models.DTOs;
 using Atlas.Models.Requests;
 using Atlas.Models.Responses;
@@ -40,6 +41,17 @@ public sealed class UserController : ControllerBase
             : Ok(response);
     }
 
+    [HttpPost("refresh-token")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(LoginResponse), StatusCodes.Status200OK)]
+    public async Task<ActionResult<LoginResponse>> RefreshToken([FromBody] RefreshTokenRequest request)
+    {
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
+        var userAgent = Request.Headers["User-Agent"].ToString();
+        var response = await _userService.RefreshTokenAsync(request, ipAddress, userAgent);
+        return response.Success ? Ok(response) : Unauthorized(response);
+    }
+
     [HttpPost("logout")]
     [Authorize]
     [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
@@ -75,7 +87,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.RequireUsersManage)]
     [ProducesResponseType(typeof(OperationResult<UserDto>), StatusCodes.Status201Created)]
     public async Task<ActionResult<OperationResult<UserDto>>> CreateUser([FromBody] CreateUserRequest request)
     {
@@ -87,7 +99,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpPut]
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.RequireUsersManage)]
     [ProducesResponseType(typeof(OperationResult<UserDto>), StatusCodes.Status200OK)]
     public async Task<ActionResult<OperationResult<UserDto>>> UpdateUser([FromBody] UpdateUserRequest request)
     {
@@ -95,7 +107,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpDelete("{id:long}")]
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.RequireUsersManage)]
     [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
     public async Task<ActionResult<OperationResult>> DeleteUser([FromRoute] long id)
     {
@@ -104,7 +116,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpGet("{id:long}")]
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.RequireUsersRead)]
     [ProducesResponseType(typeof(UserDetailDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<UserDetailDto>> GetById([FromRoute] long id)
     {
@@ -115,7 +127,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpGet("by-username/{userName}")]
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.RequireUsersRead)]
     [ProducesResponseType(typeof(UserDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<UserDto>> GetByUserName([FromRoute] string userName)
     {
@@ -126,7 +138,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpGet]
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.RequireUsersRead)]
     [ProducesResponseType(typeof(UserPagedResponse), StatusCodes.Status200OK)]
     public Task<UserPagedResponse> GetUsers([FromQuery] UserQueryRequest request)
     {
@@ -145,7 +157,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpPost("reset-password")]
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.RequireUsersManage)]
     [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
     public async Task<ActionResult<OperationResult>> ResetPassword([FromBody] ResetPasswordRequest request)
     {
@@ -153,15 +165,23 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpPost("assign-stores")]
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.RequireUsersManage)]
     [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
     public async Task<ActionResult<OperationResult>> AssignStores([FromBody] AssignStoresRequest request)
     {
         return ToActionResult(await _userService.AssignStoresAsync(request));
     }
 
+    [HttpPost("assign-roles")]
+    [Authorize(Policy = AuthorizationPolicies.RequireRolesManage)]
+    [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<OperationResult>> AssignRoles([FromBody] AssignRolesRequest request)
+    {
+        return ToActionResult(await _userService.AssignRolesAsync(request));
+    }
+
     [HttpPut("{userId:long}/status")]
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.RequireUsersManage)]
     [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
     public async Task<ActionResult<OperationResult>> SetUserStatus(
         [FromRoute] long userId,
@@ -171,7 +191,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpPost("{userId:long}/unlock")]
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.RequireUsersManage)]
     [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
     public async Task<ActionResult<OperationResult>> UnlockUser([FromRoute] long userId)
     {
@@ -179,7 +199,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpGet("login-logs")]
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.RequireAuditRead)]
     [ProducesResponseType(typeof(LoginLogPagedResponse), StatusCodes.Status200OK)]
     public Task<LoginLogPagedResponse> GetLoginLogs([FromQuery] LoginLogQueryRequest request)
     {
@@ -187,7 +207,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpPost("{userId:long}/force-logout")]
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.RequireUsersManage)]
     [ProducesResponseType(typeof(OperationResult), StatusCodes.Status200OK)]
     public async Task<ActionResult<OperationResult>> ForceLogoutAll([FromRoute] long userId)
     {
@@ -195,7 +215,7 @@ public sealed class UserController : ControllerBase
     }
 
     [HttpGet("{userId:long}/sessions")]
-    [Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+    [Authorize(Policy = AuthorizationPolicies.RequireUsersRead)]
     [ProducesResponseType(typeof(List<UserLoginLogDto>), StatusCodes.Status200OK)]
     public Task<List<UserLoginLogDto>> GetActiveSessions([FromRoute] long userId)
     {

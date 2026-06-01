@@ -1,4 +1,4 @@
-using Atlas.Infrastructure.Caching.Abstractions;
+﻿using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Core;
 using Atlas.Infrastructure.Caching.Core.Models;
 using Atlas.Infrastructure.Caching.Extensions;

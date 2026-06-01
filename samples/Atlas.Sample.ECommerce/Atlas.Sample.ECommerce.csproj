@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Atlas.Extensions.DependencyInjection\Atlas.Extensions.DependencyInjection.csproj" />
+    <ProjectReference Include="..\..\src\Atlas.Services\Atlas.Services.csproj" />
+    <ProjectReference Include="..\..\src\Atlas.Services.Abstractions\Atlas.Services.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Atlas.Services.Tenant\Atlas.Services.Tenant.csproj" />
+  </ItemGroup>
+
+</Project>

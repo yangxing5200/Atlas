@@ -1,4 +1,4 @@
-using Atlas.Services.Tenant;
+﻿using Atlas.Services.Tenant;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 

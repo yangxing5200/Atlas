@@ -1,4 +1,4 @@
-using Atlas.Data.Common;
+ï»¿using Atlas.Data.Common;
 using Atlas.Data.Global;
 using Atlas.Data.Global.Seeds;
 using Atlas.Data.Tenant;
@@ -22,13 +22,13 @@ public class GlobalDataSeederTest : IntegrationTestBase
     [Fact]
     public async Task GlobalDataSeederTest2()
     {
-        // 1. »ñÈ¡ÖÖ×ÓÉú³ÉÆ÷
+        // 1. ï¿½ï¿½È¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         var seeder = GetService<GlobalDataSeeder>();
 
-        // 2. Ö´ÐÐÖÖ×ÓÊý¾Ý
+        // 2. Ö´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         await seeder.SeedAsync();
 
-        // 3. ÑéÖ¤
+        // 3. ï¿½ï¿½Ö¤
         var context = GetService<AtlasGlobalDbContext>();
         Assert.True(await context.Tenants.AnyAsync());
     }

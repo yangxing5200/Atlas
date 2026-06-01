@@ -1,4 +1,4 @@
-// Abstractions/ICacheService.cs
+﻿// Abstractions/ICacheService.cs
 using System;
 using System.Collections.Generic;
 using System.Threading;

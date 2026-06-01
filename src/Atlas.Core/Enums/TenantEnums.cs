@@ -33,6 +33,15 @@ public enum TenantStatus
     Suspended = 4
 }
 
+public enum TenantSchemaMigrationStatus
+{
+    Pending = 0,
+    Running = 1,
+    Succeeded = 2,
+    Failed = 3,
+    Skipped = 4
+}
+
 /// <summary>
 /// 租户类型
 /// </summary>
@@ -181,6 +190,19 @@ public enum UserStatus
 
     /// <summary>已注销</summary>
     Cancelled = 9
+}
+
+public enum PermissionScope
+{
+    Platform = 0,
+    Tenant = 1,
+    Store = 2
+}
+
+public enum AuditEventOutcome
+{
+    Succeeded = 1,
+    Failed = 2
 }
 
 /// <summary>

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -26,12 +26,12 @@ namespace Atlas.Infrastructure.Security
     {
         private readonly RequestDelegate _next;
         private readonly ILogger<TokenVersionValidationMiddleware> _logger;
-        
+
         // 默认跳过公开入口和基础设施端点，避免登录、健康检查等请求被版本校验拦截。
         private static readonly string[] DefaultSkipPaths = new[]
         {
             "/api/user/login",
-            "/api/user/register", 
+            "/api/user/register",
             "/api/test/",
             "/swagger",
             "/health",

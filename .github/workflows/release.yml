@@ -1,0 +1,170 @@
+﻿name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: SemVer version to release, without leading v.
+        required: true
+        default: 0.2.0
+      dryRun:
+        description: Build artifacts without pushing NuGet, Docker images, or GitHub release.
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+
+jobs:
+  package:
+    runs-on: windows-latest
+    outputs:
+      release_version: ${{ steps.version.outputs.release_version }}
+      dry_run: ${{ steps.version.outputs.dry_run }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          $releaseVersion = "${{ inputs.version }}"
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $releaseVersion = "${{ github.ref_name }}".TrimStart("v")
+          }
+
+          if ([string]::IsNullOrWhiteSpace($releaseVersion)) {
+            throw "Release version is required."
+          }
+
+          $versionLine = Select-String -Path Directory.Build.props -Pattern '<VersionPrefix[^>]*>([^<]+)</VersionPrefix>' | Select-Object -First 1
+          if (-not $versionLine -or $versionLine.Matches[0].Groups[1].Value -ne $releaseVersion) {
+            throw "Release version '$releaseVersion' must match Directory.Build.props VersionPrefix."
+          }
+
+          $dryRun = "true"
+          if ("${{ github.event_name }}" -eq "push") {
+            $dryRun = "false"
+          } elseif ("${{ inputs.dryRun }}" -eq "false") {
+            $dryRun = "false"
+          }
+
+          "release_version=$releaseVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "dry_run=$dryRun" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Validate repository hygiene
+        shell: pwsh
+        run: |
+          .\scripts\verify-line-endings.ps1
+          .\scripts\verify-central-package-versions.ps1
+
+      - name: Restore
+        run: dotnet restore Atlas.sln
+
+      - name: Build
+        run: dotnet build Atlas.sln --no-restore --configuration Release
+
+      - name: Test
+        shell: pwsh
+        run: |
+          dotnet test tests/Atlas.Core.Tests/Atlas.Core.Tests.csproj --no-build --configuration Release
+          dotnet test tests/Atlas.Analyzers.Tests/Atlas.Analyzers.Tests.csproj --no-build --configuration Release
+          dotnet test tests/Atlas.Data.Tests/Atlas.Data.Tests.csproj --no-build --configuration Release
+          dotnet test tests/Atlas.Services.Tests/Atlas.Services.Tests.csproj --no-build --configuration Release
+
+      - name: Pack
+        shell: pwsh
+        run: .\scripts\pack-atlas-framework.ps1 -NoBuild -Configuration Release -Output artifacts/packages -PackageVersion ${{ steps.version.outputs.release_version }}
+
+      - name: Generate release notes
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          $notes = Get-Content .github/release-notes-template.md -Raw
+          $notes = $notes.Replace("{{version}}", "${{ steps.version.outputs.release_version }}")
+          Set-Content artifacts/release-notes.md $notes -NoNewline
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: artifacts/packages/*
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: artifacts/release-notes.md
+
+      - name: Push NuGet packages
+        if: ${{ steps.version.outputs.dry_run == 'false' }}
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:NUGET_API_KEY)) {
+            Write-Warning "NUGET_API_KEY is not configured; skipping NuGet push."
+            return
+          }
+
+          dotnet nuget push "artifacts/packages/*.nupkg" --api-key "$env:NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Create GitHub release
+        if: ${{ steps.version.outputs.dry_run == 'false' && github.ref_type == 'tag' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: artifacts/release-notes.md
+          files: artifacts/packages/*
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: package
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker images
+        run: |
+          docker build -f src/Atlas.WebApi/Dockerfile -t atlas-webapi:${{ needs.package.outputs.release_version }} .
+          docker build -f src/Atlas.Worker/Dockerfile -t atlas-worker:${{ needs.package.outputs.release_version }} .
+          docker build -f src/Atlas.MigrationJob/Dockerfile -t atlas-migration-job:${{ needs.package.outputs.release_version }} .
+
+      - name: Login to GHCR
+        if: ${{ needs.package.outputs.dry_run == 'false' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Docker images
+        if: ${{ needs.package.outputs.dry_run == 'false' }}
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          VERSION="${{ needs.package.outputs.release_version }}"
+          docker tag atlas-webapi:$VERSION ghcr.io/$OWNER/atlas-webapi:$VERSION
+          docker tag atlas-worker:$VERSION ghcr.io/$OWNER/atlas-worker:$VERSION
+          docker tag atlas-migration-job:$VERSION ghcr.io/$OWNER/atlas-migration-job:$VERSION
+          docker push ghcr.io/$OWNER/atlas-webapi:$VERSION
+          docker push ghcr.io/$OWNER/atlas-worker:$VERSION
+          docker push ghcr.io/$OWNER/atlas-migration-job:$VERSION

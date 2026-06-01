@@ -1,7 +1,8 @@
-using Microsoft.AspNetCore.Authentication;
+﻿using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Globalization;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using System.Threading.Tasks;
@@ -36,9 +37,8 @@ namespace Atlas.Infrastructure.Security
             IOptionsMonitor<CustomTokenAuthenticationOptions> options,
             ILoggerFactory logger,
             UrlEncoder encoder,
-            ISystemClock clock,
             ITokenService tokenService)
-            : base(options, logger, encoder, clock)
+            : base(options, logger, encoder)
         {
             _tokenService = tokenService;
         }
@@ -60,17 +60,23 @@ namespace Atlas.Infrastructure.Security
                     return AuthenticateResult.Fail("Invalid or expired token");
                 }
 
+                var userId = tokenInfo.UserId.GetValueOrDefault().ToString(CultureInfo.InvariantCulture);
+                var storeId = tokenInfo.StoreId.GetValueOrDefault().ToString(CultureInfo.InvariantCulture);
+                var tenantId = tokenInfo.TenantId.GetValueOrDefault().ToString(CultureInfo.InvariantCulture);
+                var tokenVersion = tokenInfo.TokenVersion.ToString(CultureInfo.InvariantCulture);
+                var userName = string.IsNullOrWhiteSpace(tokenInfo.UserName) ? userId : tokenInfo.UserName;
+
                 // 保留 Atlas 内部 claim 名称，后续租户上下文和版本校验中间件依赖这些字段。
                 var claims = new[]
                 {
-                    new Claim(ClaimTypes.NameIdentifier, tokenInfo.UserId.ToString()),
-                    new Claim("uid", tokenInfo.UserId.ToString()),
-                    new Claim("sid", tokenInfo.StoreId.ToString()),
-                    new Claim("tid", tokenInfo.TenantId.ToString()),
-                    new Claim("uname", tokenInfo.UserName ?? tokenInfo.UserId.ToString()),
+                    new Claim(ClaimTypes.NameIdentifier, userId),
+                    new Claim("uid", userId),
+                    new Claim("sid", storeId),
+                    new Claim("tid", tenantId),
+                    new Claim("uname", userName),
                     new Claim("token", token),
-                    new Claim("token_version", tokenInfo.TokenVersion.ToString()), // ✅ 新增
-                    new Claim("session_id", tokenInfo.SessionId ?? "") // ✅ 新增
+                    new Claim("token_version", tokenVersion),
+                    new Claim("session_id", tokenInfo.SessionId)
                 };
 
                 var identity = new ClaimsIdentity(claims, Scheme.Name);

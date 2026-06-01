@@ -1,4 +1,4 @@
-# 登录授权与数据范围隔离说明
+﻿# 登录授权与数据范围隔离说明
 
 本文说明 Atlas 当前登录授权、门店切换、Token 鉴权、直营共享、集团共享、门店独享数据隔离的运行方式。
 
@@ -94,7 +94,7 @@ POST /api/User/login
    - 优先 `UserStore.IsPrimary = true` 的门店。
    - 其次用户 `DefaultStoreId`。
    - 最后使用第一个可操作门店。
-6. 生成 Token，Token 中写入 `UserId`、`TenantId`、`StoreId`、`SessionId`、`TokenVersion`、过期时间。
+6. 生成 access token 和 refresh token。Access token 中写入 `UserId`、`TenantId`、`StoreId`、`SessionId`、`TokenVersion`、过期时间；refresh token 只在服务端保存哈希。
 7. 写入登录日志，返回用户信息、当前门店和可切换门店列表。
 
 响应关键字段：
@@ -142,7 +142,7 @@ Authorization: Bearer {旧Token}
 4. 生成一个新的 Token，新 Token 的 `StoreId` 等于目标门店。
 5. 记录切换门店操作日志。
 6. 将旧 Token 的 `SessionId` 加入失效黑名单。
-7. 返回新 Token 和新的当前门店。
+7. 返回新 Token、refresh token 和新的当前门店。
 
 关键点：
 
@@ -207,6 +207,7 @@ Token 由 `CustomTokenService` 生成，格式是：
 | --- | --- | --- |
 | Session 黑名单 | 只让某个 token/session 失效 | 退出登录、切换门店 |
 | TokenVersion | 让某个用户所有旧 token 失效 | 修改密码、重置密码、强制下线、重新分配门店 |
+| RefreshToken 撤销 | 阻止旧会话继续换取新 access token | 退出登录、切换门店、修改密码、重置密码、强制下线 |
 
 门店授权变更时，`AssignStoresAsync` 会递增目标用户 `TokenVersion`，并更新缓存。这样用户旧 Token 会失效，必须重新登录或重新获取 Token，避免继续使用已经被撤销的门店权限。
 
@@ -298,7 +299,7 @@ WHERE StoreId IN (...)
 | 使用 `RepositoryBase.QueryTrackingAsync()` | 是 |
 | 使用 `db.ScopedSet<TEntity>(scope)` | 是 |
 | 直接使用 `db.Set<TEntity>()` | 否，业务/API 层已由 Analyzer 阻断 |
-| 原生 SQL / `FromSqlRaw` | 否，租户库写 SQL 必须走 `ITenantSqlExecutor` |
+| 原生 SQL / `FromSqlRaw` | 否，租户库写 SQL 必须走 `ITenantSqlExecutor` 命名方法 |
 | 实体没有实现任何范围接口 | 不做租户/门店隔离 |
 
 ## 八、表类型如何表达
@@ -582,7 +583,7 @@ visibleStoreOnlyInventories = 1
 
 1. 数据隔离依赖实体接口。新表必须正确选择 `ITenantEntity`、`ISharedEntity`、`IStoreOnlyEntity`。
 2. 直接 `db.Set<TEntity>()` 查询不会自动套范围，业务/API 层不得使用，基础设施代码必须显式限定 `TenantId`。
-3. 原生 SQL 不会自动隔离，租户库写 SQL 必须通过 `ITenantSqlExecutor` 并包含 `TenantId` 条件。
+3. 原生 SQL 不会自动隔离，租户库写 SQL 必须通过 `ITenantSqlExecutor` 命名方法，并由 executor 生成带 `TenantId` 谓词的最终语句。
 4. 当前没有独立的 `IGroupSharedEntity`。集团共享表建议只实现 `ITenantEntity`。如果业务需要“有 StoreId 归属但全集团可见”的表，建议新增专门标记接口。
 5. `DataScope` 计算的是当前门店的业务共享范围，不是用户所有授权门店范围。用户所有授权门店只用于门店选择和切换。
 

@@ -1,4 +1,4 @@
-using Atlas.Extensions.DependencyInjection;
+﻿using Atlas.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;

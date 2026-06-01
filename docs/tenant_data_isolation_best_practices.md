@@ -1,4 +1,4 @@
-# 多租户数据隔离最佳实践
+﻿# 多租户数据隔离最佳实践
 
 Atlas 的租户业务数据按 `TenantId` 存放在租户库中。当前设计允许多个租户共用同一个租户库，因此不能把“拿到了某个租户的 DbContext”理解为已经完成租户隔离。所有租户业务表的读、写、更新、删除都必须在 SQL 语义上带有租户边界。
 
@@ -99,22 +99,18 @@ var messages = await db.Set<TenantOutboxMessage>()
 
 业务层对 `AtlasTenantDbContext` 的依赖必须收口到 Repository、QueryService 或明确的基础设施服务。基础设施实体仍应继续治理：优先建立专用 Repository，并逐步移除业务程序集对这些实体类型的引用。
 
-原生 SQL 必须通过 `ITenantSqlExecutor` 进入受控入口：
+租户库原生 SQL 必须通过 `ITenantSqlExecutor` 的命名方法进入受控入口。调用方不能传入完整 SQL 字符串，只能选择框架提供的基础设施动作：
 
 ```csharp
-await tenantSqlExecutor.ExecuteTenantCommandAsync(
+await tenantSqlExecutor.DeleteReceivedInboxMessagesAsync(
     db,
     tenantId,
-    $"""
-     DELETE FROM TenantInboxMessages
-     WHERE TenantId = {tenantId}
-       AND ReceivedAtUtc < {cutoff}
-     LIMIT {batchSize}
-     """,
+    cutoff,
+    batchSize,
     ct);
 ```
 
-`ITenantSqlExecutor` 会拒绝缺少 `TenantId` 条件的 SQL。确需跨租户运维时，应建立单独命名的基础设施方法，并在 Code Review 中说明原因。
+新增 SQL 动作时必须在 `ITenantSqlExecutor` 上增加窄方法，显式接收 `tenantId`，并用单元测试验证缺少租户、错误租户、正常执行三类场景。确需跨租户运维时，应建立单独命名的基础设施方法，并在 Code Review 中说明原因。
 
 ## 写入和审计
 
@@ -156,7 +152,7 @@ HTTP 请求内写入时，`AuditInterceptor` 会根据 `ICurrentIdentity` 填充
 
 ## Code Review 检查清单
 
-看到以下代码时必须检查租户边界：
+完整 PR 清单见 `docs/tenant_boundary_pr_review_checklist.md`。看到以下代码时必须检查租户边界：
 
 - 业务层直接注入或使用 `AtlasTenantDbContext`
 - `db.Set<租户实体>()`

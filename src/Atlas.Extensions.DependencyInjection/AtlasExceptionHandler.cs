@@ -1,4 +1,4 @@
-using Atlas.Core.Exceptions;
+﻿using Atlas.Core.Exceptions;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;

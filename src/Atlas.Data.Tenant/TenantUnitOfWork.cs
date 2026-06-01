@@ -175,7 +175,7 @@ namespace Atlas.Data.Tenant
                     {
                         _transaction.Rollback();
                     }
-                    catch (Exception ex)
+                    catch
                     {
                         // 记录日志但不抛出异常
                     }

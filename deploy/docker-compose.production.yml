@@ -1,0 +1,161 @@
+﻿services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${ATLAS_MYSQL_ROOT_PASSWORD:-change-me-root}
+      MYSQL_DATABASE: ${ATLAS_MYSQL_DATABASE:-atlas_global}
+      MYSQL_USER: ${ATLAS_MYSQL_USER:-atlas}
+      MYSQL_PASSWORD: ${ATLAS_MYSQL_PASSWORD:-change-me-password}
+      TZ: ${TZ:-Asia/Shanghai}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+    volumes:
+      - atlas-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - atlas-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${ATLAS_RABBITMQ_USERNAME:-atlas}
+      RABBITMQ_DEFAULT_PASS: ${ATLAS_RABBITMQ_PASSWORD:-change-me-rabbitmq}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${ATLAS_RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - atlas-rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  seq:
+    image: datalust/seq:latest
+    environment:
+      ACCEPT_EULA: "Y"
+    ports:
+      - "${ATLAS_SEQ_PORT:-5341}:80"
+    volumes:
+      - atlas-seq-data:/data
+    restart: unless-stopped
+
+  webapi:
+    build:
+      context: ..
+      dockerfile: src/Atlas.WebApi/Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      Atlas__Runtime__Mode: WebApi
+      ConnectionStrings__AtlasGlobal: Server=mysql;Port=3306;Database=${ATLAS_MYSQL_DATABASE:-atlas_global};User=${ATLAS_MYSQL_USER:-atlas};Password=${ATLAS_MYSQL_PASSWORD:-change-me-password};CharSet=utf8mb4;AllowPublicKeyRetrieval=true;
+      Security__Crypto__Key: ${ATLAS_CRYPTO_KEY:-replace-with-32-plus-char-key}
+      Security__Token__SecretKey: ${ATLAS_TOKEN_SECRET:-replace-with-long-token-signing-secret}
+      CacheSettings__Provider: Redis
+      CacheSettings__Redis__ConnectionString: redis:6379,abortConnect=false
+      CacheSettings__Redis__InstanceName: atlas
+      Messaging__Provider: RabbitMQ
+      Messaging__RabbitMQ__Host: rabbitmq
+      Messaging__RabbitMQ__Port: 5672
+      Messaging__RabbitMQ__VirtualHost: /
+      Messaging__RabbitMQ__Username: ${ATLAS_RABBITMQ_USERNAME:-atlas}
+      Messaging__RabbitMQ__Password: ${ATLAS_RABBITMQ_PASSWORD:-change-me-rabbitmq}
+      Messaging__TenantOutbox__Enabled: "false"
+      BackgroundTasks__Recurring__Enabled: "false"
+      BackgroundTasks__OneTimeJobs__Enabled: "false"
+      Logging__Atlas__EnableSeq: "true"
+      Logging__Atlas__SeqServerUrl: http://seq:5341
+      Observability__OpenTelemetry__Enabled: "true"
+      Observability__OpenTelemetry__ServiceName: Atlas.WebApi
+      Observability__OpenTelemetry__Exporter: Console
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      seq:
+        condition: service_started
+    ports:
+      - "${ATLAS_WEBAPI_PORT:-8080}:8080"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: src/Atlas.Worker/Dockerfile
+    environment:
+      Atlas__Runtime__Mode: Worker
+      ConnectionStrings__AtlasGlobal: Server=mysql;Port=3306;Database=${ATLAS_MYSQL_DATABASE:-atlas_global};User=${ATLAS_MYSQL_USER:-atlas};Password=${ATLAS_MYSQL_PASSWORD:-change-me-password};CharSet=utf8mb4;AllowPublicKeyRetrieval=true;
+      Security__Crypto__Key: ${ATLAS_CRYPTO_KEY:-replace-with-32-plus-char-key}
+      Security__Token__SecretKey: ${ATLAS_TOKEN_SECRET:-replace-with-long-token-signing-secret}
+      CacheSettings__Provider: Redis
+      CacheSettings__Redis__ConnectionString: redis:6379,abortConnect=false
+      CacheSettings__Redis__InstanceName: atlas
+      Messaging__Provider: RabbitMQ
+      Messaging__RabbitMQ__Host: rabbitmq
+      Messaging__RabbitMQ__Port: 5672
+      Messaging__RabbitMQ__VirtualHost: /
+      Messaging__RabbitMQ__Username: ${ATLAS_RABBITMQ_USERNAME:-atlas}
+      Messaging__RabbitMQ__Password: ${ATLAS_RABBITMQ_PASSWORD:-change-me-rabbitmq}
+      Messaging__TenantOutbox__Enabled: "true"
+      BackgroundTasks__Recurring__Enabled: "true"
+      BackgroundTasks__OneTimeJobs__Enabled: "true"
+      Logging__Atlas__EnableSeq: "true"
+      Logging__Atlas__SeqServerUrl: http://seq:5341
+      Observability__OpenTelemetry__Enabled: "true"
+      Observability__OpenTelemetry__ServiceName: Atlas.Worker
+      Observability__OpenTelemetry__Exporter: Console
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      seq:
+        condition: service_started
+    restart: unless-stopped
+
+  migration:
+    build:
+      context: ..
+      dockerfile: src/Atlas.MigrationJob/Dockerfile
+    command: ["plan"]
+    profiles: ["migration"]
+    environment:
+      Atlas__Runtime__Mode: Migration
+      ConnectionStrings__AtlasGlobal: Server=mysql;Port=3306;Database=${ATLAS_MYSQL_DATABASE:-atlas_global};User=${ATLAS_MYSQL_USER:-atlas};Password=${ATLAS_MYSQL_PASSWORD:-change-me-password};CharSet=utf8mb4;AllowPublicKeyRetrieval=true;
+      CacheSettings__Provider: Memory
+      Messaging__Provider: None
+      Observability__OpenTelemetry__Enabled: "true"
+      Observability__OpenTelemetry__ServiceName: Atlas.MigrationJob
+      Observability__OpenTelemetry__Exporter: Console
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  atlas-mysql-data:
+  atlas-redis-data:
+  atlas-rabbitmq-data:
+  atlas-seq-data:

@@ -1,5 +1,7 @@
+﻿using System.Diagnostics;
 using Atlas.Core.Entities.Global;
 using Atlas.Core.Enums;
+using Atlas.Core.Telemetry;
 using Atlas.Data.Global;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -106,6 +108,14 @@ public sealed class BackgroundJobWorker : BackgroundService
             // 领取成功后重新加载，确保当前 DbContext 中的实体状态与数据库锁定结果一致。
             await db.Entry(job).ReloadAsync(ct);
 
+            using var activity = AtlasTelemetry.ActivitySource.StartActivity(
+                "atlas.background_job.execute",
+                ActivityKind.Consumer);
+            activity?.SetTag("atlas.background_job.id", job.Id);
+            activity?.SetTag("atlas.background_job.type", job.JobType);
+            activity?.SetTag("atlas.background_job.queue", job.Queue);
+            activity?.SetTag("atlas.background_job.attempt", job.AttemptCount);
+
             try
             {
                 if (!handlers.TryGetValue(job.JobType, out var handler))
@@ -123,6 +133,7 @@ public sealed class BackgroundJobWorker : BackgroundService
                 job.NextAttemptAtUtc = null;
                 job.Result = Truncate(result.Result ?? "Succeeded", 4000);
                 await db.SaveChangesAsync(ct);
+                activity?.SetStatus(ActivityStatusCode.Ok);
                 processed++;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -131,6 +142,7 @@ public sealed class BackgroundJobWorker : BackgroundService
             }
             catch (Exception ex)
             {
+                activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
                 await MarkFailedAsync(db, job, ex, ct);
                 processed++;
             }

@@ -1,4 +1,4 @@
-// Core/Models/CacheKeyDefinition.cs
+﻿// Core/Models/CacheKeyDefinition.cs
 using System;
 using System.Collections.Generic;
 

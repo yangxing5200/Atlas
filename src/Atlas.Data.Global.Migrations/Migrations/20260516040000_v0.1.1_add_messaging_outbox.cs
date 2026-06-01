@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Atlas.Data.Global;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;

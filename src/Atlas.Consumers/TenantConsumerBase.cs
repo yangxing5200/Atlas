@@ -1,5 +1,5 @@
-using Atlas.Messaging.Abstractions;
-using Atlas.Services.Tenant;
+﻿using Atlas.Messaging.Abstractions;
+using Atlas.Services.Tenant.Runtime.Messaging;
 using MassTransit;
 
 namespace Atlas.Consumers;

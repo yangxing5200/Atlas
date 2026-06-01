@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <TargetFramework>net8.0</TargetFramework>
@@ -25,13 +25,17 @@
 		<PackageReference Include="AutoFixture" />
 		<PackageReference Include="AutoFixture.Xunit2" />
 		<PackageReference Include="Microsoft.Extensions.Caching.Memory" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
 	</ItemGroup>
 
     <ItemGroup>
       <ProjectReference Include="..\..\src\Atlas.Core\Atlas.Core.csproj" />
       <ProjectReference Include="..\..\src\Atlas.Data.Abstractions\Atlas.Data.Abstractions.csproj" />
       <ProjectReference Include="..\..\src\Atlas.Data.EntityFramework\Atlas.Data.Common.csproj" />
+      <ProjectReference Include="..\..\src\Atlas.Data.Global\Atlas.Data.Global.csproj" />
+      <ProjectReference Include="..\..\src\Atlas.Data.Global.Migrations\Atlas.Data.Global.Migrations.csproj" />
       <ProjectReference Include="..\..\src\Atlas.Data.Tenant\Atlas.Data.Tenant.csproj" />
+      <ProjectReference Include="..\..\src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj" />
       <ProjectReference Include="..\..\src\Atlas.Infrastructure.Caching\Atlas.Infrastructure.Caching.csproj" />
     </ItemGroup>
 

@@ -7,37 +7,37 @@ namespace Atlas.Core.Entities.Global
         /// <summary>
         /// 名称
         /// </summary>
-        public string Name { get; set; }
+        public string Name { get; set; } = string.Empty;
 
         /// <summary>
         /// 数据库类型
         /// </summary>
-        public string DbType { get; set; }
+        public string DbType { get; set; } = string.Empty;
 
         /// <summary>
         /// 主数据库Server编码
         /// </summary>
-        public string MasterServerCode { get; set; }
+        public string MasterServerCode { get; set; } = string.Empty;
 
         /// <summary>
         /// 数据库名称
         /// </summary>
-        public string DbName { get; set; }
+        public string DbName { get; set; } = string.Empty;
 
         /// <summary>
         /// 数据库版本
         /// </summary>
-        public string Version { get; set; }
+        public string Version { get; set; } = string.Empty;
 
         /// <summary>
         /// 所属区域
         /// </summary>
-        public string Region { get; set; }
+        public string Region { get; set; } = string.Empty;
 
         /// <summary>
         /// 数据库连接串
         /// </summary>
-        public string ConnectionString { get; set; }
+        public string ConnectionString { get; set; } = string.Empty;
 
         public ICollection<Tenant> Tenants { get; set; } = new List<Tenant>();
     }
@@ -50,12 +50,12 @@ namespace Atlas.Core.Entities.Global
         /// <summary>
         /// 编码
         /// </summary>
-        public string Code { get; set; }
+        public string Code { get; set; } = string.Empty;
 
         /// <summary>
         /// 昵称
         /// </summary>
-        public string NickName { get; set; }
+        public string NickName { get; set; } = string.Empty;
     }
 
     /// <summary>
@@ -66,17 +66,17 @@ namespace Atlas.Core.Entities.Global
         /// <summary>
         /// 编码
         /// </summary>
-        public string Code { get; set; }
+        public string Code { get; set; } = string.Empty;
 
         /// <summary>
         /// 昵称
         /// </summary>
-        public string NickName { get; set; }
+        public string NickName { get; set; } = string.Empty;
 
         /// <summary>
         /// 主数据库Server编码
         /// </summary>
-        public string MasterServerCode { get; set; }
+        public string MasterServerCode { get; set; } = string.Empty;
 
         /// <summary>
         /// 是否是报表只读库
@@ -97,22 +97,22 @@ namespace Atlas.Core.Entities.Global
         /// <summary>
         /// Server编码
         /// </summary>
-        public string ServerCode { get; set; }
+        public string ServerCode { get; set; } = string.Empty;
 
         /// <summary>
         /// 网络环境编码
         /// </summary>
-        public string NetworkEnvCode { get; set; }
+        public string NetworkEnvCode { get; set; } = string.Empty;
 
         /// <summary>
         /// 数据库类型
         /// </summary>
-        public string DbType { get; set; }
+        public string DbType { get; set; } = string.Empty;
 
         /// <summary>
         /// 连接串
         /// </summary>
-        public string ConnString { get; set; }
+        public string ConnString { get; set; } = string.Empty;
     }
 
     /// <summary>

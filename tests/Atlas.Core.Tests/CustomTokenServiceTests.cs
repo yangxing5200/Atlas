@@ -1,4 +1,4 @@
-using Xunit;
+﻿using Xunit;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -14,6 +14,7 @@ namespace Atlas.Core.Tests
     {
         private readonly CustomTokenService _tokenService;
         private readonly ICryptoService _cryptoService;
+        private readonly MockTokenCacheService _tokenCacheService;
 
         public CustomTokenServiceTests()
         {
@@ -33,13 +34,13 @@ namespace Atlas.Core.Tests
             });
 
             // Setup mock TokenCacheService
-            var mockTokenCacheService = new MockTokenCacheService();
+            _tokenCacheService = new MockTokenCacheService();
 
             // Setup logger
             var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
             var logger = loggerFactory.CreateLogger<CustomTokenService>();
 
-            var scopeFactory = new MockServiceScopeFactory(mockTokenCacheService);
+            var scopeFactory = new MockServiceScopeFactory(_tokenCacheService);
 
             _tokenService = new CustomTokenService(
                 _cryptoService,
@@ -137,6 +138,40 @@ namespace Atlas.Core.Tests
 
             Assert.NotNull(validated100);
             Assert.Equal(100, validated100.TokenVersion);
+        }
+
+        [Fact]
+        public void ValidateToken_WithRevokedSession_ShouldReturnNull()
+        {
+            var user = new TestCurrentUserService
+            {
+                UserId = 1001,
+                TenantId = 1,
+                StoreId = 100
+            };
+            var tokenInfo = TokenInfo.Create(user, 60, 1);
+            var token = _tokenService.GenerateToken(tokenInfo);
+
+            _tokenCacheService.InvalidateSession(tokenInfo.SessionId);
+
+            Assert.Null(_tokenService.ValidateToken(token));
+        }
+
+        [Fact]
+        public void ValidateToken_WithTokenVersionMismatch_ShouldReturnNull()
+        {
+            var user = new TestCurrentUserService
+            {
+                UserId = 1001,
+                TenantId = 1,
+                StoreId = 100
+            };
+            var tokenInfo = TokenInfo.Create(user, 60, 1);
+            var token = _tokenService.GenerateToken(tokenInfo);
+
+            _tokenCacheService.SetUserTokenVersion(user.UserId!.Value, 2);
+
+            Assert.Null(_tokenService.ValidateToken(token));
         }
     }
 

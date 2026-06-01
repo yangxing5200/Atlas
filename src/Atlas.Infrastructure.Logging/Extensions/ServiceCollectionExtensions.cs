@@ -1,5 +1,6 @@
-using Atlas.Infrastructure.Logging.Configuration;
+﻿using Atlas.Infrastructure.Logging.Configuration;
 using Atlas.Infrastructure.Logging.Enrichers;
+using Atlas.Infrastructure.Logging.Filters;
 using Atlas.Infrastructure.Logging.Middleware;
 using Atlas.Infrastructure.Logging.Policies;
 using Microsoft.AspNetCore.Builder;
@@ -76,6 +77,7 @@ namespace Atlas.Infrastructure.Logging.Extensions
             if (options.EnableSensitiveDataFilter)
             {
                 loggerConfig.Destructure.With(new SensitiveDataDestructuringPolicy(options.SensitiveFields));
+                loggerConfig.Filter.With(new SensitiveDataFilter(options.SensitiveFields));
             }
 
             // 控制台输出

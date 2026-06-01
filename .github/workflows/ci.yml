@@ -1,11 +1,8 @@
-name: ci
+﻿name: ci
 
 on:
   pull_request:
   push:
-    branches:
-      - main
-      - master
 
 permissions:
   contents: read
@@ -29,95 +26,11 @@ jobs:
 
       - name: Validate line endings
         shell: pwsh
-        run: |
-          $binaryExtensions = @('.png', '.jpg', '.jpeg', '.gif', '.xlsx', '.ico', '.pdf', '.zip', '.dll', '.exe', '.pdb')
-          $violations = [System.Collections.Generic.List[string]]::new()
-
-          function Test-BinaryBytes([byte[]]$bytes, [string]$path) {
-            $extension = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
-            if ($binaryExtensions -contains $extension) {
-              return $true
-            }
-
-            $limit = [Math]::Min($bytes.Length, 8192)
-            for ($i = 0; $i -lt $limit; $i++) {
-              if ($bytes[$i] -eq 0) {
-                return $true
-              }
-            }
-
-            return $false
-          }
-
-          foreach ($path in git ls-files) {
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-              continue
-            }
-
-            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $path).Path)
-            if (Test-BinaryBytes $bytes $path) {
-              continue
-            }
-
-            $extension = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
-            $isYaml = $extension -in @('.yml', '.yaml')
-
-            for ($i = 0; $i -lt $bytes.Length; $i++) {
-              $byte = $bytes[$i]
-
-              if ($isYaml) {
-                if ($byte -eq 13) {
-                  $violations.Add("$path contains CR/CRLF, but YAML files must use LF.")
-                  break
-                }
-
-                continue
-              }
-
-              if ($byte -eq 10) {
-                if ($i -eq 0 -or $bytes[$i - 1] -ne 13) {
-                  $violations.Add("$path contains LF not preceded by CR. Non-YAML text files must use CRLF.")
-                  break
-                }
-              }
-              elseif ($byte -eq 13) {
-                if (($i + 1) -ge $bytes.Length -or $bytes[$i + 1] -ne 10) {
-                  $violations.Add("$path contains CR not followed by LF. Non-YAML text files must use CRLF.")
-                  break
-                }
-              }
-            }
-          }
-
-          if ($violations.Count -gt 0) {
-            $violations | ForEach-Object { Write-Error $_ }
-            exit 1
-          }
+        run: .\scripts\verify-line-endings.ps1
 
       - name: Validate central package management
         shell: pwsh
-        run: |
-          if (-not (Test-Path Directory.Packages.props)) {
-            Write-Error "Directory.Packages.props is required for central package management."
-            exit 1
-          }
-
-          $centralPackageManagement = Select-String -Path Directory.Packages.props -Pattern '<ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>' -Quiet
-          if (-not $centralPackageManagement) {
-            Write-Error "Directory.Packages.props must enable ManagePackageVersionsCentrally."
-            exit 1
-          }
-
-          $projects = Get-ChildItem -Path . -Filter *.csproj -Recurse |
-            Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' }
-          $violations = $projects | Select-String -Pattern '<PackageReference\b[^>]*\bVersion\s*='
-
-          if ($violations) {
-            $violations | ForEach-Object {
-              Write-Error "$($_.Path):$($_.LineNumber) contains an inline PackageReference Version. Move versions to Directory.Packages.props."
-            }
-            exit 1
-          }
+        run: .\scripts\verify-central-package-versions.ps1
 
       - name: Restore
         run: dotnet restore Atlas.sln
@@ -128,11 +41,22 @@ jobs:
       - name: Test core
         run: dotnet test tests/Atlas.Core.Tests/Atlas.Core.Tests.csproj --no-build --configuration Release --logger "trx;LogFileName=Atlas.Core.Tests.trx" --collect "XPlat Code Coverage" --results-directory TestResults/Atlas.Core.Tests
 
+      - name: Test analyzers
+        run: dotnet test tests/Atlas.Analyzers.Tests/Atlas.Analyzers.Tests.csproj --no-build --configuration Release --logger "trx;LogFileName=Atlas.Analyzers.Tests.trx" --collect "XPlat Code Coverage" --results-directory TestResults/Atlas.Analyzers.Tests
+
       - name: Test data
         run: dotnet test tests/Atlas.Data.Tests/Atlas.Data.Tests.csproj --no-build --configuration Release --logger "trx;LogFileName=Atlas.Data.Tests.trx" --collect "XPlat Code Coverage" --results-directory TestResults/Atlas.Data.Tests
 
       - name: Test services
         run: dotnet test tests/Atlas.Services.Tests/Atlas.Services.Tests.csproj --no-build --configuration Release --logger "trx;LogFileName=Atlas.Services.Tests.trx" --collect "XPlat Code Coverage" --results-directory TestResults/Atlas.Services.Tests
+
+      - name: Verify module template
+        shell: pwsh
+        run: .\scripts\verify-atlas-module-template.ps1
+
+      - name: Test integration
+        if: ${{ vars.RUN_INTEGRATION_TESTS == 'true' }}
+        run: dotnet test tests/Atlas.Integration.Tests/Atlas.Integration.Tests.csproj --no-build --configuration Release --logger "trx;LogFileName=Atlas.Integration.Tests.trx" --collect "XPlat Code Coverage" --results-directory TestResults/Atlas.Integration.Tests
 
       - name: Upload test results
         if: always()

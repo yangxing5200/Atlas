@@ -1,4 +1,4 @@
-// Invalidation/CacheInvalidator.cs
+﻿// Invalidation/CacheInvalidator.cs
 using System;
 using System.Collections.Generic;
 using System.Linq;

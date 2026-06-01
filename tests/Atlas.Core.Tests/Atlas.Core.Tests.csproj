@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <TargetFramework>net8.0</TargetFramework>
@@ -12,6 +12,7 @@
     <ItemGroup>
         <PackageReference Include="coverlet.collector" />
         <PackageReference Include="FluentAssertions" />
+        <PackageReference Include="Moq" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" />
         <PackageReference Include="xunit" />
@@ -24,6 +25,7 @@
     <ItemGroup>
         <ProjectReference Include="..\..\src\Atlas.Core\Atlas.Core.csproj" />
         <ProjectReference Include="..\..\src\Atlas.Infrastructure.Caching\Atlas.Infrastructure.Caching.csproj" />
+        <ProjectReference Include="..\..\src\Atlas.Infrastructure.Logging\Atlas.Infrastructure.Logging.csproj" />
         <ProjectReference Include="..\..\src\Atlas.Infrastructure.Security\Atlas.Infrastructure.Security.csproj" />
     </ItemGroup>
 

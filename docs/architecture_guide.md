@@ -1,4 +1,4 @@
-# Atlas 项目结构指南（Architecture Guide）
+﻿# Atlas 项目结构指南（Architecture Guide）
 
 本文档用于指导 Atlas 系统内每个项目（模块）应该放置什么内容、承担什么职责，以保持整个项目结构可维护、清晰、可扩展。
 

@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Configuration;
+﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -11,24 +11,43 @@ public static class BackgroundTaskServiceCollectionExtensions
 {
     public static IServiceCollection AddAtlasBackgroundTaskRuntime(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        bool enableRecurringTaskRunnerByDefault = false,
+        bool enableBackgroundJobWorkerByDefault = false)
     {
-        var recurringOptions = configuration
-            .GetSection("BackgroundTasks:Recurring")
-            .Get<RecurringTaskRunnerOptions>() ?? new RecurringTaskRunnerOptions();
-        var workerOptions = configuration
-            .GetSection("BackgroundTasks:OneTimeJobs")
-            .Get<BackgroundJobWorkerOptions>() ?? new BackgroundJobWorkerOptions();
+        var recurringSection = configuration.GetSection("BackgroundTasks:Recurring");
+        var workerSection = configuration.GetSection("BackgroundTasks:OneTimeJobs");
+        var recurringEnabledConfigured = HasConfiguredValue(recurringSection, nameof(RecurringTaskRunnerOptions.Enabled));
+        var workerEnabledConfigured = HasConfiguredValue(workerSection, nameof(BackgroundJobWorkerOptions.Enabled));
+
+        var recurringOptions = new RecurringTaskRunnerOptions();
+        recurringSection.Bind(recurringOptions);
+        if (!recurringEnabledConfigured)
+            recurringOptions.Enabled = enableRecurringTaskRunnerByDefault;
+
+        var workerOptions = new BackgroundJobWorkerOptions();
+        workerSection.Bind(workerOptions);
+        if (!workerEnabledConfigured)
+            workerOptions.Enabled = enableBackgroundJobWorkerByDefault;
+        ApplyMissingWorkerDefaults(workerSection, workerOptions);
+        NormalizeBackgroundJobWorkerOptions(workerOptions);
 
         services.AddOptions<RecurringTaskRunnerOptions>()
-            .Bind(configuration.GetSection("BackgroundTasks:Recurring"))
+            .Configure(options =>
+            {
+                Copy(recurringOptions, options);
+            })
             .Validate(ValidateRecurringTaskRunnerOptions, "BackgroundTasks:Recurring is invalid.")
             .ValidateOnStart();
 
         services.AddOptions<BackgroundJobWorkerOptions>()
-            .Bind(configuration.GetSection("BackgroundTasks:OneTimeJobs"))
+            .Configure(options =>
+            {
+                Copy(workerOptions, options);
+            })
             .Validate(ValidateBackgroundJobWorkerOptions, "BackgroundTasks:OneTimeJobs is invalid.")
             .ValidateOnStart();
+        services.PostConfigure<BackgroundJobWorkerOptions>(NormalizeBackgroundJobWorkerOptions);
 
         // 入队客户端始终注册；是否启动 Worker 由配置控制，便于 Web/API 节点只写入任务不消费。
         services.TryAddScoped<IBackgroundJobClient, BackgroundJobClient>();
@@ -44,6 +63,71 @@ public static class BackgroundTaskServiceCollectionExtensions
         }
 
         return services;
+    }
+
+    private static bool HasConfiguredValue(IConfigurationSection section, string key)
+    {
+        return section.GetChildren().Any(child => string.Equals(child.Key, key, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void NormalizeBackgroundJobWorkerOptions(BackgroundJobWorkerOptions options)
+    {
+        var queues = options.Queues?
+            .Where(queue => !string.IsNullOrWhiteSpace(queue))
+            .Select(queue => queue.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray() ?? [];
+
+        if (queues.Length == 0)
+        {
+            options.Queues = [BackgroundJobQueues.Default];
+            return;
+        }
+
+        options.Queues = queues;
+    }
+
+    private static void ApplyMissingWorkerDefaults(
+        IConfigurationSection section,
+        BackgroundJobWorkerOptions options)
+    {
+        var defaults = new BackgroundJobWorkerOptions();
+
+        if (!HasConfiguredValue(section, nameof(BackgroundJobWorkerOptions.PollIntervalSeconds)))
+            options.PollIntervalSeconds = defaults.PollIntervalSeconds;
+        if (!HasConfiguredValue(section, nameof(BackgroundJobWorkerOptions.BatchSize)))
+            options.BatchSize = defaults.BatchSize;
+        if (!HasConfiguredValue(section, nameof(BackgroundJobWorkerOptions.ProcessingTimeoutSeconds)))
+            options.ProcessingTimeoutSeconds = defaults.ProcessingTimeoutSeconds;
+        if (!HasConfiguredValue(section, nameof(BackgroundJobWorkerOptions.InitialRetryDelaySeconds)))
+            options.InitialRetryDelaySeconds = defaults.InitialRetryDelaySeconds;
+        if (!HasConfiguredValue(section, nameof(BackgroundJobWorkerOptions.MaxRetryDelaySeconds)))
+            options.MaxRetryDelaySeconds = defaults.MaxRetryDelaySeconds;
+        if (!HasConfiguredValue(section, nameof(BackgroundJobWorkerOptions.DefaultMaxAttempts)))
+            options.DefaultMaxAttempts = defaults.DefaultMaxAttempts;
+    }
+
+    private static void Copy(
+        RecurringTaskRunnerOptions source,
+        RecurringTaskRunnerOptions target)
+    {
+        target.Enabled = source.Enabled;
+        target.PollIntervalSeconds = source.PollIntervalSeconds;
+        target.LockSeconds = source.LockSeconds;
+    }
+
+    private static void Copy(
+        BackgroundJobWorkerOptions source,
+        BackgroundJobWorkerOptions target)
+    {
+        target.Enabled = source.Enabled;
+        target.Queues = source.Queues;
+        target.PollIntervalSeconds = source.PollIntervalSeconds;
+        target.BatchSize = source.BatchSize;
+        target.ProcessingTimeoutSeconds = source.ProcessingTimeoutSeconds;
+        target.InitialRetryDelaySeconds = source.InitialRetryDelaySeconds;
+        target.MaxRetryDelaySeconds = source.MaxRetryDelaySeconds;
+        target.DefaultMaxAttempts = source.DefaultMaxAttempts;
     }
 
     private static bool ValidateRecurringTaskRunnerOptions(RecurringTaskRunnerOptions options)

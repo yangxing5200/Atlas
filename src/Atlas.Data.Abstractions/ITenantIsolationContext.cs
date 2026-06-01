@@ -1,4 +1,4 @@
-namespace Atlas.Data.Abstractions
+﻿namespace Atlas.Data.Abstractions
 {
     public interface ITenantIsolationContext
     {

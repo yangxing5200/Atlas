@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$SkipDocker,
     [switch]$SkipRestore,
     [switch]$SkipBuild,

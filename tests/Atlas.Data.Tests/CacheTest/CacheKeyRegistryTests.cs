@@ -1,4 +1,4 @@
-using Atlas.Infrastructure.Caching.Core.Models;
+﻿using Atlas.Infrastructure.Caching.Core.Models;
 using Atlas.Infrastructure.Caching.Core.Models.Registry;
 using FluentAssertions;
 using System;

@@ -12,9 +12,9 @@ namespace Atlas.Core.Entities.Tenant
     // 示例1：商品 - 共享数据
     public class Product : SharedVersionedEntity, ISnowflakeId
     {
-        public string Name { get; set; }
+        public string Name { get; set; } = string.Empty;
         public decimal Price { get; set; }
-        public string Description { get; set; }
+        public string Description { get; set; } = string.Empty;
 
         // 可选：数据溯源字段
         public long? SourceStoreId { get; set; }  // 来源门店（分发场景）
@@ -24,16 +24,16 @@ namespace Atlas.Core.Entities.Tenant
     // 示例2：会员 - 共享数据
     public class Member : SharedVersionedEntity, ISnowflakeId
     {
-        public string MemberName { get; set; }
-        public string Phone { get; set; }
-        public string Email { get; set; }
+        public string MemberName { get; set; } = string.Empty;
+        public string Phone { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
         public int Points { get; set; }
     }
 
     // 示例3：促销活动 - 共享数据
     public class Promotion : SharedVersionedEntity
     {
-        public string Title { get; set; }
+        public string Title { get; set; } = string.Empty;
         public DateTime StartTime { get; set; }
         public DateTime EndTime { get; set; }
         public decimal DiscountRate { get; set; }
@@ -45,7 +45,7 @@ namespace Atlas.Core.Entities.Tenant
     // 示例4：订单 - 门店独享
     public class Order : StoreOnlyVersionedEntity, ISnowflakeId
     {
-        public string OrderNo { get; set; }
+        public string OrderNo { get; set; } = string.Empty;
         public long MemberId { get; set; }
         public decimal TotalAmount { get; set; }
         public OrderStatus Status { get; set; }

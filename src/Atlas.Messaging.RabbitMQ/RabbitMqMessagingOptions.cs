@@ -1,4 +1,4 @@
-namespace Atlas.Messaging.RabbitMQ;
+﻿namespace Atlas.Messaging.RabbitMQ;
 
 /// <summary>
 /// RabbitMQ 消息总线配置。

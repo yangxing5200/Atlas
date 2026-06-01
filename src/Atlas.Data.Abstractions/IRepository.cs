@@ -1,4 +1,4 @@
-using Atlas.Core.Entities.Interfaces;
+﻿using Atlas.Core.Entities.Interfaces;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -24,7 +24,7 @@ namespace Atlas.Data.Abstractions
         Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default);
         Task<TEntity?> FirstOrDefaultAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default);
         Task<List<TEntity>> ListAsync(Expression<Func<TEntity, bool>>? predicate = null, CancellationToken ct = default);
-   
+
         Task RemoveAsync(TEntity entity, CancellationToken ct = default);
         Task RemoveRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default);
         /// <summary>

@@ -15,11 +15,11 @@ namespace Atlas.Infrastructure.Security
         private const char DELIMITER = '\x1F';
 
         public long? UserId { get; set; }
-        public string? UserName { get; set; }
+        public string UserName { get; set; } = string.Empty;
         public long? StoreId { get; set; }
         public long? TenantId { get; set; }
         public long ExpiresAt { get; set; }
-        public string SessionId { get; set; }      // ✅ 会话ID
+        public string SessionId { get; set; } = string.Empty;
         public int TokenVersion { get; set; } = 1;
 
         public bool IsExpired => DateTimeOffset.UtcNow.ToUnixTimeSeconds() > ExpiresAt;
@@ -74,11 +74,13 @@ namespace Atlas.Infrastructure.Security
                 return new TokenInfo
                 {
                     UserId = long.Parse(fields[0]),
-                    UserName = fields[1],
+                    UserName = fields[1] ?? string.Empty,
                     StoreId = long.Parse(fields[2]),
                     TenantId = long.Parse(fields[3]),
                     ExpiresAt = long.Parse(fields[4]),
-                    SessionId = fieldIndex >= 6 ? fields[5] : GenerateSessionId(),
+                    SessionId = fieldIndex >= 6 && !string.IsNullOrEmpty(fields[5])
+                        ? fields[5]
+                        : GenerateSessionId(),
                     TokenVersion = fieldIndex >= 7 ? int.Parse(fields[6]) : 1
                 };
             }
@@ -96,7 +98,7 @@ namespace Atlas.Infrastructure.Security
             return new TokenInfo
             {
                 UserId = user.UserId ?? 0,
-                UserName = user.UserName ?? "",
+                UserName = user.UserName,
                 StoreId = user.StoreId ?? 0,
                 TenantId = user.TenantId ?? 0,
                 ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(expirationMinutes).ToUnixTimeSeconds(),

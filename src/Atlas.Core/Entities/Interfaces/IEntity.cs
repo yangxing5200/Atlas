@@ -1,4 +1,4 @@
-namespace Atlas.Core.Entities.Interfaces
+﻿namespace Atlas.Core.Entities.Interfaces
 {
     /// <summary>
     /// 雪花ID标记接口

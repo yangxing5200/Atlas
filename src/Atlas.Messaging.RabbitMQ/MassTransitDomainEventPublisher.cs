@@ -1,4 +1,4 @@
-using Atlas.Messaging.Abstractions;
+﻿using Atlas.Messaging.Abstractions;
 using MassTransit;
 
 namespace Atlas.Messaging.RabbitMQ;

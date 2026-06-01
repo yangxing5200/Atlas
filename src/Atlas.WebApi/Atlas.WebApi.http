@@ -1,4 +1,4 @@
-@Atlas.WebApi_HostAddress = http://localhost:5260
+﻿@Atlas.WebApi_HostAddress = http://localhost:5260
 
 GET {{Atlas.WebApi_HostAddress}}/weatherforecast/
 Accept: application/json

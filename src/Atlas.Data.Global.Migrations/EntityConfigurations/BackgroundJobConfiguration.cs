@@ -1,4 +1,4 @@
-using Atlas.Core.Entities.Global;
+﻿using Atlas.Core.Entities.Global;
 using Atlas.Core.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;

@@ -1,4 +1,4 @@
-using Atlas.Data.Abstractions;
+﻿using Atlas.Data.Abstractions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using System;

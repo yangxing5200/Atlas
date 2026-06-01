@@ -4,11 +4,11 @@ using Atlas.Core.Enums;
 
 namespace Atlas.Core.Entities.Tenant
 {
-    public class Store : VersionedEntity, ITenantEntity,ISnowflakeId
+    public class Store : VersionedEntity, ITenantEntity, ISnowflakeId
     {
         public long TenantId { get; set; }
-        public string Code { get; set; }
-        public string Name { get; set; }
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
         public StoreType Type { get; set; }
         
         /// <summary>
@@ -20,26 +20,26 @@ namespace Atlas.Core.Entities.Tenant
         public long? ParentStoreId { get; set; }
 
         public bool IsActive { get; set; }
-        public string Address { get; set; }
-        public string ContactPhone { get; set; }
-        public string ContactPerson { get; set; }
+        public string Address { get; set; } = string.Empty;
+        public string ContactPhone { get; set; } = string.Empty;
+        public string ContactPerson { get; set; } = string.Empty;
         /// <summary>
         /// 省份
         /// </summary>
-        public string Province { get; set; }
+        public string Province { get; set; } = string.Empty;
 
         /// <summary>
         /// 城市
         /// </summary>
-        public string City { get; set; }
+        public string City { get; set; } = string.Empty;
 
         /// <summary>
         /// 区县
         /// </summary>
-        public string District { get; set; }
+        public string District { get; set; } = string.Empty;
         public StoreStatus Status { get; set; }
         // 导航属性
-        public virtual Store ParentStore { get; set; }
-        public virtual ICollection<Store> ChildStores { get; set; }
+        public virtual Store ParentStore { get; set; } = null!;
+        public virtual ICollection<Store> ChildStores { get; set; } = new List<Store>();
     }
 }

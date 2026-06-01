@@ -1,5 +1,6 @@
-using Atlas.Services.Tenant;
+﻿using Atlas.Services.Tenant;
 using Atlas.Infrastructure.Security;
+using Atlas.Infrastructure.Security.Permissions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,7 +9,7 @@ namespace Atlas.Sample.WebApi.Controllers;
 [ApiController]
 [Route("api/tenant-provisioning")]
 [Produces("application/json")]
-[Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+[Authorize(Policy = AuthorizationPolicies.RequireTenantProvisioning)]
 public sealed class TenantProvisioningController : ControllerBase
 {
     private readonly ITenantProvisioningService _provisioningService;

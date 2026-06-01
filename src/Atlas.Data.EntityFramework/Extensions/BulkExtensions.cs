@@ -175,8 +175,10 @@ namespace Atlas.Data.Common.Extensions
             CancellationToken cancellationToken)
             where TEntity : class
         {
-            var entityType = context.Model.FindEntityType(typeof(TEntity));
-            var tableName = entityType!.GetTableName();
+            var entityType = context.Model.FindEntityType(typeof(TEntity))
+                ?? throw new InvalidOperationException($"Entity {typeof(TEntity).Name} is not part of the current DbContext model.");
+            var tableName = entityType.GetTableName()
+                ?? throw new InvalidOperationException($"Entity {typeof(TEntity).Name} is not mapped to a table.");
             var schema = entityType.GetSchema();
             var fullTableName = string.IsNullOrEmpty(schema) ? $"`{tableName}`" : $"`{schema}`.`{tableName}`";
 
@@ -342,8 +344,10 @@ namespace Atlas.Data.Common.Extensions
             CancellationToken cancellationToken)
             where TEntity : class
         {
-            var entityType = context.Model.FindEntityType(typeof(TEntity));
-            var tableName = entityType!.GetTableName();
+            var entityType = context.Model.FindEntityType(typeof(TEntity))
+                ?? throw new InvalidOperationException($"Entity {typeof(TEntity).Name} is not part of the current DbContext model.");
+            var tableName = entityType.GetTableName()
+                ?? throw new InvalidOperationException($"Entity {typeof(TEntity).Name} is not mapped to a table.");
             var schema = entityType.GetSchema();
             var fullTableName = string.IsNullOrEmpty(schema) ? $"`{tableName}`" : $"`{schema}`.`{tableName}`";
 

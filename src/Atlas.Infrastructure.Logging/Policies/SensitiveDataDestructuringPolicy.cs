@@ -1,8 +1,6 @@
-using Serilog.Core;
+﻿using Serilog.Core;
 using Serilog.Events;
-using System.Collections;
 using System.Reflection;
-using System.Text.RegularExpressions;
 
 namespace Atlas.Infrastructure.Logging.Policies
 {
@@ -16,17 +14,6 @@ namespace Atlas.Infrastructure.Logging.Policies
     public class SensitiveDataDestructuringPolicy : IDestructuringPolicy
     {
         private readonly HashSet<string> _sensitiveFields;
-        private readonly string _maskValue = "***REDACTED***";
-
-        private static readonly Regex[] SensitivePatterns = new[]
-        {
-            new Regex(@"\b\d{15,19}\b", RegexOptions.Compiled), // 银行卡
-            new Regex(@"\b\d{17}[\dXx]\b", RegexOptions.Compiled), // 身份证
-            new Regex(@"\b1[3-9]\d{9}\b", RegexOptions.Compiled), // 手机号
-            new Regex(@"password\s*[:=]\s*\S+", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-            new Regex(@"token\s*[:=]\s*\S+", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-        };
-
         public SensitiveDataDestructuringPolicy(IEnumerable<string> sensitiveFields)
         {
             _sensitiveFields = new HashSet<string>(
@@ -69,14 +56,13 @@ namespace Atlas.Infrastructure.Logging.Policies
                     {
                         properties.Add(new LogEventProperty(
                             propName,
-                            new ScalarValue(_maskValue)));
+                            new ScalarValue(SensitiveDataMasker.MaskByField(propName, propValue))));
                     }
-                    else if (propValue != null && propValue is string strValue && ContainsSensitivePattern(strValue))
+                    else if (propValue is string strValue)
                     {
-                        // 检查字符串值是否包含敏感模式
                         properties.Add(new LogEventProperty(
                             propName,
-                            new ScalarValue(_maskValue)));
+                            new ScalarValue(SensitiveDataMasker.MaskText(strValue))));
                     }
                     else
                     {
@@ -99,14 +85,6 @@ namespace Atlas.Infrastructure.Logging.Policies
         private bool IsSensitiveField(string fieldName)
         {
             return _sensitiveFields.Contains(fieldName);
-        }
-
-        private bool ContainsSensitivePattern(string value)
-        {
-            if (string.IsNullOrEmpty(value) || value.Length < 8)
-                return false;
-
-            return SensitivePatterns.Any(pattern => pattern.IsMatch(value));
         }
     }
 }

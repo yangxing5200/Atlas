@@ -1,0 +1,13 @@
+﻿.git
+.github
+**/bin
+**/obj
+**/TestResults
+**/*.user
+**/*.suo
+**/.vs
+artifacts
+coverage
+logs
+*.nupkg
+*.snupkg

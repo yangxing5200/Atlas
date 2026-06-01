@@ -1,4 +1,4 @@
-namespace Atlas.Core.IdGenerators;
+﻿namespace Atlas.Core.IdGenerators;
 
 /// <summary>
 /// Snowflake ID 生成器（线程安全）。

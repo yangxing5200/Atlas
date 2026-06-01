@@ -1,4 +1,4 @@
-using Atlas.Core.Entities.Tenant;
+﻿using Atlas.Core.Entities.Tenant;
 using Atlas.Data.Abstractions;
 using Atlas.Models.Requests;
 using Atlas.Services.Abstractions;

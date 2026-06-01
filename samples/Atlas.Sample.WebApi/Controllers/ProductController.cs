@@ -1,4 +1,4 @@
-using Atlas.Core.Exceptions;
+﻿using Atlas.Core.Exceptions;
 using Atlas.Models.DTOs;
 using Atlas.Models.Tenant.Requests;
 using Atlas.Models.Tenant.Responses;

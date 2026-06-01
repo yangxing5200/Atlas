@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Tests\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Atlas.Core\Atlas.Core.csproj" />
+    <ProjectReference Include="..\..\src\Atlas.Data.Abstractions\Atlas.Data.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Atlas.Extensions.DependencyInjection\Atlas.Extensions.DependencyInjection.csproj" />
+    <ProjectReference Include="..\..\src\Atlas.Infrastructure.Security\Atlas.Infrastructure.Security.csproj" />
+    <ProjectReference Include="..\..\src\Atlas.Models.Tenant\Atlas.Models.csproj" />
+  </ItemGroup>
+
+</Project>

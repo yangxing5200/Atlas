@@ -1,4 +1,4 @@
-using Atlas.Core.Entities.Base;
+﻿using Atlas.Core.Entities.Base;
 using Atlas.Core.Entities.Interfaces;
 
 namespace Atlas.Core.Entities.Tenant;

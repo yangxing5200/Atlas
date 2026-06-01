@@ -1,4 +1,4 @@
-using Xunit;
+﻿using Xunit;
 using System.Text.Json;
 using Atlas.Core.Extensions;
 using Atlas.Core.Converter;

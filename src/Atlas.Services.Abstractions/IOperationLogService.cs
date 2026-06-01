@@ -1,4 +1,4 @@
-using Atlas.Models.Requests;
+﻿using Atlas.Models.Requests;
 
 namespace Atlas.Services.Abstractions
 {

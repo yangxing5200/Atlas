@@ -288,8 +288,8 @@ namespace Atlas.Core.Entities.Tenant
         public DateTime? EffectiveTo { get; set; }
 
         // 导航属性
-        public virtual User User { get; set; }
-        public virtual Store Store { get; set; }
+        public virtual User User { get; set; } = null!;
+        public virtual Store Store { get; set; } = null!;
     }
 
     /// <summary>
@@ -300,6 +300,7 @@ namespace Atlas.Core.Entities.Tenant
         public long TenantId { get; set; }
         public long UserId { get; set; }
         public long RoleId { get; set; }
+        public long StoreId { get; set; }
 
         /// <summary>
         /// 授权时间
@@ -312,8 +313,8 @@ namespace Atlas.Core.Entities.Tenant
         public long GrantedBy { get; set; }
 
         // 导航属性
-        public virtual User User { get; set; }
-        // public virtual Role Role { get; set; } // 需要定义Role表
+        public virtual User User { get; set; } = null!;
+        public virtual Role Role { get; set; } = null!;
     }
 
     /// <summary>
@@ -396,7 +397,7 @@ namespace Atlas.Core.Entities.Tenant
         public string? LogoutType { get; set; }
 
         // 导航属性
-        public virtual User User { get; set; }
+        public virtual User User { get; set; } = null!;
     }
 
     #endregion
