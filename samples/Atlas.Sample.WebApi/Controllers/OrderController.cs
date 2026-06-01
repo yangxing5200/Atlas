@@ -1,6 +1,8 @@
 ﻿using Atlas.Services.Tenant;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Atlas.Infrastructure.Security;
+using Atlas.Sample.ECommerce;
 
 namespace Atlas.Sample.WebApi.Controllers;
 
@@ -18,6 +20,7 @@ public sealed class OrderController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + SampleECommercePermissionCodes.OrdersPlace)]
     [ProducesResponseType(typeof(PlaceOrderResult), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<PlaceOrderResult>> Place(

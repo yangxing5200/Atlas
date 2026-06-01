@@ -2,6 +2,7 @@
 using Atlas.Models.Tenant.Responses;
 using Atlas.ModuleTemplate.Entities;
 using Atlas.ModuleTemplate.Models;
+using Atlas.Core.Authorization;
 
 namespace Atlas.ModuleTemplate.Queries;
 
@@ -22,7 +23,10 @@ public sealed class TenantRecordQueryService : ITenantRecordQueryService
 
         var pageIndex = query.PageIndex < 1 ? 1 : query.PageIndex;
         var pageSize = query.PageSize < 1 ? DefaultPageSize : Math.Min(query.PageSize, MaxPageSize);
-        var builder = await _records.QueryAsync(ct);
+        var builder = await _records.QueryDataScopeAsync(
+            "module-template.tenant-record",
+            AtlasDataScopeType.AllTenant,
+            ct);
 
         if (!string.IsNullOrWhiteSpace(query.Keyword))
         {

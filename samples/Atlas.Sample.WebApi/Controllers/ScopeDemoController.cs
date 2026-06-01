@@ -3,6 +3,8 @@ using Atlas.Core.Enums;
 using Atlas.Data.Abstractions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Atlas.Infrastructure.Security;
+using Atlas.Sample.ECommerce;
 
 namespace Atlas.Sample.WebApi.Controllers;
 
@@ -21,6 +23,7 @@ public sealed class ScopeDemoController : ControllerBase
     }
 
     [HttpGet("visibility")]
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + SampleECommercePermissionCodes.ProductsRead)]
     [ProducesResponseType(typeof(ScopeDemoVisibilityResponse), StatusCodes.Status200OK)]
     public async Task<ActionResult<ScopeDemoVisibilityResponse>> GetVisibility(CancellationToken ct = default)
     {

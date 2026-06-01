@@ -15,6 +15,7 @@ public static class AuthorizationPolicies
 {
     public const string RequireTenantAdmin = nameof(RequireTenantAdmin);
     public const string PermissionPrefix = "Permission:";
+    public const string RequireIdentitySelf = PermissionPrefix + AtlasPermissionCodes.IdentitySelf;
     public const string RequireUsersRead = PermissionPrefix + AtlasPermissionCodes.UsersRead;
     public const string RequireUsersManage = PermissionPrefix + AtlasPermissionCodes.UsersManage;
     public const string RequireRolesManage = PermissionPrefix + AtlasPermissionCodes.RolesManage;
@@ -22,6 +23,8 @@ public static class AuthorizationPolicies
     public const string RequireStoresManage = PermissionPrefix + AtlasPermissionCodes.StoresManage;
     public const string RequireTenantProvisioning = PermissionPrefix + AtlasPermissionCodes.TenantProvisioning;
     public const string RequireAuditRead = PermissionPrefix + AtlasPermissionCodes.AuditRead;
+    public const string RequireAuthorizationRead = PermissionPrefix + AtlasPermissionCodes.AuthorizationRead;
+    public const string RequireAuthorizationManage = PermissionPrefix + AtlasPermissionCodes.AuthorizationManage;
 
     public static string RequirePermission(string permissionCode)
     {

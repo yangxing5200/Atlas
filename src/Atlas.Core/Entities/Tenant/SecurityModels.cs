@@ -1,4 +1,5 @@
-﻿using Atlas.Core.Entities.Base;
+using Atlas.Core.Authorization;
+using Atlas.Core.Entities.Base;
 using Atlas.Core.Entities.Interfaces;
 using Atlas.Core.Enums;
 
@@ -25,8 +26,14 @@ public sealed class Permission : BaseEntity, ITenantEntity, ISnowflakeId
     public string Code { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
+    public string CapabilityCode { get; set; } = string.Empty;
     public string Module { get; set; } = string.Empty;
     public PermissionScope Scope { get; set; } = PermissionScope.Tenant;
+    public string Resource { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    public bool IsAssignable { get; set; } = true;
+    public bool IsSystem { get; set; }
+    public AtlasPermissionRiskLevel RiskLevel { get; set; } = AtlasPermissionRiskLevel.Low;
     public bool IsBuiltIn { get; set; } = true;
     public bool IsEnabled { get; set; } = true;
 
@@ -38,6 +45,9 @@ public sealed class RolePermission : BaseEntity, ITenantEntity, ISnowflakeId
     public long TenantId { get; set; }
     public long RoleId { get; set; }
     public long PermissionId { get; set; }
+    public RolePermissionEffect Effect { get; set; } = RolePermissionEffect.Allow;
+    public AtlasDataScopeType DataScopeType { get; set; } = AtlasDataScopeType.CurrentStore;
+    public string? DataScopeJson { get; set; }
     public DateTime GrantedAt { get; set; } = DateTime.UtcNow;
     public long? GrantedBy { get; set; }
 

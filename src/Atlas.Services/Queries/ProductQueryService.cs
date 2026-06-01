@@ -4,6 +4,7 @@ using Atlas.Models.DTOs;
 using Atlas.Models.Tenant.Requests;
 using Atlas.Models.Tenant.Responses;
 using Atlas.Services.Abstractions.Queries;
+using Atlas.Core.Authorization;
 
 namespace Atlas.Services.Queries;
 
@@ -28,8 +29,7 @@ public sealed class ProductQueryService : IProductQueryService
         var pageIndex = query.PageIndex < 1 ? 1 : query.PageIndex;
         var pageSize = query.PageSize < 1 ? DefaultPageSize : Math.Min(query.PageSize, MaxPageSize);
 
-        // IRepository creates the QueryBuilder after applying tenant/store scope, so filters below cannot widen access.
-        var builder = await _products.QueryAsync(ct);
+        var builder = await _products.QueryDataScopeAsync("product", AtlasDataScopeType.SharedStores, ct);
 
         if (!string.IsNullOrWhiteSpace(query.Keyword))
         {

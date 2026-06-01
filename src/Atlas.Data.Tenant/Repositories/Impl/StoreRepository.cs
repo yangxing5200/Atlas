@@ -4,6 +4,8 @@ using Atlas.Data.Abstractions;
 using Atlas.Data.Tenant.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Atlas.Core.Authorization;
+using Atlas.Core.Services;
 
 namespace Atlas.Data.Tenant.Repositories.Impl
 {
@@ -13,8 +15,10 @@ namespace Atlas.Data.Tenant.Repositories.Impl
         public StoreRepository(
             ITenantDbContextFactory dbContextFactory,
             IDataScope dataScope,
+            IAtlasDataScopePredicateBuilder dataScopePredicateBuilder,
+            ICurrentIdentity currentIdentity,
             ILogger<StoreRepository> logger)
-            : base(dbContextFactory, dataScope)
+            : base(dbContextFactory, dataScope, dataScopePredicateBuilder, currentIdentity)
         {
             _logger = logger;
         }
