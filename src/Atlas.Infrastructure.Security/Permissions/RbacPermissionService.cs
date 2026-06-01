@@ -11,6 +11,9 @@ namespace Atlas.Infrastructure.Security.Permissions;
 public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
 {
     private const string TenantAdminRoleCode = "tenant-admin";
+    private const string DefaultPermissionCacheVersion = "0";
+    private static readonly TimeSpan PermissionCacheExpiration = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan PermissionVersionCacheExpiration = TimeSpan.FromHours(24);
     private readonly IRepository<User> _users;
     private readonly IRepository<UserRole> _userRoles;
     private readonly IRepository<Role> _roles;
@@ -83,9 +86,15 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
         if (tenantId <= 0 || userId <= 0)
             return Task.CompletedTask;
 
-        _cache.Remove(BuildPermissionCacheKey(tenantId, userId, null));
+        var versionKey = BuildPermissionVersionCacheKey(tenantId, userId);
+
+        // Store permission caches include tenant-wide roles, so role changes invalidate by user version.
+        _cache.Remove(versionKey);
+        _cache.Set(versionKey, Guid.NewGuid().ToString("N"), PermissionVersionCacheExpiration);
+
+        _cache.Remove(BuildLegacyPermissionCacheKey(tenantId, userId, null));
         if (storeId.HasValue)
-            _cache.Remove(BuildPermissionCacheKey(tenantId, userId, storeId.Value));
+            _cache.Remove(BuildLegacyPermissionCacheKey(tenantId, userId, storeId.Value));
 
         return Task.CompletedTask;
     }
@@ -184,9 +193,10 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
         long? storeId,
         CancellationToken ct)
     {
-        var cacheKey = BuildPermissionCacheKey(tenantId, userId, storeId);
+        var cacheVersion = GetPermissionCacheVersion(tenantId, userId);
+        var cacheKey = BuildPermissionCacheKey(tenantId, userId, storeId, cacheVersion);
         var cached = _cache.Get<string[]>(cacheKey);
-        if (cached is { Length: > 0 })
+        if (cached != null)
             return cached;
 
         var userRoleQuery = await _userRoles.QueryAsync(tenantId, ct);
@@ -198,7 +208,7 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
         var roleIds = userRoles.Select(x => x.RoleId).Distinct().ToArray();
         if (roleIds.Length == 0)
         {
-            _cache.Set(cacheKey, Array.Empty<string>(), TimeSpan.FromMinutes(5));
+            _cache.Set(cacheKey, Array.Empty<string>(), PermissionCacheExpiration);
             return Array.Empty<string>();
         }
 
@@ -212,7 +222,7 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
         var enabledRoleIds = roles.Select(x => x.Id).Distinct().ToArray();
         if (enabledRoleIds.Length == 0)
         {
-            _cache.Set(cacheKey, Array.Empty<string>(), TimeSpan.FromMinutes(5));
+            _cache.Set(cacheKey, Array.Empty<string>(), PermissionCacheExpiration);
             return Array.Empty<string>();
         }
 
@@ -223,7 +233,7 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
         var permissionIds = rolePermissions.Select(x => x.PermissionId).Distinct().ToArray();
         if (permissionIds.Length == 0)
         {
-            _cache.Set(cacheKey, Array.Empty<string>(), TimeSpan.FromMinutes(5));
+            _cache.Set(cacheKey, Array.Empty<string>(), PermissionCacheExpiration);
             return Array.Empty<string>();
         }
 
@@ -240,13 +250,29 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        _cache.Set(cacheKey, result, TimeSpan.FromMinutes(5));
+        _cache.Set(cacheKey, result, PermissionCacheExpiration);
         return result;
     }
 
-    private static string BuildPermissionCacheKey(long tenantId, long userId, long? storeId)
+    private string GetPermissionCacheVersion(long tenantId, long userId)
+    {
+        var version = _cache.Get<string>(BuildPermissionVersionCacheKey(tenantId, userId));
+        return string.IsNullOrWhiteSpace(version) ? DefaultPermissionCacheVersion : version;
+    }
+
+    private static string BuildPermissionCacheKey(long tenantId, long userId, long? storeId, string version)
+    {
+        return $"rbac:permissions:{tenantId}:{userId}:{storeId.GetValueOrDefault()}:{version}";
+    }
+
+    private static string BuildLegacyPermissionCacheKey(long tenantId, long userId, long? storeId)
     {
         return $"rbac:permissions:{tenantId}:{userId}:{storeId.GetValueOrDefault()}";
+    }
+
+    private static string BuildPermissionVersionCacheKey(long tenantId, long userId)
+    {
+        return $"rbac:permissions-version:{tenantId}:{userId}";
     }
 
     private static string NormalizeCode(string code)
