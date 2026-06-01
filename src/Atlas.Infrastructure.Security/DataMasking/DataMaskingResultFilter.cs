@@ -40,7 +40,7 @@ public sealed class DataMaskingResultFilter : IResultFilter
 
     private static bool IsDisabled(ResultExecutingContext context)
     {
-        return context.HttpContext.GetEndpoint()?.Metadata.GetMetadata<DisableDataMaskingAttribute>() != null;
+        return context.ActionDescriptor.EndpointMetadata.OfType<DisableDataMaskingAttribute>().Any();
     }
 
     private static bool ShouldSkipValue(object value)
