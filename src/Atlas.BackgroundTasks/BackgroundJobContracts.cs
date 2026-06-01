@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Atlas.Core.Entities.Global;
 using Atlas.Core.Enums;
 

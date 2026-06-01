@@ -1,6 +1,7 @@
-using Atlas.Core.Services;
-using Atlas.Data.Tenant.Context;
+﻿using Atlas.Core.Services;
+using Atlas.Core.Entities.Tenant;
 using Atlas.Services.Tenant;
+using Atlas.Services.Tenant.Runtime.Messaging;
 
 namespace Atlas.Services.Tests;
 
@@ -10,7 +11,7 @@ public class TenantDomainEventOutboxTests
     public async Task EnqueueAsync_WithMismatchedCurrentTenant_ShouldThrow()
     {
         var outbox = new TenantDomainEventOutbox(
-            new ThrowingTenantDbContextFactory(),
+            new ThrowingTenantOutboxStore(),
             new FixedIdentity(tenantId: 100));
 
         var domainEvent = new OrderPlacedEvent
@@ -43,36 +44,62 @@ public class TenantDomainEventOutboxTests
         public bool IsAuthenticated => true;
     }
 
-    private sealed class ThrowingTenantDbContextFactory : ITenantDbContextFactory
+    private sealed class ThrowingTenantOutboxStore : ITenantOutboxStore
     {
-        public Task<AtlasTenantDbContext> GetDbContextAsync(CancellationToken cancellationToken = default)
+        public Task AddAsync(TenantOutboxMessage message, long tenantId, CancellationToken ct = default)
         {
-            throw new InvalidOperationException("DbContext should not be requested.");
+            throw new InvalidOperationException("Outbox store should not be requested.");
         }
 
-        public Task<AtlasTenantDbContext> GetReadonlyDbContextAsync(CancellationToken cancellationToken = default)
+        public Task<List<TenantOutboxMessage>> ListDueAsync(
+            long tenantId,
+            DateTime now,
+            DateTime staleProcessingBefore,
+            int maxAttempts,
+            int batchSize,
+            CancellationToken ct = default)
         {
-            throw new InvalidOperationException("DbContext should not be requested.");
+            throw new NotSupportedException();
         }
 
-        public Task<AtlasTenantDbContext> GetReportDbContextAsync(CancellationToken cancellationToken = default)
+        public Task<bool> TryClaimAsync(
+            long tenantId,
+            long messageId,
+            string workerId,
+            DateTime now,
+            DateTime staleProcessingBefore,
+            int maxAttempts,
+            CancellationToken ct = default)
         {
-            throw new InvalidOperationException("DbContext should not be requested.");
+            throw new NotSupportedException();
         }
 
-        public Task<AtlasTenantDbContext> GetDbContextAsync(long tenantId, CancellationToken cancellationToken = default)
+        public Task ReloadAsync(TenantOutboxMessage message, CancellationToken ct = default)
         {
-            throw new InvalidOperationException("DbContext should not be requested.");
+            throw new NotSupportedException();
         }
 
-        public Task<AtlasTenantDbContext> GetReadonlyDbContextAsync(long tenantId, CancellationToken cancellationToken = default)
+        public Task MarkProcessedAsync(TenantOutboxMessage message, CancellationToken ct = default)
         {
-            throw new InvalidOperationException("DbContext should not be requested.");
+            throw new NotSupportedException();
         }
 
-        public Task<AtlasTenantDbContext> GetReportDbContextAsync(long tenantId, CancellationToken cancellationToken = default)
+        public Task MarkFailedAsync(
+            TenantOutboxMessage message,
+            string lastError,
+            DateTime? nextAttemptAtUtc,
+            CancellationToken ct = default)
         {
-            throw new InvalidOperationException("DbContext should not be requested.");
+            throw new NotSupportedException();
+        }
+
+        public Task<int> DeleteProcessedBeforeAsync(
+            long tenantId,
+            DateTime cutoffUtc,
+            int batchSize,
+            CancellationToken ct = default)
+        {
+            throw new NotSupportedException();
         }
     }
 }

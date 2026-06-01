@@ -1,4 +1,4 @@
-using Atlas.Infrastructure.Caching.Abstractions;
+﻿using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Extensions;
 using Atlas.Infrastructure.Caching.Locking;
 using FluentAssertions;

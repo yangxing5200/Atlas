@@ -1,4 +1,4 @@
-using Atlas.Infrastructure.Caching.Providers.Memory;
+﻿using Atlas.Infrastructure.Caching.Providers.Memory;
 using FluentAssertions;
 using Microsoft.Extensions.Caching.Memory;
 using System;

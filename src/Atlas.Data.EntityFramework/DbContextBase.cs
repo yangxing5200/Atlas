@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -39,7 +39,7 @@ namespace Atlas.Data.Common
         /// </remarks>
         protected virtual void ApplyGlobalFilters(ModelBuilder modelBuilder)
         {
-         
+
         }
 
         /// <summary>

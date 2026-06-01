@@ -1,4 +1,4 @@
-namespace Atlas.Core.Enums;
+﻿namespace Atlas.Core.Enums;
 
 public enum BackgroundJobStatus
 {

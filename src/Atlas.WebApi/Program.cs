@@ -1,4 +1,4 @@
-using Atlas.Extensions.DependencyInjection;
+﻿using Atlas.Extensions.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
 

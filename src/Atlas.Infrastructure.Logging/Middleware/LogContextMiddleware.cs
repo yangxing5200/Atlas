@@ -1,4 +1,4 @@
-using Atlas.Core.Context;
+﻿using Atlas.Core.Context;
 using Atlas.Core.Logging;
 using Atlas.Core.Services;
 using Microsoft.AspNetCore.Http;
@@ -26,7 +26,10 @@ namespace Atlas.Infrastructure.Logging.Middleware
         {
             // 1. 获取追踪标识
             var correlationId = context.TraceIdentifier;
-            var operationId = Activity.Current?.Id ?? Guid.NewGuid().ToString("N");
+            var activity = Activity.Current;
+            var operationId = activity?.Id ?? Guid.NewGuid().ToString("N");
+            var traceId = activity?.TraceId.ToString();
+            var spanId = activity?.SpanId.ToString();
 
             // 2. 添加响应头便于前端/网关追踪
             context.Response.OnStarting(() =>
@@ -39,6 +42,8 @@ namespace Atlas.Infrastructure.Logging.Middleware
             // LogContext 基于 async flow 传播；using 作用域结束后属性会自动弹出，避免污染其他请求。
             using (LogContext.PushProperty(LogContextKeys.CorrelationId, correlationId))
             using (LogContext.PushProperty(LogContextKeys.OperationId, operationId))
+            using (LogContext.PushProperty(LogContextKeys.TraceId, traceId))
+            using (LogContext.PushProperty(LogContextKeys.SpanId, spanId))
             using (LogContext.PushProperty(LogContextKeys.RequestPath, context.Request.Path.Value))
             using (LogContext.PushProperty(LogContextKeys.RequestMethod, context.Request.Method))
             {

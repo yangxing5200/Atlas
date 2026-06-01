@@ -1,4 +1,4 @@
-using Atlas.Core.Enums;
+﻿using Atlas.Core.Enums;
 using Atlas.Data.Global;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;

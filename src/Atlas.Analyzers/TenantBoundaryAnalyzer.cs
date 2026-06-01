@@ -1,4 +1,4 @@
-using System.Collections.Immutable;
+﻿using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -109,6 +109,9 @@ public sealed class TenantBoundaryAnalyzer : DiagnosticAnalyzer
         INamedTypeSymbol? tenantDbContext,
         INamedTypeSymbol? efDbContext)
     {
+        if (IsApprovedRuntimeLocation(context))
+            return;
+
         // 该回调注册在多种声明节点上。这里先把不同声明形态统一提取为 type syntax，
         // 这样下面的语义检查逻辑可以复用。
         var typeSyntax = context.Node switch
@@ -142,6 +145,9 @@ public sealed class TenantBoundaryAnalyzer : DiagnosticAnalyzer
         SyntaxNodeAnalysisContext context,
         INamedTypeSymbol? efDbContext)
     {
+        if (IsApprovedRuntimeLocation(context))
+            return;
+
         if (context.Node is not InvocationExpressionSyntax invocation)
             return;
 
@@ -211,6 +217,16 @@ public sealed class TenantBoundaryAnalyzer : DiagnosticAnalyzer
     }
 
     /// <summary>
+    /// Runtime namespaces are the only approved place in non-data service assemblies that may touch tenant EF primitives.
+    /// </summary>
+    private static bool IsApprovedRuntimeLocation(SyntaxNodeAnalysisContext context)
+    {
+        var namespaceName = context.ContainingSymbol?.ContainingNamespace?.ToDisplayString();
+        return namespaceName != null &&
+               namespaceName.StartsWith("Atlas.Services.Tenant.Runtime", StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// 控制哪些程序集需要执行租户边界检查。
     /// </summary>
     /// <remarks>
@@ -232,12 +248,12 @@ public sealed class TenantBoundaryAnalyzer : DiagnosticAnalyzer
         // - Tests 需要构造测试夹具，并有意覆盖底层数据访问行为。
         // - Atlas.Data.* 拥有 DbContext、Repository、EF 配置和 migration 相关代码。
         // - Atlas.Extensions.DependencyInjection 负责组合基础设施服务。
-        // - Atlas.Services.Tenant 和 Atlas.BackgroundTasks 包含需要接触更底层能力的运行时管道代码。
+        // - Atlas.BackgroundTasks 是后台执行平面，当前直接管理 global job claim SQL。
+        // - Atlas.Services.Tenant.Runtime.* 的细粒度豁免在 IsApprovedRuntimeLocation 中处理。
         if (name.EndsWith(".Tests", StringComparison.Ordinal) ||
             name.StartsWith("Atlas.Data.", StringComparison.Ordinal) ||
             name is "Atlas.Analyzers" or "Atlas.LocalSetup" or
-                "Atlas.Extensions.DependencyInjection" or "Atlas.Services.Tenant" or
-                "Atlas.BackgroundTasks")
+                "Atlas.Extensions.DependencyInjection" or "Atlas.BackgroundTasks")
         {
             return false;
         }

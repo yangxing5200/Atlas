@@ -1,6 +1,7 @@
-using Atlas.Core.Configuration;
+﻿using Atlas.Core.Configuration;
 using Atlas.Core.IdGenerators;
 using Atlas.Core.Services;
+using Atlas.Core.Telemetry;
 using Atlas.Data.Common.Interceptors;
 using Atlas.Data.Global;
 using Atlas.Data.Tenant.Identity;
@@ -10,7 +11,8 @@ using Atlas.Infrastructure.Caching.Locking;
 using Atlas.Messaging.Abstractions;
 using Atlas.Messaging.RabbitMQ;
 using Atlas.Services.Tenant;
-using Atlas.Services.Tenant.BackgroundJobs;
+using Atlas.Services.Tenant.Runtime.BackgroundJobs;
+using Atlas.Services.Tenant.Runtime.Messaging;
 using MassTransit;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -18,6 +20,11 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using OpenTelemetry;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using System.Reflection;
 using Atlas.BackgroundTasks;
 
@@ -43,7 +50,8 @@ public static class AtlasCoreServiceExtensions
         return services.AddAtlasCore(
             configuration,
             AtlasModuleCatalog.CreateWithBuiltInModules(Array.Empty<IAtlasModule>()),
-            Array.Empty<Assembly>());
+            Array.Empty<Assembly>(),
+            AtlasRuntimeMode.Worker);
     }
 
     /// <summary>
@@ -57,7 +65,8 @@ public static class AtlasCoreServiceExtensions
         return services.AddAtlasCore(
             configuration,
             AtlasModuleCatalog.CreateWithBuiltInModules(Array.Empty<IAtlasModule>()),
-            messagingConsumerAssemblies);
+            messagingConsumerAssemblies,
+            AtlasRuntimeMode.Worker);
     }
 
     /// <summary>
@@ -134,28 +143,58 @@ public static class AtlasCoreServiceExtensions
         AtlasModuleCatalog moduleCatalog,
         Assembly[] messagingConsumerAssemblies)
     {
+        return services.AddAtlasCore(
+            configuration,
+            moduleCatalog,
+            messagingConsumerAssemblies,
+            AtlasRuntimeMode.Worker);
+    }
+
+    internal static IServiceCollection AddAtlasCore(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        AtlasModuleCatalog moduleCatalog,
+        Assembly[] messagingConsumerAssemblies,
+        AtlasRuntimeMode defaultRuntimeMode)
+    {
         // 注册顺序体现运行时依赖：身份、缓存和消息等基础设施先于业务服务。
         services.AddLogging();
         services.AddHttpContextAccessor();
-        services.AddAtlasRuntimeOptions(configuration);
+        var runtimeOptions = services.AddAtlasRuntimeOptions(configuration, defaultRuntimeMode);
         services.AddAtlasSnowflakeId(configuration);
         services.AddAtlasDatabase(configuration);
         services.AddAtlasIdentity();
         services.AddAtlasCache(configuration);
         services.AddAtlasMessaging(
             configuration,
-            CombineAssemblies(messagingConsumerAssemblies, moduleCatalog.ConsumerAssemblies));
+            CombineAssemblies(messagingConsumerAssemblies, moduleCatalog.ConsumerAssemblies),
+            runtimeOptions);
         moduleCatalog.AddServices(services, configuration);
         services.AddAtlasModuleMapping(moduleCatalog.AutoMapperAssemblies);
-        services.AddAtlasBackgroundTasks(configuration);
+        services.AddAtlasBackgroundTasks(configuration, runtimeOptions);
+        services.AddAtlasOpenTelemetry(configuration);
 
         return services;
     }
 
-    private static IServiceCollection AddAtlasRuntimeOptions(
+    private static AtlasRuntimeModeOptions AddAtlasRuntimeOptions(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        AtlasRuntimeMode defaultRuntimeMode)
     {
+        var runtimeOptions = AtlasRuntimeModeOptions.FromConfiguration(configuration, defaultRuntimeMode);
+
+        services.AddOptions<AtlasRuntimeModeOptions>()
+            .Configure(options =>
+            {
+                options.Mode = runtimeOptions.Mode;
+                options.EnableMessagingConsumers = runtimeOptions.EnableMessagingConsumers;
+                options.EnableTenantOutboxDispatcher = runtimeOptions.EnableTenantOutboxDispatcher;
+                options.EnableBackgroundJobWorker = runtimeOptions.EnableBackgroundJobWorker;
+                options.EnableRecurringTaskRunner = runtimeOptions.EnableRecurringTaskRunner;
+            })
+            .ValidateOnStart();
+
         services.AddOptions<AtlasCacheSettingsOptions>()
             .Bind(configuration.GetSection(AtlasCacheSettingsOptions.SectionName))
             .Validate(options => IsSupportedCacheProvider(options.Provider), "CacheSettings:Provider must be Memory, Redis, or Hybrid.")
@@ -178,7 +217,7 @@ public static class AtlasCoreServiceExtensions
             .Validate(options => IsSupportedMessagingProvider(options.Provider), "Messaging:Provider must be None, NoOp, or RabbitMQ.")
             .ValidateOnStart();
 
-        return services;
+        return runtimeOptions;
     }
 
     #region Infrastructure - HTTP Context
@@ -297,7 +336,8 @@ public static class AtlasCoreServiceExtensions
     private static IServiceCollection AddAtlasMessaging(
         this IServiceCollection services,
         IConfiguration configuration,
-        Assembly[] messagingConsumerAssemblies)
+        Assembly[] messagingConsumerAssemblies,
+        AtlasRuntimeModeOptions runtimeOptions)
     {
         var options = configuration.GetSection(AtlasMessagingOptions.SectionName).Get<AtlasMessagingOptions>()
             ?? new AtlasMessagingOptions();
@@ -305,7 +345,28 @@ public static class AtlasCoreServiceExtensions
 
         if (provider is "rabbitmq" or "rabbit-mq" or "rabbit")
         {
-            return services.AddAtlasRabbitMqMessaging(configuration, messagingConsumerAssemblies);
+            var tenantOutboxOptions = configuration.GetSection("Messaging:TenantOutbox")
+                .Get<TenantOutboxDispatcherOptions>() ?? new TenantOutboxDispatcherOptions();
+            var tenantOutboxEnabled = HasConfiguredValue(configuration.GetSection("Messaging:TenantOutbox"), "Enabled")
+                ? tenantOutboxOptions.Enabled
+                : runtimeOptions.ShouldEnableTenantOutboxDispatcher();
+            var consumersEnabled = runtimeOptions.ShouldEnableMessagingConsumers();
+
+            if (!tenantOutboxEnabled && !consumersEnabled)
+            {
+                services.TryAddSingleton<IDomainEventPublisher, NoOpDomainEventPublisher>();
+                services.TryAddSingleton<IDomainEventTransport, NoOpDomainEventTransport>();
+                return services;
+            }
+
+            var enabledConsumerAssemblies = consumersEnabled
+                ? messagingConsumerAssemblies
+                : Array.Empty<Assembly>();
+
+            return services.AddAtlasRabbitMqMessaging(
+                configuration,
+                enabledConsumerAssemblies,
+                tenantOutboxEnabled);
         }
 
         if (provider == "redis")
@@ -326,7 +387,8 @@ public static class AtlasCoreServiceExtensions
     private static IServiceCollection AddAtlasRabbitMqMessaging(
         this IServiceCollection services,
         IConfiguration configuration,
-        Assembly[] messagingConsumerAssemblies)
+        Assembly[] messagingConsumerAssemblies,
+        bool enableTenantOutboxDispatcher)
     {
         var rabbitMqSection = configuration.GetSection("Messaging:RabbitMQ");
         var options = rabbitMqSection.Get<RabbitMqMessagingOptions>() ?? new RabbitMqMessagingOptions();
@@ -394,7 +456,11 @@ public static class AtlasCoreServiceExtensions
         services.AddScoped<IDomainEventPublisher, MassTransitDomainEventPublisher>();
         services.RemoveAll<IDomainEventTransport>();
         services.AddSingleton<IDomainEventTransport, MassTransitDomainEventTransport>();
-        services.AddHostedService<TenantOutboxDispatcher>();
+        if (enableTenantOutboxDispatcher)
+        {
+            services.AddHostedService<TenantOutboxDispatcher>();
+        }
+
         return services;
     }
 
@@ -404,11 +470,156 @@ public static class AtlasCoreServiceExtensions
 
     private static IServiceCollection AddAtlasBackgroundTasks(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        AtlasRuntimeModeOptions runtimeOptions)
     {
         return services
-            .AddAtlasBackgroundTaskRuntime(configuration)
+            .AddAtlasBackgroundTaskRuntime(
+                configuration,
+                runtimeOptions.ShouldEnableRecurringTaskRunner(),
+                runtimeOptions.ShouldEnableBackgroundJobWorker())
             .AddAtlasTenantBackgroundJobs(configuration);
+    }
+
+    #endregion
+
+    #region Infrastructure - Observability
+
+    private static IServiceCollection AddAtlasOpenTelemetry(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        var section = configuration.GetSection(AtlasOpenTelemetryOptions.SectionName);
+        var options = section.Get<AtlasOpenTelemetryOptions>() ?? new AtlasOpenTelemetryOptions();
+
+        services.AddOptions<AtlasOpenTelemetryOptions>()
+            .Bind(section)
+            .Validate(ValidateOpenTelemetryOptions, $"{AtlasOpenTelemetryOptions.SectionName} is invalid.")
+            .ValidateOnStart();
+
+        if (!options.Enabled)
+            return services;
+
+        var serviceVersion = string.IsNullOrWhiteSpace(options.ServiceVersion)
+            ? typeof(AtlasCoreServiceExtensions).Assembly.GetName().Version?.ToString()
+            : options.ServiceVersion.Trim();
+
+        var builder = services.AddOpenTelemetry()
+            .ConfigureResource(resource => resource.AddService(
+                serviceName: options.ServiceName.Trim(),
+                serviceVersion: serviceVersion));
+
+        builder.WithTracing(tracing =>
+        {
+            tracing
+                .AddSource(AtlasTelemetry.ActivitySourceName)
+                .AddSource("MassTransit")
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation();
+
+            AddConfiguredTraceExporter(tracing, options);
+        });
+
+        builder.WithMetrics(metrics =>
+        {
+            metrics
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation();
+
+            if (options.InstrumentRuntime)
+                metrics.AddRuntimeInstrumentation();
+
+            AddConfiguredMetricExporter(metrics, options);
+        });
+
+        return services;
+    }
+
+    private static void AddConfiguredTraceExporter(
+        TracerProviderBuilder tracing,
+        AtlasOpenTelemetryOptions options)
+    {
+        switch (NormalizeOpenTelemetryExporter(options.Exporter))
+        {
+            case "console":
+                tracing.AddConsoleExporter();
+                break;
+            case "otlp":
+                tracing.AddOtlpExporter(otlp => ConfigureOtlpExporter(otlp, options));
+                break;
+        }
+    }
+
+    private static void AddConfiguredMetricExporter(
+        MeterProviderBuilder metrics,
+        AtlasOpenTelemetryOptions options)
+    {
+        switch (NormalizeOpenTelemetryExporter(options.Exporter))
+        {
+            case "console":
+                metrics.AddConsoleExporter();
+                break;
+            case "otlp":
+                metrics.AddOtlpExporter(otlp => ConfigureOtlpExporter(otlp, options));
+                break;
+        }
+    }
+
+    private static void ConfigureOtlpExporter(
+        OtlpExporterOptions otlp,
+        AtlasOpenTelemetryOptions options)
+    {
+        otlp.Protocol = ParseOtlpProtocol(options.OtlpProtocol);
+        if (Uri.TryCreate(options.OtlpEndpoint, UriKind.Absolute, out var endpoint))
+            otlp.Endpoint = endpoint;
+    }
+
+    private static bool ValidateOpenTelemetryOptions(AtlasOpenTelemetryOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.ServiceName))
+            return false;
+
+        if (!IsSupportedOpenTelemetryExporter(options.Exporter))
+            return false;
+
+        if (!IsSupportedOtlpProtocol(options.OtlpProtocol))
+            return false;
+
+        return NormalizeOpenTelemetryExporter(options.Exporter) != "otlp" ||
+               Uri.TryCreate(options.OtlpEndpoint, UriKind.Absolute, out _);
+    }
+
+    private static bool IsSupportedOpenTelemetryExporter(string? exporter)
+    {
+        return NormalizeOpenTelemetryExporter(exporter) is "none" or "console" or "otlp";
+    }
+
+    private static string NormalizeOpenTelemetryExporter(string? exporter)
+    {
+        return string.IsNullOrWhiteSpace(exporter)
+            ? "none"
+            : exporter.Trim().ToLowerInvariant();
+    }
+
+    private static bool IsSupportedOtlpProtocol(string? protocol)
+    {
+        return NormalizeOtlpProtocol(protocol) is "grpc" or "http/protobuf" or "httpprotobuf" or "http";
+    }
+
+    private static OtlpExportProtocol ParseOtlpProtocol(string? protocol)
+    {
+        return NormalizeOtlpProtocol(protocol) switch
+        {
+            "http" or "http/protobuf" or "httpprotobuf" => OtlpExportProtocol.HttpProtobuf,
+            _ => OtlpExportProtocol.Grpc
+        };
+    }
+
+    private static string NormalizeOtlpProtocol(string? protocol)
+    {
+        return string.IsNullOrWhiteSpace(protocol)
+            ? "grpc"
+            : protocol.Trim().ToLowerInvariant();
     }
 
     #endregion
@@ -538,6 +749,11 @@ public static class AtlasCoreServiceExtensions
             .Where(assembly => assembly is not null)
             .Distinct()
             .ToArray();
+    }
+
+    private static bool HasConfiguredValue(IConfigurationSection section, string key)
+    {
+        return section.GetChildren().Any(child => string.Equals(child.Key, key, StringComparison.OrdinalIgnoreCase));
     }
 
     private static IServiceCollection AddAtlasModuleMapping(

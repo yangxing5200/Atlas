@@ -1,4 +1,4 @@
-using Atlas.Infrastructure.Caching.Core.Models;
+ï»¿using Atlas.Infrastructure.Caching.Core.Models;
 using Atlas.Infrastructure.Caching.Tests.Helpers;
 using FluentAssertions;
 using System;
@@ -165,7 +165,7 @@ namespace Atlas.Infrastructure.Caching.Tests.Models
             var baseExpiration = TimeSpan.FromMinutes(30);
             var definition = CacheKeyDefinition.Create("product:{id}")
                 .WithExpiration(baseExpiration)
-                .Build();  // Ê¹ÓÃÄ¬ÈÏµÄ maxRandomOffsetSeconds = 300
+                .Build();  // Ê¹ï¿½ï¿½Ä¬ï¿½Ïµï¿½ maxRandomOffsetSeconds = 300
             var context = TestHelpers.CreateScopeContext();
 
             // Act
@@ -175,7 +175,7 @@ namespace Atlas.Infrastructure.Caching.Tests.Models
             options.Should().NotBeNull();
             options.AbsoluteExpiration.Should().NotBeNull();
 
-            // ÑéÖ¤Ê±¼äÔÚ [baseExpiration, baseExpiration + 300Ãë] ·¶Î§ÄÚ
+            // ï¿½ï¿½Ö¤Ê±ï¿½ï¿½ï¿½ï¿½ [baseExpiration, baseExpiration + 300ï¿½ï¿½] ï¿½ï¿½Î§ï¿½ï¿½
             var minExpiration = baseExpiration;
             var maxExpiration = baseExpiration.Add(TimeSpan.FromSeconds(300));
 

@@ -1,4 +1,4 @@
-using Atlas.Data.Global;
+﻿using Atlas.Data.Global;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Atlas.Extensions.DependencyInjection.HealthChecks;

@@ -1,4 +1,4 @@
-namespace Atlas.Services.Tenant;
+﻿namespace Atlas.Services.Tenant;
 
 public interface ITenantProvisioningService
 {

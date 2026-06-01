@@ -1,0 +1,11 @@
+﻿{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Atlas",
+  "classifications": [ "Atlas", "Module", "WebApi" ],
+  "identity": "Atlas.Templates.Module",
+  "name": "Atlas business module",
+  "shortName": "atlas-module",
+  "sourceName": "Atlas.ModuleTemplate",
+  "preferNameDirectory": true,
+  "description": "Creates a tenant-safe Atlas business module with entities, EF configurations, services, query services, controller, and test skeleton."
+}

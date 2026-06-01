@@ -8,7 +8,7 @@ public class Tenant : AuditableEntity
     /// <summary>
     /// 公司名称
     /// </summary>
-    public string Name { get; set; }
+    public string Name { get; set; } = string.Empty;
 
     /// <summary>
     /// 品牌名称
@@ -23,17 +23,17 @@ public class Tenant : AuditableEntity
     /// <summary>
     /// 电话
     /// </summary>
-    public string PhoneNumber { get; set; }
+    public string PhoneNumber { get; set; } = string.Empty;
 
     /// <summary>
     /// 联系人姓名
     /// </summary>
-    public string ContactName { get; set; }
+    public string ContactName { get; set; } = string.Empty;
 
     /// <summary>
     /// 联系人手机号
     /// </summary>
-    public string ContactPhoneNumber { get; set; }
+    public string ContactPhoneNumber { get; set; } = string.Empty;
 
     /// <summary>
     /// 联系人邮箱
@@ -43,7 +43,7 @@ public class Tenant : AuditableEntity
     /// <summary>
     /// 公司代码
     /// </summary>
-    public string Domain { get; set; }
+    public string Domain { get; set; } = string.Empty;
 
     /// <summary>
     /// 租户类型
@@ -58,7 +58,7 @@ public class Tenant : AuditableEntity
     /// <summary>
     /// 城市
     /// </summary>
-    public string City { get; set; }
+    public string City { get; set; } = string.Empty;
 
     /// <summary>
     /// 类别
@@ -88,7 +88,7 @@ public class Tenant : AuditableEntity
     /// <summary>
     /// 关联的数据库实例
     /// </summary>
-    public DatabaseInstance DatabaseInstance { get; set; }
+    public DatabaseInstance DatabaseInstance { get; set; } = null!;
 
     /// <summary>
     /// 租户类别字典

@@ -1,4 +1,4 @@
-<Project>
+﻿<Project>
   <PropertyGroup>
     <TargetFramework Condition="'$(TargetFramework)' == ''">net8.0</TargetFramework>
     <ImplicitUsings Condition="'$(ImplicitUsings)' == ''">enable</ImplicitUsings>
@@ -14,10 +14,41 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
 
+  <PropertyGroup Condition="$([System.String]::Copy('$(MSBuildProjectName)').StartsWith('Atlas.Sample.')) or '$(MSBuildProjectName)' == 'Atlas.WebApi' or '$(MSBuildProjectName)' == 'Atlas.Worker' or '$(MSBuildProjectName)' == 'Atlas.MigrationJob' or '$(MSBuildProjectName)' == 'Atlas.Analyzers' or '$(MSBuildProjectName)' == 'Atlas.LocalSetup'">
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(IsPackable)' != 'false' and $([System.String]::Copy('$(MSBuildProjectName)').StartsWith('Atlas.'))">
+    <VersionPrefix Condition="'$(VersionPrefix)' == ''">0.2.0</VersionPrefix>
+    <PackageId Condition="'$(PackageId)' == ''">$(MSBuildProjectName)</PackageId>
+    <Authors>Atlas</Authors>
+    <Company>Atlas</Company>
+    <Description Condition="'$(Description)' == ''">Atlas multi-tenant application scaffold component for $(MSBuildProjectName).</Description>
+    <PackageTags>atlas;multi-tenant;saas;scaffold</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl Condition="'$(RepositoryUrl)' == ''">https://github.com/your-org/atlas</RepositoryUrl>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(IsTestProject)' != 'true' and !$([System.String]::Copy('$(MSBuildProjectName)').StartsWith('Atlas.Sample.'))">
+    <WarningsAsErrors>$(WarningsAsErrors);CS0108;CS0168;CS0618;CS8601;CS8602;CS8603;CS8604;CS8618;CS8625;CS8766</WarningsAsErrors>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(IsTestProject)' == 'true' or $([System.String]::Copy('$(MSBuildProjectName)').StartsWith('Atlas.Sample.'))">
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
   <ItemGroup Condition="'$(MSBuildProjectName)' != 'Atlas.Analyzers' and Exists('$(MSBuildThisFileDirectory)src\Atlas.Analyzers\Atlas.Analyzers.csproj')">
     <ProjectReference Include="$(MSBuildThisFileDirectory)src\Atlas.Analyzers\Atlas.Analyzers.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false"
                       PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' != 'false' and $([System.String]::Copy('$(MSBuildProjectName)').StartsWith('Atlas.')) and Exists('$(MSBuildThisFileDirectory)README.md')">
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 </Project>

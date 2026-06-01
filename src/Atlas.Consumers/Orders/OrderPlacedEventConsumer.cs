@@ -1,9 +1,10 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Atlas.Consumers;
 using Atlas.Core.Entities.Tenant;
 using Atlas.Data.Abstractions;
 using Atlas.Messaging.Abstractions;
 using Atlas.Services.Tenant;
+using Atlas.Services.Tenant.Runtime.Messaging;
 using MassTransit;
 using Microsoft.Extensions.Logging;
 

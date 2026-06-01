@@ -7,6 +7,7 @@ using Atlas.Data.Common.Extensions;
 using Atlas.Data.Global.Repositories;
 using Atlas.Data.Tenant.Repositories;
 using Atlas.Infrastructure.Security;
+using Atlas.Infrastructure.Security.Permissions;
 using Atlas.Models.DTOs;
 using Atlas.Models.Requests;
 using Atlas.Models.Responses;
@@ -23,11 +24,15 @@ namespace Atlas.Services
         private readonly ILogger<UserService> _logger;
         private readonly ITokenService _tokenService;
         private readonly ITokenCacheService _tokenCacheService;
+        private readonly IRefreshTokenService _refreshTokenService;
+        private readonly IPermissionChecker _permissionChecker;
         private readonly IRepository<UserLoginLog> _userLoginLogRepository;
         private readonly IRepository<UserStore> _userStoreRepository;
+        private readonly IRepository<UserRole> _userRoleRepository;
         private readonly IStoreRepository _storeRepository;
         private readonly ITenantRepository _tenantRepository;
         private readonly IOperationLogService _operationLogService;
+        private readonly IAuditEventService _auditEventService;
         private readonly ICurrentIdentity _currentIdentity;
 
         public UserService(
@@ -36,22 +41,30 @@ namespace Atlas.Services
           IMapper mapper,
           IRepository<UserLoginLog> userLoginLogRepository,
           IRepository<UserStore> userStoreRepository,
+          IRepository<UserRole> userRoleRepository,
           IStoreRepository storeRepository,
           ITenantRepository tenantRepository,
           ITokenService tokenService,
           ITokenCacheService tokenCacheService,
+          IRefreshTokenService refreshTokenService,
+          IPermissionChecker permissionChecker,
           IOperationLogService operationLogService,
+          IAuditEventService auditEventService,
           ICurrentIdentity currentIdentity,
           ILogger<UserService> logger)
           : base(repository, unitOfWork, mapper)
         {
             _userLoginLogRepository = userLoginLogRepository;
             _userStoreRepository = userStoreRepository;
+            _userRoleRepository = userRoleRepository;
             _storeRepository = storeRepository;
             _tenantRepository = tenantRepository;
             _tokenService = tokenService;
             _tokenCacheService = tokenCacheService;
+            _refreshTokenService = refreshTokenService;
+            _permissionChecker = permissionChecker;
             _operationLogService = operationLogService;
+            _auditEventService = auditEventService;
             _currentIdentity = currentIdentity;
             _logger = logger;
         }
@@ -80,6 +93,7 @@ namespace Atlas.Services
                 if (user == null)
                 {
                     await LogLoginFailureAsync(0, tenant.Id, null, ipAddress, userAgent, "用户不存在");
+                    await AuditSecurityAsync(tenant.Id, null, null, "Login", AuditEventOutcome.Failed, ipAddress, userAgent, "用户不存在");
                     return new LoginResponse { Success = false, Message = "用户名或密码错误" };
                 }
 
@@ -87,6 +101,7 @@ namespace Atlas.Services
                 {
                     var reason = GetLoginFailureReason(user);
                     await LogLoginFailureAsync(user.Id, tenant.Id, null, ipAddress, userAgent, reason);
+                    await AuditSecurityAsync(tenant.Id, user.Id, null, "Login", AuditEventOutcome.Failed, ipAddress, userAgent, reason);
                     return new LoginResponse { Success = false, Message = reason };
                 }
 
@@ -95,6 +110,7 @@ namespace Atlas.Services
                     user.RecordLoginFailure();
                     await UnitOfWork.SaveChangesAsync(tenant.Id);
                     await LogLoginFailureAsync(user.Id, tenant.Id, null, ipAddress, userAgent, "密码错误");
+                    await AuditSecurityAsync(tenant.Id, user.Id, null, "Login", AuditEventOutcome.Failed, ipAddress, userAgent, "密码错误");
                     return new LoginResponse { Success = false, Message = "用户名或密码错误" };
                 }
 
@@ -129,6 +145,7 @@ namespace Atlas.Services
                 );
 
                 var token = _tokenService.GenerateToken(tokenInfo);
+                var refreshToken = await _refreshTokenService.IssueAsync(tokenInfo, ipAddress, userAgent);
 
                 // ========== 第六步：更新用户登录信息 ==========
                 user.ResetLoginFailedCount();
@@ -137,12 +154,14 @@ namespace Atlas.Services
                 await UnitOfWork.SaveChangesAsync(tenant.Id);
 
                 await LogLoginSuccessAsync(user, tenant.Id, loginStore.Id, tokenInfo.SessionId, ipAddress, userAgent, tokenInfo.ExpiresAt);
+                await AuditSecurityAsync(tenant.Id, user.Id, loginStore.Id, "Login", AuditEventOutcome.Succeeded, ipAddress, userAgent, sessionId: tokenInfo.SessionId);
 
                 // ========== 第七步：返回结果 ==========
                 return new LoginResponse
                 {
                     Success = true,
                     Token = token,
+                    RefreshToken = refreshToken.Token,
                     User = MapToDto(user),
                     ExpiresIn = expirationMinutes * 60,
                     ExpiresAt = DateTime.UtcNow.AddMinutes(expirationMinutes),
@@ -158,6 +177,37 @@ namespace Atlas.Services
                 _logger.LogError(ex, "登录失败: {UserName}", request.UserName);
                 return new LoginResponse { Success = false, Message = "登录失败，请稍后重试" };
             }
+        }
+
+        public async Task<LoginResponse> RefreshTokenAsync(RefreshTokenRequest request, string ipAddress, string? userAgent)
+        {
+            var result = await _refreshTokenService.ExchangeAsync(request.RefreshToken, ipAddress, userAgent);
+            if (!result.Success)
+            {
+                return new LoginResponse
+                {
+                    Success = false,
+                    Message = result.Message ?? "刷新令牌无效"
+                };
+            }
+
+            await AuditSecurityAsync(
+                result.TenantId.GetValueOrDefault(),
+                result.UserId,
+                result.StoreId,
+                "RefreshToken",
+                AuditEventOutcome.Succeeded,
+                ipAddress,
+                userAgent);
+
+            return new LoginResponse
+            {
+                Success = true,
+                Token = result.AccessToken ?? string.Empty,
+                RefreshToken = result.RefreshToken,
+                ExpiresIn = result.ExpiresIn,
+                ExpiresAt = result.AccessTokenExpiresAtUtc
+            };
         }
 
         public async Task<SwitchStoreResponse> SwitchStoreAsync(long userId, SwitchStoreRequest request)
@@ -200,6 +250,7 @@ namespace Atlas.Services
                 );
 
                 var token = _tokenService.GenerateToken(tokenInfo);
+                var refreshToken = await _refreshTokenService.IssueAsync(tokenInfo, null, null);
 
                 // 记录操作日志
                 await _operationLogService.LogOperationAsync(new LogOperationRequest
@@ -218,12 +269,14 @@ namespace Atlas.Services
                 if (!string.IsNullOrWhiteSpace(previousSessionId))
                 {
                     _tokenCacheService.InvalidateSession(previousSessionId);
+                    await _refreshTokenService.RevokeSessionAsync(user.TenantId, previousSessionId, "SwitchStore");
                 }
 
                 return new SwitchStoreResponse
                 {
                     Success = true,
                     Token = token,
+                    RefreshToken = refreshToken.Token,
                     ExpiresIn = expirationMinutes * 60,
                     ExpiresAt = DateTime.UtcNow.AddMinutes(expirationMinutes),
                     CurrentStore = MapToStoreInfo(targetStore.Store, accessibleStores)
@@ -271,6 +324,14 @@ namespace Atlas.Services
                     try
                     {
                         _tokenCacheService.InvalidateSession(sessionId);
+                        await _refreshTokenService.RevokeSessionAsync(loginLog.TenantId, sessionId, "Logout");
+                        await AuditSecurityAsync(
+                            loginLog.TenantId,
+                            loginLog.UserId,
+                            loginLog.StoreId,
+                            "Logout",
+                            AuditEventOutcome.Succeeded,
+                            sessionId: sessionId);
                     }
                     catch (Exception cacheEx)
                     {
@@ -574,8 +635,12 @@ namespace Atlas.Services
                 {
                     session.LogoutAt = DateTime.UtcNow;
                     session.LogoutType = "PasswordChanged";
-                    _tokenCacheService.InvalidateSession(session.SessionId);
+                    if (!string.IsNullOrEmpty(session.SessionId))
+                    {
+                        _tokenCacheService.InvalidateSession(session.SessionId);
+                    }
                 }
+                await _refreshTokenService.RevokeUserAsync(user.TenantId, userId, "PasswordChanged");
 
                 await CommitAsync();
 
@@ -650,8 +715,12 @@ namespace Atlas.Services
                 {
                     session.LogoutAt = DateTime.UtcNow;
                     session.LogoutType = "PasswordReset";
-                    _tokenCacheService.InvalidateSession(session.SessionId);
+                    if (!string.IsNullOrEmpty(session.SessionId))
+                    {
+                        _tokenCacheService.InvalidateSession(session.SessionId);
+                    }
                 }
+                await _refreshTokenService.RevokeUserAsync(user.TenantId, request.UserId, "PasswordReset");
 
                 await CommitAsync();
 
@@ -734,6 +803,14 @@ namespace Atlas.Services
                 user.InvalidateAllTokens();
                 await CommitAsync();
                 _tokenCacheService.SetUserTokenVersion(request.UserId, user.TokenVersion);
+                await _permissionChecker.InvalidateUserPermissionsAsync(user.TenantId, user.Id);
+                await AuditSecurityAsync(
+                    user.TenantId,
+                    user.Id,
+                    null,
+                    "AssignStores",
+                    AuditEventOutcome.Succeeded,
+                    metadata: $"StoreCount={newStores.Count}");
 
                 return OperationResult.Succeed("门店分配成功，用户需要重新登录或重新获取Token");
             }
@@ -741,6 +818,72 @@ namespace Atlas.Services
             {
                 _logger.LogError(ex, "分配门店失败: UserId={UserId}", request.UserId);
                 return OperationResult.Failed("分配门店失败");
+            }
+        }
+
+        public async Task<OperationResult> AssignRolesAsync(AssignRolesRequest request)
+        {
+            try
+            {
+                var userBuilder = await _repository.QueryTrackingAsync();
+                var user = await userBuilder
+                    .Where(u => u.Id == request.UserId && !u.IsDeleted)
+                    .FirstOrDefaultAsync();
+
+                if (user == null)
+                    return OperationResult.Failed("用户不存在");
+
+                var roleBuilder = await _userRoleRepository.QueryTrackingAsync(user.TenantId);
+                var existingRoles = await roleBuilder
+                    .Where(x => x.TenantId == user.TenantId &&
+                                x.UserId == request.UserId &&
+                                x.StoreId == request.StoreId)
+                    .ToListAsync();
+
+                await _userRoleRepository.RemoveRangeAsync(existingRoles, user.TenantId);
+
+                var newRoles = request.RoleIds
+                    .Distinct()
+                    .Select(roleId => new UserRole
+                    {
+                        TenantId = user.TenantId,
+                        UserId = request.UserId,
+                        RoleId = roleId,
+                        StoreId = request.StoreId,
+                        GrantedAt = DateTime.UtcNow,
+                        GrantedBy = _currentIdentity.UserId ?? 0
+                    })
+                    .ToList();
+
+                if (newRoles.Count > 0)
+                    await _userRoleRepository.AddRangeAsync(newRoles, user.TenantId);
+
+                await UnitOfWork.SaveChangesAsync(user.TenantId);
+                await _permissionChecker.InvalidateUserPermissionsAsync(
+                    user.TenantId,
+                    user.Id,
+                    request.StoreId == 0 ? null : request.StoreId);
+                await AuditSecurityAsync(
+                    user.TenantId,
+                    user.Id,
+                    request.StoreId == 0 ? null : request.StoreId,
+                    "AssignRoles",
+                    AuditEventOutcome.Succeeded,
+                    metadata: $"RoleCount={newRoles.Count}");
+
+                return OperationResult.Succeed("角色分配成功");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "分配角色失败: UserId={UserId}", request.UserId);
+                await AuditSecurityAsync(
+                    _currentIdentity.TenantId.GetValueOrDefault(),
+                    request.UserId,
+                    request.StoreId == 0 ? null : request.StoreId,
+                    "AssignRoles",
+                    AuditEventOutcome.Failed,
+                    errorMessage: ex.Message);
+                return OperationResult.Failed("分配角色失败");
             }
         }
 
@@ -887,8 +1030,12 @@ namespace Atlas.Services
                 {
                     session.LogoutAt = DateTime.UtcNow;
                     session.LogoutType = "ForceLogout";
-                    _tokenCacheService.InvalidateSession(session.SessionId);
+                    if (!string.IsNullOrEmpty(session.SessionId))
+                    {
+                        _tokenCacheService.InvalidateSession(session.SessionId);
+                    }
                 }
+                await _refreshTokenService.RevokeUserAsync(user.TenantId, userId, "ForceLogout");
 
                 await CommitAsync();
 
@@ -1169,6 +1316,39 @@ namespace Atlas.Services
             };
         }
 
+        private Task AuditSecurityAsync(
+            long tenantId,
+            long? userId,
+            long? storeId,
+            string action,
+            AuditEventOutcome outcome,
+            string? ipAddress = null,
+            string? userAgent = null,
+            string? errorMessage = null,
+            string? metadata = null,
+            string? sessionId = null)
+        {
+            if (tenantId <= 0)
+                return Task.CompletedTask;
+
+            return _auditEventService.WriteAsync(new AuditEventRequest
+            {
+                TenantId = tenantId,
+                UserId = userId,
+                StoreId = storeId,
+                SessionId = sessionId,
+                Category = "Security",
+                Action = action,
+                Outcome = outcome,
+                EntityType = userId.HasValue ? nameof(User) : null,
+                EntityId = userId,
+                IpAddress = ipAddress,
+                UserAgent = userAgent,
+                Metadata = metadata,
+                ErrorMessage = errorMessage
+            });
+        }
+
         private async Task LogLoginSuccessAsync(User user, long tenantId, long storeId, string sessionId, string ipAddress, string? userAgent, long expiresAt)
         {
             var loginLog = new UserLoginLog
@@ -1213,7 +1393,7 @@ namespace Atlas.Services
         internal class CurrentIdentityImpl : ICurrentIdentity
         {
             public long? UserId { get; set; }
-            public string? UserName { get; set; }
+            public string UserName { get; set; } = string.Empty;
             public long? TenantId { get; set; }
             public long? StoreId { get; set; }
             public bool IsAuthenticated => UserId.HasValue;

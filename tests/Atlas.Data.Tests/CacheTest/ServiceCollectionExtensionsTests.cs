@@ -1,5 +1,6 @@
-using Atlas.Infrastructure.Caching.Abstractions;
+﻿using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Extensions;
+using Atlas.Infrastructure.Caching.Locking;
 using Atlas.Infrastructure.Caching.Providers.Redis;
 using Atlas.Infrastructure.Caching.Tags;
 using FluentAssertions;
@@ -27,6 +28,24 @@ namespace Atlas.Infrastructure.Caching.Tests.Extensions
             services.Count(x => x.ServiceType == typeof(ITagVersionStore)).Should().Be(1);
             using var provider = services.BuildServiceProvider();
             provider.GetRequiredService<ITagVersionStore>().Should().BeOfType<RedisTagVersionStore>();
+        }
+
+        [Fact]
+        public void AddRedisCaching_ReplacesMemoryDistributedLockProvider()
+        {
+            // Arrange
+            var services = new ServiceCollection();
+            var redis = new Mock<IConnectionMultiplexer>();
+
+            // Act
+            services.AddAtlasCaching();
+            services.AddMemoryCaching();
+            services.AddRedisCaching(redis.Object, enableInvalidationBus: false);
+
+            // Assert
+            services.Count(x => x.ServiceType == typeof(IDistributedLockProvider)).Should().Be(1);
+            using var provider = services.BuildServiceProvider();
+            provider.GetRequiredService<IDistributedLockProvider>().Should().BeOfType<RedisDistributedLockProvider>();
         }
 
         [Fact]

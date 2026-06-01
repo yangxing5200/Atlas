@@ -1,4 +1,4 @@
-// Keys/Generators/CacheKeyGenerator.cs
+﻿// Keys/Generators/CacheKeyGenerator.cs
 using System;
 using System.Collections.Generic;
 using Atlas.Infrastructure.Caching.Abstractions;

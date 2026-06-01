@@ -1,4 +1,4 @@
-using Atlas.Core.Entities.Tenant;
+﻿using Atlas.Core.Entities.Tenant;
 using Atlas.Core.Enums;
 using Atlas.Core.IdGenerators;
 using Atlas.Core.Services;

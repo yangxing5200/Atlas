@@ -1,4 +1,4 @@
-using Atlas.Infrastructure.Caching.Abstractions;
+﻿using Atlas.Infrastructure.Caching.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;

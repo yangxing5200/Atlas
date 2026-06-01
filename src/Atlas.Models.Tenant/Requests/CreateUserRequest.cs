@@ -29,6 +29,12 @@ namespace Atlas.Models.Requests
         public bool RememberMe { get; set; }
     }
 
+    public class RefreshTokenRequest
+    {
+        [Required(ErrorMessage = "刷新令牌不能为空")]
+        public string RefreshToken { get; set; } = string.Empty;
+    }
+
     /// <summary>
     /// 创建用户请求
     /// </summary>
@@ -179,6 +185,17 @@ namespace Atlas.Models.Requests
         [Required]
         [MinLength(1, ErrorMessage = "至少分配一个门店")]
         public List<AssignStoreItem> Stores { get; set; } = new();
+    }
+
+    public class AssignRolesRequest
+    {
+        [Required]
+        public long UserId { get; set; }
+
+        public long StoreId { get; set; }
+
+        [Required]
+        public List<long> RoleIds { get; set; } = new();
     }
 
     public class AssignStoreItem

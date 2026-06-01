@@ -1,6 +1,6 @@
-using Atlas.BackgroundTasks;
+﻿using Atlas.BackgroundTasks;
 using Atlas.Core.Services;
-using Atlas.Services.Tenant.BackgroundJobs;
+using Atlas.Services.Tenant.Runtime.BackgroundJobs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 

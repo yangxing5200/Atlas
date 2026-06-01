@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -8,6 +8,7 @@ using Atlas.Data.Tenant.Middleware;
 using Atlas.Extensions.DependencyInjection.HealthChecks;
 using Atlas.Infrastructure.Logging.Extensions;
 using Atlas.Infrastructure.Security;
+using Atlas.Infrastructure.Security.Permissions;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
@@ -17,6 +18,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.OpenApi.Models;
 using Serilog;
@@ -128,6 +130,7 @@ public static class AtlasWebApiExtensions
                 options => Encoding.UTF8.GetByteCount(options.SecretKey) >= 32,
                 "Security:Token:SecretKey must be at least 32 UTF-8 bytes.")
             .Validate(options => options.ExpirationMinutes > 0, "Security:Token:ExpirationMinutes must be greater than 0.")
+            .Validate(options => options.RefreshTokenExpirationDays > 0, "Security:Token:RefreshTokenExpirationDays must be greater than 0.")
             .Validate(options => !string.IsNullOrWhiteSpace(options.CookieName), "Security:Token:CookieName is required.")
             .ValidateOnStart();
 
@@ -164,7 +167,9 @@ public static class AtlasWebApiExtensions
                 policy.AddRequirements(new TenantAdminRequirement());
             });
         });
+        builder.Services.AddSingleton<IAuthorizationPolicyProvider, PermissionAuthorizationPolicyProvider>();
         builder.Services.AddScoped<IAuthorizationHandler, TenantAdminAuthorizationHandler>();
+        builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
         var mvcBuilder = builder.Services.AddControllers();
         foreach (var assembly in moduleCatalog.ControllerAssemblies)
@@ -222,10 +227,11 @@ public static class AtlasWebApiExtensions
         AddCors(builder, options.CorsPolicyName);
         builder.Services.AddAtlasCore(
             builder.Configuration,
-            moduleCatalog.Modules,
-            messagingConsumerAssemblies);
+            AtlasModuleCatalog.CreateWithBuiltInModules(moduleCatalog.Modules),
+            messagingConsumerAssemblies,
+            AtlasRuntimeMode.WebApi);
         builder.Services.AddAtlasLogging(builder.Configuration);
-        builder.Services.AddAtlasHealthChecks();
+        builder.Services.AddAtlasHealthChecks(builder.Configuration);
 
         return builder;
     }
@@ -260,8 +266,19 @@ public static class AtlasWebApiExtensions
         app.UseMiddleware<TokenVersionValidationMiddleware>();
         app.UseAuthorization();
         app.UseAtlasLogging();
+        app.MapHealthChecks("/health/live", new HealthCheckOptions
+        {
+            Predicate = registration => registration.Tags.Contains("live"),
+            ResponseWriter = WriteHealthCheckResponseAsync
+        });
+        app.MapHealthChecks("/health/ready", new HealthCheckOptions
+        {
+            Predicate = registration => registration.Tags.Contains("ready"),
+            ResponseWriter = WriteHealthCheckResponseAsync
+        });
         app.MapHealthChecks("/health", new HealthCheckOptions
         {
+            Predicate = _ => true,
             ResponseWriter = WriteHealthCheckResponseAsync
         });
         app.MapControllers();
@@ -269,12 +286,17 @@ public static class AtlasWebApiExtensions
         return app;
     }
 
-    public static IServiceCollection AddAtlasHealthChecks(this IServiceCollection services)
+    public static IServiceCollection AddAtlasHealthChecks(
+        this IServiceCollection services,
+        IConfiguration configuration)
     {
         services.AddHealthChecks()
-            .AddCheck<AtlasGlobalDatabaseHealthCheck>("atlas-global-db")
-            .AddCheck<AtlasCacheHealthCheck>("atlas-cache")
-            .AddCheck<AtlasBackgroundJobHealthCheck>("atlas-background-jobs");
+            .AddCheck("self", () => HealthCheckResult.Healthy("Process is running."), tags: ["live"])
+            .AddCheck<AtlasGlobalDatabaseHealthCheck>("atlas-global-db", tags: ["ready", "mysql"])
+            .AddCheck<AtlasCacheHealthCheck>("atlas-cache", tags: ["ready", "cache"])
+            .AddCheck<AtlasRedisHealthCheck>("atlas-redis", tags: ["ready", "redis"])
+            .AddCheck<AtlasRabbitMqHealthCheck>("atlas-rabbitmq", tags: ["ready", "rabbitmq"])
+            .AddCheck<AtlasBackgroundJobHealthCheck>("atlas-background-jobs", tags: ["ready", "background-jobs"]);
 
         return services;
     }

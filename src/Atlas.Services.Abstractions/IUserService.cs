@@ -18,6 +18,8 @@ namespace Atlas.Services.Abstractions
         /// </summary>
         Task<LoginResponse> LoginAsync(LoginRequest request, string ipAddress, string? userAgent);
 
+        Task<LoginResponse> RefreshTokenAsync(RefreshTokenRequest request, string ipAddress, string? userAgent);
+
         /// <summary>
         /// 用户登出
         /// </summary>
@@ -67,6 +69,8 @@ namespace Atlas.Services.Abstractions
         /// 分配门店
         /// </summary>
         Task<OperationResult> AssignStoresAsync(AssignStoresRequest request);
+
+        Task<OperationResult> AssignRolesAsync(AssignRolesRequest request);
 
         /// <summary>
         /// 启用/禁用用户

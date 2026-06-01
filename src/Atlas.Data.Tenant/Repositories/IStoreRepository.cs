@@ -13,8 +13,6 @@ namespace Atlas.Data.Tenant.Repositories
     /// </summary>
     public interface IStoreRepository : IRepository<Store>
     {
-        Task<Store?> GetByIdAsync(long id, CancellationToken ct = default);
-
         Task<List<Store>> GetChildDirectStoresAsync(
             long parentStoreId,
             CancellationToken ct = default);

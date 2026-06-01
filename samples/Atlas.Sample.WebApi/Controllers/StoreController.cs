@@ -1,5 +1,6 @@
-using Atlas.Core.Exceptions;
+﻿using Atlas.Core.Exceptions;
 using Atlas.Infrastructure.Security;
+using Atlas.Infrastructure.Security.Permissions;
 using Atlas.Models.DTOs;
 using Atlas.Models.Tenant.Responses;
 using Atlas.Services.Abstractions;
@@ -11,7 +12,7 @@ namespace Atlas.Sample.WebApi.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
-[Authorize(Policy = AuthorizationPolicies.RequireTenantAdmin)]
+[Authorize(Policy = AuthorizationPolicies.RequireStoresRead)]
 public sealed class StoreController : ControllerBase
 {
     private readonly IStoreService _storeService;
@@ -45,6 +46,7 @@ public sealed class StoreController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = AuthorizationPolicies.RequireStoresManage)]
     [ProducesResponseType(typeof(StoreDto), StatusCodes.Status201Created)]
     public async Task<ActionResult<StoreDto>> Create(
         [FromBody] StoreDto storeDto,
@@ -55,6 +57,7 @@ public sealed class StoreController : ControllerBase
     }
 
     [HttpPut("{id:long}")]
+    [Authorize(Policy = AuthorizationPolicies.RequireStoresManage)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Update(
@@ -71,6 +74,7 @@ public sealed class StoreController : ControllerBase
     }
 
     [HttpDelete("{id:long}")]
+    [Authorize(Policy = AuthorizationPolicies.RequireStoresManage)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Delete(

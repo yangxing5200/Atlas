@@ -41,6 +41,7 @@ namespace Atlas.Data.Global
 
         public virtual async Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default)
         {
+            ArgumentNullException.ThrowIfNull(id);
             return await _dbSet.FindAsync(new object[] { id }, ct);
         }
 

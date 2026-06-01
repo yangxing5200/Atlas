@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Caching.Memory;
+﻿using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using StackExchange.Redis;
@@ -7,6 +7,7 @@ using Atlas.Infrastructure.Caching.Core;
 using Atlas.Infrastructure.Caching.Invalidation;
 using Atlas.Infrastructure.Caching.Keys.Generators;
 using Atlas.Infrastructure.Caching.Keys.Parsers;
+using Atlas.Infrastructure.Caching.Locking;
 using Atlas.Infrastructure.Caching.Providers.Memory;
 using Atlas.Infrastructure.Caching.Providers.Redis;
 using Atlas.Infrastructure.Caching.Providers.Hybrid;
@@ -67,6 +68,8 @@ namespace Atlas.Infrastructure.Caching.Extensions
             services.AddSingleton<ITagVersionStore, TagVersionStore>();
             // 单机内存缓存没有跨实例通知能力，显式移除失效总线。
             services.RemoveAll<ICacheInvalidationBus>();
+            services.RemoveAll<IDistributedLockProvider>();
+            services.AddSingleton<IDistributedLockProvider, MemoryDistributedLockProvider>();
             return services;
         }
 
@@ -96,6 +99,9 @@ namespace Atlas.Infrastructure.Caching.Extensions
 
             services.RemoveAll<IConnectionMultiplexer>();
             services.AddSingleton(redis);
+            services.RemoveAll<IDistributedLockProvider>();
+            services.AddSingleton<IDistributedLockProvider>(sp =>
+                new RedisDistributedLockProvider(redis, instanceName ?? "atlas"));
 
             services.RemoveAll<ICacheProvider>();
             services.AddSingleton<ICacheProvider>(sp =>
@@ -147,6 +153,9 @@ namespace Atlas.Infrastructure.Caching.Extensions
             services.AddMemoryCache();
             services.RemoveAll<IConnectionMultiplexer>();
             services.AddSingleton(redis);
+            services.RemoveAll<IDistributedLockProvider>();
+            services.AddSingleton<IDistributedLockProvider>(sp =>
+                new RedisDistributedLockProvider(redis));
 
             var options = new HybridCacheOptions();
             configureOptions?.Invoke(options);

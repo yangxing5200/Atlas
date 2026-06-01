@@ -1,4 +1,4 @@
-using Atlas.Core.Security;
+﻿using Atlas.Core.Security;
 using Atlas.Core.Services;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
@@ -52,7 +52,6 @@ namespace Atlas.Infrastructure.Security
 
             _secretKeyBytes = Encoding.UTF8.GetBytes(_options.SecretKey);
             _expirationMinutes = _options.ExpirationMinutes > 0 ? _options.ExpirationMinutes : 1440;
-          
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -104,7 +103,7 @@ namespace Atlas.Infrastructure.Security
             var cacheKey = GetSecureCacheKey(token);
 
             // 验证结果短暂缓存，降低高频请求重复解密、验签和查版本的开销。
-            if (_cache.TryGetValue<TokenInfo>(cacheKey, out var cachedInfo))
+            if (_cache.TryGetValue<TokenInfo>(cacheKey, out var cachedInfo) && cachedInfo != null)
             {
                 if (!cachedInfo.IsExpired)
                 {
@@ -160,7 +159,7 @@ namespace Atlas.Infrastructure.Security
 
             var cacheKey = GetSecureCacheKey(token);
 
-            if (_cache.TryGetValue<TokenInfo>(cacheKey, out var cachedInfo))
+            if (_cache.TryGetValue<TokenInfo>(cacheKey, out var cachedInfo) && cachedInfo != null)
             {
                 if (!cachedInfo.IsExpired)
                 {
@@ -347,6 +346,7 @@ namespace Atlas.Infrastructure.Security
     {
         public string SecretKey { get; set; } = string.Empty;
         public int ExpirationMinutes { get; set; } = 1440;
+        public int RefreshTokenExpirationDays { get; set; } = 7;
         public string CookieName { get; set; } = "atlas-auth-token";
     }
 }

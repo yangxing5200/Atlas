@@ -8,6 +8,8 @@
         // 基础上下文
         public const string CorrelationId = "CorrelationId";
         public const string OperationId = "OperationId";
+        public const string TraceId = "TraceId";
+        public const string SpanId = "SpanId";
         public const string RequestPath = "RequestPath";
         public const string RequestMethod = "RequestMethod";
 

@@ -1,4 +1,4 @@
-using Atlas.Infrastructure.Caching.Serialization;
+﻿using Atlas.Infrastructure.Caching.Serialization;
 using Atlas.Infrastructure.Caching.Tests.Helpers;
 using FluentAssertions;
 using System;

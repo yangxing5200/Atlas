@@ -1,4 +1,4 @@
-using Atlas.Core.Entities.Tenant;
+﻿using Atlas.Core.Entities.Tenant;
 using Atlas.Models.DTOs;
 using Atlas.Models.Tenant.Requests;
 using Atlas.Services.Abstractions.Base;

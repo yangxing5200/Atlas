@@ -11,6 +11,7 @@ namespace Atlas.Models.Responses
         public bool Success { get; set; }
         public string? Message { get; set; }
         public string Token { get; set; } = string.Empty;
+        public string? RefreshToken { get; set; }
         public UserDto? User { get; set; }
         public int ExpiresIn { get; set; }
         public DateTime? ExpiresAt { get; set; }

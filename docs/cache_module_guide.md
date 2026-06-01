@@ -1,4 +1,4 @@
-# Atlas 缓存模块指南
+﻿# Atlas 缓存模块指南
 
 本文档介绍 Atlas 项目的缓存模块设计、能力边界和集成方式。缓存模块位于 `src/Atlas.Infrastructure.Caching`，业务代码主要依赖 `ICacheService`，不直接依赖具体的内存缓存或 Redis 实现。
 

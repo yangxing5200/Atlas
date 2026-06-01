@@ -1,4 +1,4 @@
-# Atlas 后台任务架构设计指南
+﻿# Atlas 后台任务架构设计指南
 
 Atlas 是多租户系统，后台任务不能只靠 `Task.Run`、临时线程或单个定时器解决。长期可维护的设计必须先区分任务类型，再决定可靠性、隔离方式、扩容方式和运维边界。
 
@@ -7,7 +7,7 @@ Atlas 是多租户系统，后台任务不能只靠 `Task.Run`、临时线程或
 | 层 | 项目 | 职责 |
 | --- | --- | --- |
 | Runtime | `src/Atlas.BackgroundTasks` | 通用任务契约、持久化 job 入队、worker claim、重试、周期 runner。 |
-| Tenant Jobs | `src/Atlas.Services.Tenant/BackgroundJobs` | 租户业务任务 handler，例如缓存预热、outbox 清理。 |
+| Tenant Jobs | `src/Atlas.Services.Tenant/Runtime/BackgroundJobs` | 租户运行时任务 handler，例如缓存预热、outbox 清理。 |
 | Consumers | `src/Atlas.Consumers` | RabbitMQ consumers，按业务域组织，不能放在 WebApi 层。 |
 | Host | `src/Atlas.Worker` / `samples/Atlas.Sample.WebApi` | WebApi 负责入队和查询；Worker 负责消费者、outbox dispatcher、后台任务执行和水平扩容。 |
 
@@ -166,7 +166,7 @@ await _jobClient.EnqueueAsync(
 Handler 位置：
 
 ```text
-src/Atlas.Services.Tenant/BackgroundJobs/TenantCacheWarmupJob.cs
+src/Atlas.Services.Tenant/Runtime/BackgroundJobs/TenantCacheWarmupJob.cs
 ```
 
 Handler 使用显式 `TenantId` 打开租户库，并写入 `OperationLogs` 做幂等记录：
@@ -182,7 +182,7 @@ x.Module == "BackgroundJob"
 周期任务位置：
 
 ```text
-src/Atlas.Services.Tenant/BackgroundJobs/TenantOutboxMaintenanceTask.cs
+src/Atlas.Services.Tenant/Runtime/BackgroundJobs/TenantOutboxMaintenanceTask.cs
 ```
 
 它扫描 Active/Trial 租户库，按保留时间清理已完成 outbox/inbox：
@@ -195,7 +195,7 @@ WHERE TenantId = @tenantId
 LIMIT @batchSize;
 ```
 
-租户库维护 SQL 必须通过 `ITenantSqlExecutor` 执行；该入口会拒绝缺少 `TenantId` 条件的 SQL。
+租户库维护 SQL 必须通过 `ITenantSqlExecutor` 的命名方法执行；调用方不传完整 SQL，executor 负责生成带 `TenantId` 谓词的最终语句。
 
 生产多实例运行时，`RecurringTaskRunner` 会使用 `IDistributedLockProvider` 加锁：
 
@@ -203,7 +203,7 @@ LIMIT @batchSize;
 atlas:recurring-task:{task.Name}
 ```
 
-当前默认是内存锁，只适合单实例或开发环境；生产多实例应替换为 Redis 级别分布式锁。复杂调度场景可以升级到 Quartz.NET 或 Hangfire，但业务 handler 和 `BackgroundJobs` 表仍可复用。
+`CacheSettings:Provider=Memory` 时默认是内存锁，只适合单实例或开发环境；`Redis` 或 `Hybrid` 模式会自动替换为 Redis 分布式锁。Redis 锁使用 token 校验释放，避免非持有者误删其他实例的锁。复杂调度场景可以升级到 Quartz.NET 或 Hangfire，但业务 handler 和 `BackgroundJobs` 表仍可复用。
 
 ## 独立 Worker
 
@@ -226,10 +226,12 @@ await app.RunAsync();
 
 建议生产部署：
 
-- WebApi：`BackgroundTasks:Recurring:Enabled=false`，`BackgroundTasks:OneTimeJobs:Enabled=false`，只负责入队和查询。
-- WebApi：`Messaging:TenantOutbox:Enabled=false`，只写租户 outbox，不负责后台发布。
-- Worker：打开 `Messaging:TenantOutbox:Enabled=true`，注册 consumer assembly，按 `Queues` 拆成多个部署单元。
+- WebApi：`Atlas:Runtime:Mode=WebApi`，默认只负责入队和查询，不启动 consumers、tenant outbox dispatcher、`BackgroundJobWorker`、`RecurringTaskRunner`。
+- Worker：`Atlas:Runtime:Mode=Worker`，默认启动 tenant outbox dispatcher、消费者、一次性任务 worker 和周期 runner。
+- Worker：按 `BackgroundTasks:OneTimeJobs:Queues` 拆成多个部署单元；队列为空时自动使用 `default`。
 - migration 在发布流水线执行，不在 WebApi/Worker 启动时自动迁移。
+
+详细配置见 `docs/production_runtime_modes.md`。
 
 ## 新增业务任务
 

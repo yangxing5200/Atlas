@@ -1,11 +1,13 @@
-using Atlas.Core.Entities.Global;
+﻿using Atlas.Core.Entities.Global;
 using Atlas.Core.Entities.Tenant;
+using Atlas.Core.Entities.Base;
 using Atlas.Core.Enums;
 using Atlas.Data.Common;
 using Atlas.Data.Global;
 using Atlas.Data.Tenant.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
+using System.Text.RegularExpressions;
 
 const long TenantId = 100001;
 const long DatabaseInstanceId = 200001;
@@ -21,35 +23,100 @@ const long FranchiseUserId = 120101;
 
 const string DemoPassword = "Pass1234!";
 
+var command = GetCommand(args);
 var globalConnection = GetOption(args, "--global")
+    ?? Environment.GetEnvironmentVariable("ATLAS_GLOBAL_CONNECTION")
     ?? "Server=localhost;Port=3306;Database=atlas_global;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;";
 var tenantConnection = GetOption(args, "--tenant")
+    ?? Environment.GetEnvironmentVariable("ATLAS_TENANT_CONNECTION")
     ?? "Server=localhost;Port=3306;Database=atlas;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;";
 
-Console.WriteLine("Resetting local Atlas databases...");
-Console.WriteLine("Global: atlas_global");
-Console.WriteLine("Tenant: atlas");
+Console.WriteLine($"Atlas LocalSetup command: {command}");
+Console.WriteLine($"Global: {MaskConnectionString(globalConnection)}");
+Console.WriteLine($"Tenant: {MaskConnectionString(tenantConnection)}");
 
-await using var globalDb = CreateGlobalDbContext(globalConnection);
-await globalDb.Database.EnsureDeletedAsync();
-await globalDb.Database.EnsureCreatedAsync();
-SeedGlobal(globalDb, tenantConnection);
-await globalDb.SaveChangesAsync();
+switch (command)
+{
+    case "init-global":
+        await InitGlobalAsync(globalConnection);
+        break;
+    case "create-tenant-db":
+        await CreateTenantDatabaseAsync(tenantConnection);
+        break;
+    case "seed-demo":
+    case "seed-local":
+        await SeedDemoAsync(globalConnection, tenantConnection);
+        break;
+    case "seed-production":
+        await SeedProductionAsync(globalConnection);
+        break;
+    case "reset-demo":
+        await ResetDemoAsync(globalConnection, tenantConnection);
+        break;
+    case "help":
+    case "--help":
+    case "-h":
+        PrintUsage();
+        break;
+    default:
+        throw new InvalidOperationException(
+            $"Unknown command '{command}'. Use: init-global, create-tenant-db, seed-demo, seed-local, seed-production, reset-demo.");
+}
 
-await using var tenantDb = CreateTenantDbContext(tenantConnection);
-await tenantDb.Database.EnsureDeletedAsync();
-await tenantDb.Database.EnsureCreatedAsync();
-SeedTenant(tenantDb);
-await tenantDb.SaveChangesAsync();
+static async Task InitGlobalAsync(string globalConnection)
+{
+    await using var globalDb = CreateGlobalDbContext(globalConnection);
+    await globalDb.Database.EnsureCreatedAsync();
+    Console.WriteLine("Global database is ready.");
+}
 
-Console.WriteLine();
-Console.WriteLine("Local database initialized.");
-Console.WriteLine("Login domain: demo");
-Console.WriteLine($"Password: {DemoPassword}");
-Console.WriteLine("Accounts:");
-Console.WriteLine($"  hq_admin       defaultStore={HqStoreId} ({StoreType.Headquarters}), accessible={HqStoreId},{DirectAStoreId},{DirectBStoreId},{FranchiseStoreId}");
-Console.WriteLine($"  direct_a_mgr   store={DirectAStoreId} ({StoreType.DirectOperated})");
-Console.WriteLine($"  franchise_mgr  store={FranchiseStoreId} ({StoreType.Franchised})");
+static async Task CreateTenantDatabaseAsync(string tenantConnection)
+{
+    await using var tenantDb = CreateTenantDbContext(tenantConnection);
+    await tenantDb.Database.EnsureCreatedAsync();
+    Console.WriteLine("Tenant database is ready.");
+}
+
+static async Task SeedDemoAsync(string globalConnection, string tenantConnection)
+{
+    await InitGlobalAsync(globalConnection);
+    await CreateTenantDatabaseAsync(tenantConnection);
+
+    await using var globalDb = CreateGlobalDbContext(globalConnection);
+    SeedGlobal(globalDb, tenantConnection);
+    await globalDb.SaveChangesAsync();
+
+    await using var tenantDb = CreateTenantDbContext(tenantConnection);
+    SeedTenant(tenantDb);
+    await tenantDb.SaveChangesAsync();
+
+    PrintDemoAccounts();
+}
+
+static async Task SeedProductionAsync(string globalConnection)
+{
+    await InitGlobalAsync(globalConnection);
+    Console.WriteLine("Production seed completed. Demo tenants, stores, users, and products are intentionally excluded.");
+}
+
+static async Task ResetDemoAsync(string globalConnection, string tenantConnection)
+{
+    Console.WriteLine("Resetting local Atlas demo databases...");
+
+    await using var globalDb = CreateGlobalDbContext(globalConnection);
+    await globalDb.Database.EnsureDeletedAsync();
+    await globalDb.Database.EnsureCreatedAsync();
+    SeedGlobal(globalDb, tenantConnection);
+    await globalDb.SaveChangesAsync();
+
+    await using var tenantDb = CreateTenantDbContext(tenantConnection);
+    await tenantDb.Database.EnsureDeletedAsync();
+    await tenantDb.Database.EnsureCreatedAsync();
+    SeedTenant(tenantDb);
+    await tenantDb.SaveChangesAsync();
+
+    PrintDemoAccounts();
+}
 
 static AtlasGlobalDbContext CreateGlobalDbContext(string connectionString)
 {
@@ -79,7 +146,7 @@ static void SeedGlobal(AtlasGlobalDbContext db, string tenantConnection)
 {
     var now = DateTime.UtcNow;
 
-    db.DatabaseMasterServers.Add(new DatabaseMasterServer
+    UpsertRange(db, new DatabaseMasterServer
     {
         Id = 210001,
         Code = "local-master",
@@ -87,7 +154,7 @@ static void SeedGlobal(AtlasGlobalDbContext db, string tenantConnection)
         CreatedAt = now
     });
 
-    db.DatabaseServerConfigs.Add(new DatabaseServerConfig
+    UpsertRange(db, new DatabaseServerConfig
     {
         Id = 210011,
         ServerCode = "local-master",
@@ -97,7 +164,7 @@ static void SeedGlobal(AtlasGlobalDbContext db, string tenantConnection)
         CreatedAt = now
     });
 
-    db.DatabaseInstances.Add(new DatabaseInstance
+    UpsertRange(db, new DatabaseInstance
     {
         Id = DatabaseInstanceId,
         Name = "Local Atlas Tenant DB",
@@ -110,7 +177,7 @@ static void SeedGlobal(AtlasGlobalDbContext db, string tenantConnection)
         CreatedAt = now
     });
 
-    db.Tenants.Add(new Tenant
+    UpsertRange(db, new Tenant
     {
         Id = TenantId,
         Name = "Atlas 本地演示租户",
@@ -138,18 +205,18 @@ static void SeedTenant(AtlasTenantDbContext db)
     var now = DateTime.UtcNow;
     var passwordHash = BCrypt.Net.BCrypt.HashPassword(DemoPassword);
 
-    db.Set<Store>().AddRange(
+    UpsertRange(db,
         CreateStore(HqStoreId, "HQ", "总部", StoreType.Headquarters, null, now),
         CreateStore(DirectAStoreId, "D-A", "直营一店", StoreType.DirectOperated, HqStoreId, now),
         CreateStore(DirectBStoreId, "D-B", "直营二店", StoreType.DirectOperated, HqStoreId, now),
         CreateStore(FranchiseStoreId, "F-A", "加盟一店", StoreType.Franchised, null, now));
 
-    db.Set<User>().AddRange(
+    UpsertRange(db,
         CreateUser(HqUserId, "hq_admin", "总部管理员", HqStoreId, UserType.TenantAdmin, passwordHash, now),
         CreateUser(DirectUserId, "direct_a_mgr", "直营一店店长", DirectAStoreId, UserType.StoreManager, passwordHash, now),
         CreateUser(FranchiseUserId, "franchise_mgr", "加盟店店长", FranchiseStoreId, UserType.StoreManager, passwordHash, now));
 
-    db.Set<UserStore>().AddRange(
+    UpsertRange(db,
         CreateUserStore(130001, HqUserId, HqStoreId, true, now),
         CreateUserStore(130002, HqUserId, DirectAStoreId, false, now),
         CreateUserStore(130003, HqUserId, DirectBStoreId, false, now),
@@ -157,13 +224,13 @@ static void SeedTenant(AtlasTenantDbContext db)
         CreateUserStore(130011, DirectUserId, DirectAStoreId, true, now),
         CreateUserStore(130101, FranchiseUserId, FranchiseStoreId, true, now));
 
-    db.Set<Product>().AddRange(
+    UpsertRange(db,
         CreateProduct(140001, HqStoreId, "总部标准套餐", 199m, "总部维护的标准共享商品，直营范围可见。", null, false, now),
         CreateProduct(140011, DirectAStoreId, "直营一店限定套餐", 129m, "直营一店自定义商品，总部和直营兄弟店可见。", HqStoreId, true, now),
         CreateProduct(140012, DirectBStoreId, "直营二店限定套餐", 139m, "直营二店自定义商品，总部和直营兄弟店可见。", HqStoreId, true, now),
         CreateProduct(140101, FranchiseStoreId, "加盟一店自有套餐", 159m, "加盟店自有商品，只在加盟店范围内可见。", null, true, now));
 
-    db.Set<Inventory>().AddRange(
+    UpsertRange(db,
         CreateInventory(150001, HqStoreId, 140001, 100, now),
         CreateInventory(150011, DirectAStoreId, 140011, 20, now),
         CreateInventory(150012, DirectBStoreId, 140012, 30, now),
@@ -291,6 +358,69 @@ static string? GetOption(string[] args, string name)
     }
 
     return null;
+}
+
+static string GetCommand(string[] args)
+{
+    return args.FirstOrDefault(arg => !arg.StartsWith("--", StringComparison.Ordinal))
+        ?.Trim()
+        .ToLowerInvariant() ?? "reset-demo";
+}
+
+static void UpsertRange<TEntity>(DbContext db, params TEntity[] entities)
+    where TEntity : BaseEntity
+{
+    foreach (var entity in entities)
+    {
+        var existing = db.Set<TEntity>().Find(entity.Id);
+        if (existing == null)
+        {
+            db.Set<TEntity>().Add(entity);
+            continue;
+        }
+
+        entity.CreatedAt = existing.CreatedAt == default ? entity.CreatedAt : existing.CreatedAt;
+        entity.UpdatedAt = DateTime.UtcNow;
+        db.Entry(existing).CurrentValues.SetValues(entity);
+    }
+}
+
+static string MaskConnectionString(string connectionString)
+{
+    return Regex.Replace(
+        connectionString,
+        "(Password|Pwd)\\s*=\\s*[^;]*",
+        "$1=***",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+}
+
+static void PrintDemoAccounts()
+{
+    Console.WriteLine();
+    Console.WriteLine("Demo data initialized.");
+    Console.WriteLine("Login domain: demo");
+    Console.WriteLine($"Password: {DemoPassword}");
+    Console.WriteLine("Accounts:");
+    Console.WriteLine($"  hq_admin       defaultStore={HqStoreId} ({StoreType.Headquarters}), accessible={HqStoreId},{DirectAStoreId},{DirectBStoreId},{FranchiseStoreId}");
+    Console.WriteLine($"  direct_a_mgr   store={DirectAStoreId} ({StoreType.DirectOperated})");
+    Console.WriteLine($"  franchise_mgr  store={FranchiseStoreId} ({StoreType.Franchised})");
+}
+
+static void PrintUsage()
+{
+    Console.WriteLine("""
+Atlas.LocalSetup commands:
+  init-global       Create the local Global database if needed.
+  create-tenant-db  Create the local tenant database if needed.
+  seed-demo         Idempotently seed demo tenant, stores, users, products, and inventory.
+  seed-local        Alias of seed-demo.
+  seed-production   Create schema only; demo data is intentionally excluded.
+  reset-demo        Drop and recreate local demo databases, then seed demo data.
+
+Options:
+  --global <connection-string>  Overrides ATLAS_GLOBAL_CONNECTION.
+  --tenant <connection-string>  Overrides ATLAS_TENANT_CONNECTION.
+""");
 }
 
 sealed class LocalSetupGlobalDbContext : AtlasGlobalDbContext

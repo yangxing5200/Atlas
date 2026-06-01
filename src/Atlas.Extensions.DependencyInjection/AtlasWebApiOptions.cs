@@ -1,4 +1,4 @@
-namespace Atlas.Extensions.DependencyInjection;
+﻿namespace Atlas.Extensions.DependencyInjection;
 
 public sealed class AtlasWebApiOptions
 {

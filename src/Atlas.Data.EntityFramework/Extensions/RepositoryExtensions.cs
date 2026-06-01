@@ -29,7 +29,7 @@ namespace Atlas.Data.Common.Extensions
             return await buildQuery(builder).ToListAsync(ct);
         }
 
-        public static async Task<TEntity> TrackingFirstOrDefaultAsync<TEntity, TKey>(
+        public static async Task<TEntity?> TrackingFirstOrDefaultAsync<TEntity, TKey>(
           this IRepository<TEntity, TKey> repository,
           Func<QueryBuilder<TEntity>, QueryBuilder<TEntity>> buildQuery,
           CancellationToken ct = default)

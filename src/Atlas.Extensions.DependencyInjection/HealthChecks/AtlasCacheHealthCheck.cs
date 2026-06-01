@@ -1,4 +1,4 @@
-using Atlas.Infrastructure.Caching.Abstractions;
+﻿using Atlas.Infrastructure.Caching.Abstractions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Atlas.Extensions.DependencyInjection.HealthChecks;

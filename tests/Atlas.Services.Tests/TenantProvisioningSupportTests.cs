@@ -1,4 +1,4 @@
-using Atlas.Infrastructure.Common.Tenants;
+﻿using Atlas.Infrastructure.Common.Tenants;
 using Atlas.Messaging.Abstractions;
 using Atlas.Services.Tenant;
 

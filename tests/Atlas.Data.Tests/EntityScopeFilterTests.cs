@@ -1,4 +1,4 @@
-using Atlas.Core.Entities.Interfaces;
+﻿using Atlas.Core.Entities.Interfaces;
 using Atlas.Data.Abstractions;
 using Atlas.Data.Tenant;
 using FluentAssertions;

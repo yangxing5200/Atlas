@@ -1,4 +1,4 @@
-namespace Atlas.Infrastructure.Logging.Configuration
+﻿namespace Atlas.Infrastructure.Logging.Configuration
 {
     /// <summary>
     /// 日志配置选项

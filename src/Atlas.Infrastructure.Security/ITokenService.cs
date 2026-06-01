@@ -45,4 +45,55 @@ namespace Atlas.Infrastructure.Security
         /// </summary>
         void InvalidateSession(string sessionId);
     }
+
+    public interface IRefreshTokenService
+    {
+        Task<IssuedRefreshToken> IssueAsync(
+            TokenInfo accessTokenInfo,
+            string? ipAddress,
+            string? userAgent,
+            CancellationToken ct = default);
+
+        Task<RefreshTokenExchangeResult> ExchangeAsync(
+            string refreshToken,
+            string? ipAddress,
+            string? userAgent,
+            CancellationToken ct = default);
+
+        Task RevokeSessionAsync(
+            long tenantId,
+            string sessionId,
+            string reason,
+            CancellationToken ct = default);
+
+        Task RevokeUserAsync(
+            long tenantId,
+            long userId,
+            string reason,
+            CancellationToken ct = default);
+    }
+
+    public sealed record IssuedRefreshToken(
+        long TokenId,
+        string Token,
+        DateTime ExpiresAtUtc);
+
+    public sealed class RefreshTokenExchangeResult
+    {
+        public bool Success { get; init; }
+        public string? Message { get; init; }
+        public string? AccessToken { get; init; }
+        public string? RefreshToken { get; init; }
+        public DateTime? AccessTokenExpiresAtUtc { get; init; }
+        public DateTime? RefreshTokenExpiresAtUtc { get; init; }
+        public int ExpiresIn { get; init; }
+        public long? TenantId { get; init; }
+        public long? UserId { get; init; }
+        public long? StoreId { get; init; }
+
+        public static RefreshTokenExchangeResult Failed(string message)
+        {
+            return new RefreshTokenExchangeResult { Success = false, Message = message };
+        }
+    }
 }

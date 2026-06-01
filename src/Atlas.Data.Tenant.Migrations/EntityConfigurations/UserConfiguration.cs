@@ -1,4 +1,4 @@
-using Atlas.Core.Entities.Tenant;
+﻿using Atlas.Core.Entities.Tenant;
 using Atlas.Core.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -309,6 +309,10 @@ namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
             builder.Property(x => x.RoleId)
                 .IsRequired();
 
+            builder.Property(x => x.StoreId)
+                .IsRequired()
+                .HasDefaultValue(0);
+
             builder.Property(x => x.GrantedAt)
                 .IsRequired();
 
@@ -319,10 +323,10 @@ namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
 
             #region 索引
 
-            // 唯一索引：同一用户不能重复授予同一角色
-            builder.HasIndex(x => new { x.UserId, x.RoleId })
+            // 唯一索引：同一租户内，同一用户在同一门店范围不能重复授予同一角色。
+            builder.HasIndex(x => new { x.TenantId, x.UserId, x.RoleId, x.StoreId })
                 .IsUnique()
-                .HasDatabaseName("IX_UserRoles_UserId_RoleId");
+                .HasDatabaseName("UX_UserRoles_Tenant_User_Role_Store");
 
             // 用户ID索引
             builder.HasIndex(x => x.UserId)
@@ -331,6 +335,9 @@ namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
             // 角色ID索引
             builder.HasIndex(x => x.RoleId)
                 .HasDatabaseName("IX_UserRoles_RoleId");
+
+            builder.HasIndex(x => new { x.TenantId, x.RoleId })
+                .HasDatabaseName("IX_UserRoles_TenantId_RoleId");
 
             // 租户+用户索引
             builder.HasIndex(x => new { x.TenantId, x.UserId })
@@ -345,11 +352,10 @@ namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
                 .HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            // TODO: 添加Role表后取消注释
-            // builder.HasOne(x => x.Role)
-            //     .WithMany()
-            //     .HasForeignKey(x => x.RoleId)
-            //     .OnDelete(DeleteBehavior.Restrict);
+            builder.HasOne(x => x.Role)
+                .WithMany(x => x.UserRoles)
+                .HasForeignKey(x => x.RoleId)
+                .OnDelete(DeleteBehavior.Restrict);
 
             #endregion
         }
