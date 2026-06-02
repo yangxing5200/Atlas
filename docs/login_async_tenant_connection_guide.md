@@ -6,10 +6,11 @@
 
 1. **登录入口必须全链路异步**：`UserService.LoginAsync` 从租户验证、租户库查询、门店查询、Token 签发、登录日志写入到 `SaveChangesAsync` 都使用 `await`，不通过 `.Result`、`.Wait()` 或 `GetAwaiter().GetResult()` 强行同步等待。
 2. **登录时不能依赖 `ICurrentIdentity.TenantId`**：登录请求还没有 AccessToken，也就没有当前身份上下文。系统先用登录域名在 Global 库查询租户，再把 `tenant.Id` 显式传给租户库仓储和工作单元。
-3. **连接字符串解析和 `DbContext` 创建都在异步工厂内完成**：仓储调用 `QueryAsync(tenantId)`、`QueryTrackingAsync(tenantId)` 或 `AddAsync(entity, tenantId)` 时，会进入 `TenantDbContextFactory.GetReadonlyDbContextAsync(tenantId)` 或 `GetDbContextAsync(tenantId)`，由工厂先 `await` 连接字符串解析，再创建 EF Core `AtlasTenantDbContext`。
-4. **同一个 DI Scope 内按租户缓存 `DbContext` 实例**：登录流程中多次访问同一个租户库时，同一个 `tenantId` 的主库、只读库、报表库 `DbContext` 会分别缓存在工厂的字典中，避免重复创建连接上下文，也保证写入和保存使用同一个主库上下文。
-5. **并发初始化受 `SemaphoreSlim` 保护**：如果同一个请求作用域内出现多处同时初始化租户上下文，工厂会用异步锁做双重检查，确保不会因为竞态创建多个同类型上下文。
-6. **预加载中间件只是暖缓存，不是正确性的前提**：已认证请求会提前异步预热主库和只读库连接字符串；登录请求没有 `TenantId`，通常不会走预加载。登录正确性来自显式 `tenantId` 重载和工厂异步创建，而不是预加载。
+3. **用户查询需要追踪上下文**：登录后续会在密码错误时调用 `user.RecordLoginFailure()`，在登录成功时调用 `user.ResetLoginFailedCount()` 并更新 `LastLoginAt` / `LastLoginIp`，因此用户实体必须来自显式 `tenantId` 的主库追踪查询。
+4. **连接字符串解析和 `DbContext` 创建都在异步工厂内完成**：仓储调用 `QueryAsync(tenantId)`、`QueryTrackingAsync(tenantId)` 或 `AddAsync(entity, tenantId)` 时，会进入 `TenantDbContextFactory.GetReadonlyDbContextAsync(tenantId)` 或 `GetDbContextAsync(tenantId)`，由工厂先 `await` 连接字符串解析，再创建 EF Core `AtlasTenantDbContext`。
+5. **同一个 DI Scope 内按租户缓存 `DbContext` 实例**：登录流程中多次访问同一个租户库时，同一个 `tenantId` 的主库、只读库、报表库 `DbContext` 会分别缓存在工厂的字典中，避免重复创建连接上下文，也保证写入和保存使用同一个主库上下文。
+6. **并发初始化受 `SemaphoreSlim` 保护**：如果同一个请求作用域内出现多处同时初始化租户上下文，工厂会用异步锁做双重检查，确保不会因为竞态创建多个同类型上下文。
+7. **预加载中间件只是暖缓存，不是正确性的前提**：已认证请求会提前异步预热主库和只读库连接字符串；登录请求没有 `TenantId`，通常不会走预加载。登录正确性来自显式 `tenantId` 重载和工厂异步创建，而不是预加载。
 
 ## 二、登录时的调用链
 
