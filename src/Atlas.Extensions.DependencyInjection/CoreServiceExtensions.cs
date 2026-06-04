@@ -27,6 +27,7 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using System.Reflection;
 using Atlas.BackgroundTasks;
+using Atlas.Exporting;
 
 namespace Atlas.Extensions.DependencyInjection;
 
@@ -263,10 +264,12 @@ public static class AtlasCoreServiceExtensions
     /// </summary>
     private static IServiceCollection AddAtlasIdentity(this IServiceCollection services)
     {
+        services.TryAddSingleton<IExecutionIdentityAccessor, ExecutionIdentityAccessor>();
         services.AddScoped<ICurrentIdentity>(sp =>
         {
             var accessor = sp.GetRequiredService<IHttpContextAccessor>();
-            return new CurrentIdentity(accessor);
+            var executionIdentityAccessor = sp.GetRequiredService<IExecutionIdentityAccessor>();
+            return new CurrentIdentity(accessor, executionIdentityAccessor);
         });
 
         return services;
@@ -478,7 +481,8 @@ public static class AtlasCoreServiceExtensions
                 configuration,
                 runtimeOptions.ShouldEnableRecurringTaskRunner(),
                 runtimeOptions.ShouldEnableBackgroundJobWorker())
-            .AddAtlasTenantBackgroundJobs(configuration);
+            .AddAtlasTenantBackgroundJobs(configuration)
+            .AddAtlasExporting(configuration);
     }
 
     #endregion

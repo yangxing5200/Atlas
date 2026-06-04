@@ -12,32 +12,39 @@ namespace Atlas.Data.Tenant.Identity
     public class CurrentIdentity :  ICurrentIdentity
     {
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IExecutionIdentityAccessor _executionIdentityAccessor;
 
-        public CurrentIdentity(IHttpContextAccessor httpContextAccessor)
+        public CurrentIdentity(
+            IHttpContextAccessor httpContextAccessor,
+            IExecutionIdentityAccessor executionIdentityAccessor)
         {
             _httpContextAccessor = httpContextAccessor;
+            _executionIdentityAccessor = executionIdentityAccessor;
         }
 
         private ClaimsPrincipal? User => _httpContextAccessor.HttpContext?.User;
 
-        public string? SessionId => User?.FindFirst("session_id")?.Value;
+        public string? SessionId => _executionIdentityAccessor.Current?.SessionId ?? User?.FindFirst("session_id")?.Value;
 
         public long? UserId =>
-            long.TryParse(User?.FindFirst("uid")?.Value, out var id)
-                ? id : null;
+            _executionIdentityAccessor.Current?.UserId ??
+            (long.TryParse(User?.FindFirst("uid")?.Value, out var id)
+                ? id : null);
 
         public string UserName =>
-            User?.FindFirst("uname")?.Value ?? string.Empty;
+            _executionIdentityAccessor.Current?.UserName ?? User?.FindFirst("uname")?.Value ?? string.Empty;
 
         public long? StoreId =>
-            long.TryParse(User?.FindFirst("sid")?.Value, out var id)
-                ? id : null;
+            _executionIdentityAccessor.Current?.StoreId ??
+            (long.TryParse(User?.FindFirst("sid")?.Value, out var id)
+                ? id : null);
 
         public long? TenantId =>
-            long.TryParse(User?.FindFirst("tid")?.Value, out var id)
-                ? id : null;
+            _executionIdentityAccessor.Current?.TenantId ??
+            (long.TryParse(User?.FindFirst("tid")?.Value, out var id)
+                ? id : null);
 
         public bool IsAuthenticated =>
-            User?.Identity?.IsAuthenticated ?? false;
+            _executionIdentityAccessor.Current?.IsAuthenticated ?? User?.Identity?.IsAuthenticated ?? false;
     }
 }

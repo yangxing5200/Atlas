@@ -36,6 +36,7 @@ namespace Atlas.Data.Global
         public DbSet<DatabaseReadonlyServer> DatabaseReadonlyServers { get; set; }
         public DbSet<DatabaseServerConfig> DatabaseServerConfigs { get; set; }
         public DbSet<BackgroundJob> BackgroundJobs { get; set; }
+        public DbSet<ExportJob> ExportJobs { get; set; }
         public DbSet<TenantSchemaMigrationState> TenantSchemaMigrationStates { get; set; }
         public DbSet<Capability> Capabilities { get; set; }
         public DbSet<FeaturePackage> FeaturePackages { get; set; }
