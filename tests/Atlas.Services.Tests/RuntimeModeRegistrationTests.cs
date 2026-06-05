@@ -1,4 +1,5 @@
 ﻿using Atlas.BackgroundTasks;
+using Atlas.Exporting;
 using Atlas.Extensions.DependencyInjection;
 using Atlas.Messaging.Abstractions;
 using Atlas.Services.Tenant;
@@ -121,6 +122,7 @@ public sealed class RuntimeModeRegistrationTests
 
         Assert.DoesNotContain(services, service => service.ServiceType == typeof(IHostedService));
         Assert.Contains(services, service => service.ServiceType == typeof(IBackgroundJobClient));
+        Assert.Contains(services, service => service.ServiceType == typeof(IExportJobService));
         Assert.Contains(services, service => service.ServiceType == typeof(ITenantDomainEventOutbox));
         Assert.Contains(services, service =>
             service.ServiceType == typeof(IDomainEventPublisher) &&
@@ -137,6 +139,9 @@ public sealed class RuntimeModeRegistrationTests
         Assert.Contains(services, IsHostedService<TenantOutboxDispatcher>);
         Assert.Contains(services, IsHostedService<BackgroundJobWorker>);
         Assert.Contains(services, IsHostedService<RecurringTaskRunner>);
+        Assert.Contains(services, service =>
+            service.ServiceType == typeof(IBackgroundJobHandler) &&
+            service.ImplementationType == typeof(ExportJobHandler));
     }
 
     private static bool IsHostedService<THostedService>(ServiceDescriptor descriptor)

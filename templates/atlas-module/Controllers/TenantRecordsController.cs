@@ -1,4 +1,5 @@
 using Atlas.Infrastructure.Security;
+using Atlas.Exporting;
 using Atlas.ModuleTemplate;
 using Atlas.ModuleTemplate.Models;
 using Atlas.ModuleTemplate.Queries;
@@ -14,13 +15,16 @@ public sealed class TenantRecordsController : ControllerBase
 {
     private readonly ITenantRecordService _records;
     private readonly ITenantRecordQueryService _queries;
+    private readonly IExportJobService _exports;
 
     public TenantRecordsController(
         ITenantRecordService records,
-        ITenantRecordQueryService queries)
+        ITenantRecordQueryService queries,
+        IExportJobService exports)
     {
         _records = records ?? throw new ArgumentNullException(nameof(records));
         _queries = queries ?? throw new ArgumentNullException(nameof(queries));
+        _exports = exports ?? throw new ArgumentNullException(nameof(exports));
     }
 
     [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + ModuleTemplatePermissionCodes.TenantRecordsRead)]
@@ -49,6 +53,43 @@ public sealed class TenantRecordsController : ControllerBase
     {
         await _records.UpdateAsync(id, request, ct);
         return NoContent();
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + ModuleTemplatePermissionCodes.TenantRecordsExport)]
+    [HttpPost("exports")]
+    public async Task<ActionResult<ExportEnqueueResult>> ExportAsync(
+        [FromBody] ExportTenantRecordsRequest request,
+        CancellationToken ct)
+    {
+        var result = await _exports.EnqueueAsync(
+            new ExportEnqueueRequest<ExportTenantRecordsRequest>
+            {
+                ExportTaskType = ModuleTemplateExportTaskTypes.TenantRecordList,
+                Query = request
+            },
+            ct);
+
+        return Accepted($"/api/tenant-records/exports/{result.ExportJobId}", result);
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + ModuleTemplatePermissionCodes.TenantRecordsExport)]
+    [HttpGet("exports/{exportJobId:long}")]
+    public async Task<ActionResult<ExportJobStatusDto>> GetExportAsync(
+        long exportJobId,
+        CancellationToken ct)
+    {
+        var result = await _exports.GetAsync(exportJobId, ct);
+        return result == null ? NotFound() : Ok(result);
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + ModuleTemplatePermissionCodes.TenantRecordsExport)]
+    [HttpGet("exports/{exportJobId:long}/download")]
+    public async Task<IActionResult> DownloadExportAsync(
+        long exportJobId,
+        CancellationToken ct)
+    {
+        var result = await _exports.OpenDownloadAsync(exportJobId, ct);
+        return File(result.Content, result.ContentType, result.FileName);
     }
 
     private async Task<IActionResult> ExecuteSearchAsync(TenantRecordSearchQuery query, CancellationToken ct)

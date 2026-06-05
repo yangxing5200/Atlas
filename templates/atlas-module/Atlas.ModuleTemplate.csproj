@@ -18,6 +18,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Atlas.Core\Atlas.Core.csproj" />
     <ProjectReference Include="..\..\src\Atlas.Data.Abstractions\Atlas.Data.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Atlas.Exporting\Atlas.Exporting.csproj" />
     <ProjectReference Include="..\..\src\Atlas.Extensions.DependencyInjection\Atlas.Extensions.DependencyInjection.csproj" />
     <ProjectReference Include="..\..\src\Atlas.Infrastructure.Security\Atlas.Infrastructure.Security.csproj" />
     <ProjectReference Include="..\..\src\Atlas.Models.Tenant\Atlas.Models.csproj" />

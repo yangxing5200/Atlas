@@ -1,4 +1,4 @@
-﻿using Atlas.Core.Services;
+using Atlas.Core.Services;
 using Atlas.Data.Tenant.Repositories;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Microsoft.AspNetCore.Http;
@@ -12,32 +12,40 @@ namespace Atlas.Data.Tenant.Identity
     public class CurrentIdentity :  ICurrentIdentity
     {
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IExecutionIdentityAccessor _executionIdentityAccessor;
 
-        public CurrentIdentity(IHttpContextAccessor httpContextAccessor)
+        public CurrentIdentity(
+            IHttpContextAccessor httpContextAccessor,
+            IExecutionIdentityAccessor executionIdentityAccessor)
         {
             _httpContextAccessor = httpContextAccessor;
+            _executionIdentityAccessor = executionIdentityAccessor;
         }
 
         private ClaimsPrincipal? User => _httpContextAccessor.HttpContext?.User;
 
-        public string? SessionId => User?.FindFirst("session_id")?.Value;
+        public string? SessionId => _executionIdentityAccessor.Current?.SessionId
+                                    ?? User?.FindFirst("session_id")?.Value;
 
-        public long? UserId =>
-            long.TryParse(User?.FindFirst("uid")?.Value, out var id)
-                ? id : null;
+        public long? UserId => _executionIdentityAccessor.Current?.UserId ?? ReadLongClaim("uid");
 
         public string UserName =>
+            _executionIdentityAccessor.Current?.UserName ??
             User?.FindFirst("uname")?.Value ?? string.Empty;
 
-        public long? StoreId =>
-            long.TryParse(User?.FindFirst("sid")?.Value, out var id)
-                ? id : null;
+        public long? StoreId => _executionIdentityAccessor.Current?.StoreId ?? ReadLongClaim("sid");
 
-        public long? TenantId =>
-            long.TryParse(User?.FindFirst("tid")?.Value, out var id)
-                ? id : null;
+        public long? TenantId => _executionIdentityAccessor.Current?.TenantId ?? ReadLongClaim("tid");
 
         public bool IsAuthenticated =>
+            _executionIdentityAccessor.Current?.IsAuthenticated ??
             User?.Identity?.IsAuthenticated ?? false;
+
+        private long? ReadLongClaim(string claimType)
+        {
+            return long.TryParse(User?.FindFirst(claimType)?.Value, out var id)
+                ? id
+                : null;
+        }
     }
 }

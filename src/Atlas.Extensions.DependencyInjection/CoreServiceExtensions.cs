@@ -5,6 +5,7 @@ using Atlas.Core.Telemetry;
 using Atlas.Data.Common.Interceptors;
 using Atlas.Data.Global;
 using Atlas.Data.Tenant.Identity;
+using Atlas.Exporting;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Extensions;
 using Atlas.Infrastructure.Caching.Locking;
@@ -263,10 +264,12 @@ public static class AtlasCoreServiceExtensions
     /// </summary>
     private static IServiceCollection AddAtlasIdentity(this IServiceCollection services)
     {
+        services.TryAddSingleton<IExecutionIdentityAccessor, ExecutionIdentityAccessor>();
         services.AddScoped<ICurrentIdentity>(sp =>
         {
             var accessor = sp.GetRequiredService<IHttpContextAccessor>();
-            return new CurrentIdentity(accessor);
+            var executionIdentityAccessor = sp.GetRequiredService<IExecutionIdentityAccessor>();
+            return new CurrentIdentity(accessor, executionIdentityAccessor);
         });
 
         return services;
@@ -478,7 +481,8 @@ public static class AtlasCoreServiceExtensions
                 configuration,
                 runtimeOptions.ShouldEnableRecurringTaskRunner(),
                 runtimeOptions.ShouldEnableBackgroundJobWorker())
-            .AddAtlasTenantBackgroundJobs(configuration);
+            .AddAtlasTenantBackgroundJobs(configuration)
+            .AddAtlasExporting(configuration);
     }
 
     #endregion

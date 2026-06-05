@@ -33,6 +33,7 @@
     <ProjectReference Include="..\Atlas.Core\Atlas.Core.csproj" />
     <ProjectReference Include="..\Atlas.Data.Global\Atlas.Data.Global.csproj" />
     <ProjectReference Include="..\Atlas.Data.Tenant\Atlas.Data.Tenant.csproj" />
+    <ProjectReference Include="..\Atlas.Exporting\Atlas.Exporting.csproj" />
     <ProjectReference Include="..\Atlas.Messaging.Abstractions\Atlas.Messaging.Abstractions.csproj" />
     <ProjectReference Include="..\Atlas.Messaging.RabbitMQ\Atlas.Messaging.RabbitMQ.csproj" />
     <ProjectReference Include="..\Atlas.Infrastructure.Logging\Atlas.Infrastructure.Logging.csproj" />
