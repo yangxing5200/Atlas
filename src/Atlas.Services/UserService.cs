@@ -82,7 +82,7 @@ namespace Atlas.Services
                 var tenant = tenantResult.Data!;
 
                 // ========== 第二步：用户验证（使用显式 tenantId）==========
-                var userQueryBuilder = await _repository.QueryAsync(tenant.Id);
+                var userQueryBuilder = await _repository.QueryTrackingAsync(tenant.Id);
                 var user = await userQueryBuilder
                     .Where(x => x.UserName == request.UserName
                                 && x.TenantId == tenant.Id
