@@ -1,4 +1,5 @@
 ﻿using Atlas.Core.Entities.Global;
+using Atlas.Core.Authorization;
 using Atlas.Core.Entities.Tenant;
 using Atlas.Core.Entities.Base;
 using Atlas.Core.Enums;
@@ -19,6 +20,23 @@ const long FranchiseStoreId = 110101;
 const long HqUserId = 120001;
 const long DirectUserId = 120011;
 const long FranchiseUserId = 120101;
+
+const long CorePackageEntitlementId = 160001;
+const long StandardPackageEntitlementId = 160002;
+
+const long ProductReadPermissionId = 160101;
+const long InventoryReadPermissionId = 160102;
+
+const long DirectReaderRoleId = 161001;
+const long FranchiseReaderRoleId = 161002;
+
+const long DirectProductRolePermissionId = 162001;
+const long DirectInventoryRolePermissionId = 162002;
+const long FranchiseProductRolePermissionId = 162011;
+const long FranchiseInventoryRolePermissionId = 162012;
+
+const long DirectReaderUserRoleId = 163001;
+const long FranchiseReaderUserRoleId = 163002;
 
 const string DemoPassword = "Pass1234!";
 
@@ -197,6 +215,10 @@ static void SeedGlobal(AtlasGlobalDbContext db, string tenantConnection)
         OfficeCount = 4,
         CreatedAt = now
     });
+
+    UpsertRange(db,
+        CreateTenantPackageEntitlement(CorePackageEntitlementId, "atlas.core", now),
+        CreateTenantPackageEntitlement(StandardPackageEntitlementId, "atlas.standard", now));
 }
 
 static void SeedTenant(AtlasTenantDbContext db)
@@ -224,6 +246,72 @@ static void SeedTenant(AtlasTenantDbContext db)
         CreateUserStore(130101, FranchiseUserId, FranchiseStoreId, true, now));
 
     UpsertRange(db,
+        CreatePermission(
+            ProductReadPermissionId,
+            "product.read",
+            "Read products",
+            "product.catalog",
+            "Product",
+            "product",
+            "read",
+            now),
+        CreatePermission(
+            InventoryReadPermissionId,
+            "inventory.read",
+            "Read inventory",
+            "inventory.stock",
+            "Inventory",
+            "inventory",
+            "read",
+            now));
+
+    UpsertRange(db,
+        CreateRole(
+            DirectReaderRoleId,
+            "demo-direct-reader",
+            "Demo direct store reader",
+            DirectAStoreId,
+            "Can read shared products and current-store inventory for direct store demos.",
+            now),
+        CreateRole(
+            FranchiseReaderRoleId,
+            "demo-franchise-reader",
+            "Demo franchise reader",
+            FranchiseStoreId,
+            "Can read franchise products and current-store inventory for franchise demos.",
+            now));
+
+    UpsertRange(db,
+        CreateRolePermission(
+            DirectProductRolePermissionId,
+            DirectReaderRoleId,
+            ProductReadPermissionId,
+            AtlasDataScopeType.SharedStores,
+            now),
+        CreateRolePermission(
+            DirectInventoryRolePermissionId,
+            DirectReaderRoleId,
+            InventoryReadPermissionId,
+            AtlasDataScopeType.CurrentStore,
+            now),
+        CreateRolePermission(
+            FranchiseProductRolePermissionId,
+            FranchiseReaderRoleId,
+            ProductReadPermissionId,
+            AtlasDataScopeType.SharedStores,
+            now),
+        CreateRolePermission(
+            FranchiseInventoryRolePermissionId,
+            FranchiseReaderRoleId,
+            InventoryReadPermissionId,
+            AtlasDataScopeType.CurrentStore,
+            now));
+
+    UpsertRange(db,
+        CreateUserRole(DirectReaderUserRoleId, DirectUserId, DirectReaderRoleId, DirectAStoreId, now),
+        CreateUserRole(FranchiseReaderUserRoleId, FranchiseUserId, FranchiseReaderRoleId, FranchiseStoreId, now));
+
+    UpsertRange(db,
         CreateProduct(140001, HqStoreId, "总部标准套餐", 199m, "总部维护的标准共享商品，直营范围可见。", null, false, now),
         CreateProduct(140011, DirectAStoreId, "直营一店限定套餐", 129m, "直营一店自定义商品，总部和直营兄弟店可见。", HqStoreId, true, now),
         CreateProduct(140012, DirectBStoreId, "直营二店限定套餐", 139m, "直营二店自定义商品，总部和直营兄弟店可见。", HqStoreId, true, now),
@@ -234,6 +322,24 @@ static void SeedTenant(AtlasTenantDbContext db)
         CreateInventory(150011, DirectAStoreId, 140011, 20, now),
         CreateInventory(150012, DirectBStoreId, 140012, 30, now),
         CreateInventory(150101, FranchiseStoreId, 140101, 40, now));
+}
+
+static TenantEntitlement CreateTenantPackageEntitlement(long id, string packageCode, DateTime now)
+{
+    return new TenantEntitlement
+    {
+        Id = id,
+        TenantId = TenantId,
+        SubjectType = AtlasEntitlementSubjectType.Tenant,
+        SubjectId = TenantId,
+        PackageCode = packageCode,
+        CapabilityCode = null,
+        Source = AtlasEntitlementSource.System,
+        StartAtUtc = now.AddDays(-1),
+        EndAtUtc = null,
+        Status = AtlasEntitlementStatus.Active,
+        CreatedAt = now
+    };
 }
 
 static Store CreateStore(long id, string code, string name, StoreType type, long? parentStoreId, DateTime now)
@@ -303,6 +409,96 @@ static UserStore CreateUserStore(long id, long userId, long storeId, bool isPrim
         IsPrimary = isPrimary,
         Permission = "Admin",
         EffectiveFrom = now.AddDays(-1),
+        CreatedAt = now
+    };
+}
+
+static Permission CreatePermission(
+    long id,
+    string code,
+    string name,
+    string capabilityCode,
+    string module,
+    string resource,
+    string action,
+    DateTime now)
+{
+    return new Permission
+    {
+        Id = id,
+        TenantId = TenantId,
+        Code = code,
+        Name = name,
+        CapabilityCode = capabilityCode,
+        Module = module,
+        Scope = PermissionScope.Store,
+        Resource = resource,
+        Action = action,
+        IsAssignable = true,
+        IsSystem = false,
+        RiskLevel = AtlasPermissionRiskLevel.Low,
+        IsBuiltIn = true,
+        IsEnabled = true,
+        CreatedAt = now
+    };
+}
+
+static Role CreateRole(
+    long id,
+    string code,
+    string name,
+    long storeId,
+    string description,
+    DateTime now)
+{
+    return new Role
+    {
+        Id = id,
+        TenantId = TenantId,
+        Code = code,
+        Name = name,
+        Description = description,
+        Scope = PermissionScope.Store,
+        StoreId = storeId,
+        IsSystem = false,
+        IsEnabled = true,
+        CreatedAt = now
+    };
+}
+
+static RolePermission CreateRolePermission(
+    long id,
+    long roleId,
+    long permissionId,
+    AtlasDataScopeType dataScopeType,
+    DateTime now)
+{
+    return new RolePermission
+    {
+        Id = id,
+        TenantId = TenantId,
+        RoleId = roleId,
+        PermissionId = permissionId,
+        Effect = RolePermissionEffect.Allow,
+        DataScopeType = dataScopeType,
+        DataScopeJson = null,
+        GrantedAt = now,
+        GrantedBy = HqUserId,
+        CreatedAt = now
+    };
+}
+
+static UserRole CreateUserRole(long id, long userId, long roleId, long storeId, DateTime now)
+{
+    return new UserRole
+    {
+        Id = id,
+        TenantId = TenantId,
+        UserId = userId,
+        RoleId = roleId,
+        StoreId = storeId,
+        GrantedAt = now,
+        GrantedBy = HqUserId,
         CreatedAt = now
     };
 }
@@ -401,8 +597,9 @@ static void PrintDemoAccounts()
     Console.WriteLine($"Password: {DemoPassword}");
     Console.WriteLine("Accounts:");
     Console.WriteLine($"  hq_admin       defaultStore={HqStoreId} ({StoreType.Headquarters}), accessible={HqStoreId},{DirectAStoreId},{DirectBStoreId},{FranchiseStoreId}");
-    Console.WriteLine($"  direct_a_mgr   store={DirectAStoreId} ({StoreType.DirectOperated})");
-    Console.WriteLine($"  franchise_mgr  store={FranchiseStoreId} ({StoreType.Franchised})");
+    Console.WriteLine($"  direct_a_mgr   store={DirectAStoreId} ({StoreType.DirectOperated}), product.read=SharedStores, inventory.read=CurrentStore");
+    Console.WriteLine($"  franchise_mgr  store={FranchiseStoreId} ({StoreType.Franchised}), product.read=SharedStores, inventory.read=CurrentStore");
+    Console.WriteLine("Entitlements: atlas.core, atlas.standard");
 }
 
 static void PrintUsage()

@@ -1,6 +1,62 @@
 ﻿@Atlas.Sample.WebApi_HostAddress = http://localhost:5212
 
+@directToken = {{directLogin.response.body.$.token}}
+
 GET {{Atlas.Sample.WebApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
+
+# Demo auth seed data:
+# direct_a_mgr / Pass1234! -> product.read=SharedStores, inventory.read=CurrentStore.
+# franchise_mgr / Pass1234! -> product.read=SharedStores, inventory.read=CurrentStore,
+# but SharedStores resolves to the franchise store only.
+
+# @name directLogin
+POST {{Atlas.Sample.WebApi_HostAddress}}/api/User/login
+Content-Type: application/json
+
+{
+  "domain": "demo",
+  "userName": "direct_a_mgr",
+  "password": "Pass1234!",
+  "rememberMe": false
+}
+
+###
+
+GET {{Atlas.Sample.WebApi_HostAddress}}/api/scope-demo/authorization
+Authorization: Bearer {{directToken}}
+Accept: application/json
+
+###
+
+GET {{Atlas.Sample.WebApi_HostAddress}}/api/scope-demo/products
+Authorization: Bearer {{directToken}}
+Accept: application/json
+
+###
+
+GET {{Atlas.Sample.WebApi_HostAddress}}/api/scope-demo/products?scopeType=CurrentStore
+Authorization: Bearer {{directToken}}
+Accept: application/json
+
+###
+
+GET {{Atlas.Sample.WebApi_HostAddress}}/api/scope-demo/inventories/current-store
+Authorization: Bearer {{directToken}}
+Accept: application/json
+
+###
+
+GET {{Atlas.Sample.WebApi_HostAddress}}/api/scope-demo/products/140012/access?scopeType=SharedStores
+Authorization: Bearer {{directToken}}
+Accept: application/json
+
+###
+
+GET {{Atlas.Sample.WebApi_HostAddress}}/api/scope-demo/products/140101/access?scopeType=SharedStores
+Authorization: Bearer {{directToken}}
 Accept: application/json
 
 ###
