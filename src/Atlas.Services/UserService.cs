@@ -82,6 +82,7 @@ namespace Atlas.Services
                 var tenant = tenantResult.Data!;
 
                 // ========== 第二步：用户验证（使用显式 tenantId）==========
+                // 必须使用追踪查询：密码错误时会更新登录失败次数，登录成功时会更新最后登录信息。
                 var userQueryBuilder = await _repository.QueryTrackingAsync(tenant.Id);
                 var user = await userQueryBuilder
                     .Where(x => x.UserName == request.UserName

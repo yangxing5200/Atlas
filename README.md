@@ -152,6 +152,7 @@ graph TB
 Atlas/
 ├── 📁 docs/                              # 文档
 │   ├── architecture_guide.md             # 架构指南
+│   ├── login_async_tenant_connection_guide.md # 登录异步租户连接解析
 │   └── store_hierarchy_design.md         # 存储层级设计
 ├── 📁 samples/                           # 示例项目
 │   ├── Atlas.Sample.Console/             # 控制台示例
