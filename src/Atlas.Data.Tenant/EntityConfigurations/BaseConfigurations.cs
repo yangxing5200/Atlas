@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore;
 using Atlas.Core.Entities.Interfaces;
 
-namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
+namespace Atlas.Data.Tenant.EntityConfigurations
 {
     public abstract class BaseEntityConfiguration<TEntity> : IEntityTypeConfiguration<TEntity>
           where TEntity : class, IBaseEntity

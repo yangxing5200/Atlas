@@ -1,20 +1,18 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Core.Models;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 
 namespace Atlas.Infrastructure.Security
 {
     public class TokenCacheService : ITokenCacheService
     {
+        private static readonly TimeSpan TokenVersionLocalExpiration = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan InvalidSessionLocalExpiration = TimeSpan.FromSeconds(5);
+
         private readonly ICacheService _cacheService;
         private readonly ILogger<TokenCacheService> _logger;
-        private readonly IMemoryCache _localCache; // ✅ L1本地缓存
+        private readonly IMemoryCache _localCache;
 
         public TokenCacheService(
             ICacheService cacheService,
@@ -26,157 +24,109 @@ namespace Atlas.Infrastructure.Security
             _localCache = localCache;
         }
 
-        public int? GetUserTokenVersion(long userId)
+        public async Task<int?> GetUserTokenVersionAsync(long userId, CancellationToken ct = default)
         {
+            var cacheKey = BuildTokenVersionLocalKey(userId);
+            if (_localCache.TryGetValue<int?>(cacheKey, out var cachedVersion))
+                return cachedVersion;
+
             try
             {
-                // ✅ L1缓存：先查内存（极快，~10ns）
-                var cacheKey = $"tv_{userId}";
-                if (_localCache.TryGetValue<int?>(cacheKey, out var cachedVersion))
-                {
-                    return cachedVersion;
-                }
-
-                // ✅ L2缓存：Redis/分布式缓存（较快，~1-5ms）
-                var version = _cacheService.Get<int?>(TokenCacheKeys.UserTokenVersion, userId);
-
+                var version = await _cacheService.GetAsync<int?>(TokenCacheKeys.UserTokenVersion, userId, ct);
                 if (version.HasValue)
-                {
-                    // 缓存到本地，30秒过期
-                    _localCache.Set(cacheKey, version, TimeSpan.FromSeconds(30));
-                }
+                    SetLocalTokenVersion(cacheKey, version);
 
                 return version;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "Get TokenVersion failed for user {UserId}", userId);
                 return null;
             }
         }
 
-        public void SetUserTokenVersion(long userId, int version)
+        public async Task SetUserTokenVersionAsync(long userId, int version, CancellationToken ct = default)
         {
             try
             {
-                // ✅ 先更新L2（持久化）
-                _cacheService.Set<int?>(TokenCacheKeys.UserTokenVersion, version, userId);
-
-                // ✅ 再更新L1（立即生效）
-                var cacheKey = $"tv_{userId}";
-                var cacheOptions = new MemoryCacheEntryOptions
-                {
-                    AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30),
-                    Size = 1  // 指定该缓存项占用的大小单位
-                };
-                _localCache.Set(cacheKey, version, cacheOptions);
+                await _cacheService.SetAsync<int?>(TokenCacheKeys.UserTokenVersion, version, userId, cancellationToken: ct);
+                SetLocalTokenVersion(BuildTokenVersionLocalKey(userId), version);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "Set TokenVersion failed for user {UserId}", userId);
             }
         }
 
-        public void InvalidateUserTokens(long userId)
+        public async Task InvalidateUserTokensAsync(long userId, CancellationToken ct = default)
         {
             try
             {
-                // ✅ 清除L1和L2
-                _cacheService.Remove(TokenCacheKeys.UserTokenVersion, userId);
-                _localCache.Remove($"tv_{userId}");
+                await _cacheService.RemoveAsync(TokenCacheKeys.UserTokenVersion, userId, ct);
+                _localCache.Remove(BuildTokenVersionLocalKey(userId));
 
                 _logger.LogInformation("Invalidated tokens for user {UserId}", userId);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "Invalidate tokens failed for user {UserId}", userId);
             }
         }
 
-        public bool IsSessionValid(string sessionId)
+        public async Task<bool> IsSessionValidAsync(string sessionId, CancellationToken ct = default)
         {
+            var cacheKey = BuildInvalidSessionLocalKey(sessionId);
+            if (_localCache.TryGetValue<bool>(cacheKey, out var isInvalid))
+                return !isInvalid;
+
             try
             {
-                // ✅ Session黑名单也使用L1+L2缓存
-                var cacheKey = $"si_{sessionId}";
-
-                // L1检查
-                if (_localCache.TryGetValue<bool>(cacheKey, out var isInvalid))
-                {
-                    return !isInvalid;
-                }
-
-                // L2检查
-                var exists = _cacheService.Exists(TokenCacheKeys.InvalidSession, sessionId);
-
-                // 如果在黑名单中，缓存到L1（5秒）
+                var exists = await _cacheService.ExistsAsync(TokenCacheKeys.InvalidSession, sessionId, ct);
                 if (exists)
-                {
-                    _localCache.Set(cacheKey, true, TimeSpan.FromSeconds(5));
-                }
+                    _localCache.Set(cacheKey, true, InvalidSessionLocalExpiration);
 
                 return !exists;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "Check session validity failed for {SessionId}", sessionId);
-                return false; // Fail-safe
+                return false;
             }
         }
 
-        public void InvalidateSession(string sessionId)
+        public async Task InvalidateSessionAsync(string sessionId, CancellationToken ct = default)
         {
             try
             {
-                // ✅ 同时更新L1和L2
-                _cacheService.Set(TokenCacheKeys.InvalidSession, true, sessionId);
-                _localCache.Set($"si_{sessionId}", true, TimeSpan.FromSeconds(5));
+                await _cacheService.SetAsync(TokenCacheKeys.InvalidSession, true, sessionId, cancellationToken: ct);
+                _localCache.Set(BuildInvalidSessionLocalKey(sessionId), true, InvalidSessionLocalExpiration);
 
                 _logger.LogInformation("Invalidated session {SessionId}", sessionId);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "Invalidate session failed for {SessionId}", sessionId);
             }
         }
 
-        /// <summary>
-        /// ✅ 新增：批量检查Session有效性（优化性能）
-        /// </summary>
-        public Dictionary<string, bool> AreSessionsValid(IEnumerable<string> sessionIds)
+        private void SetLocalTokenVersion(string cacheKey, int? version)
         {
-            var result = new Dictionary<string, bool>();
-            var toCheck = new List<string>();
-
-            foreach (var sessionId in sessionIds)
+            var cacheOptions = new MemoryCacheEntryOptions
             {
-                var cacheKey = $"si_{sessionId}";
-                if (_localCache.TryGetValue<bool>(cacheKey, out var isInvalid))
-                {
-                    result[sessionId] = !isInvalid;
-                }
-                else
-                {
-                    toCheck.Add(sessionId);
-                }
-            }
+                AbsoluteExpirationRelativeToNow = TokenVersionLocalExpiration,
+                Size = 1
+            };
+            _localCache.Set(cacheKey, version, cacheOptions);
+        }
 
-            // 批量检查剩余的
-            if (toCheck.Any())
-            {
-                foreach (var sessionId in toCheck)
-                {
-                    var exists = _cacheService.Exists(TokenCacheKeys.InvalidSession, sessionId);
-                    result[sessionId] = !exists;
+        private static string BuildTokenVersionLocalKey(long userId)
+        {
+            return $"tv_{userId}";
+        }
 
-                    if (exists)
-                    {
-                        _localCache.Set($"si_{sessionId}", true, TimeSpan.FromSeconds(5));
-                    }
-                }
-            }
-
-            return result;
+        private static string BuildInvalidSessionLocalKey(string sessionId)
+        {
+            return $"si_{sessionId}";
         }
     }
 }

@@ -7,10 +7,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\Atlas.Core\Atlas.Core.csproj" />
   </ItemGroup>
 

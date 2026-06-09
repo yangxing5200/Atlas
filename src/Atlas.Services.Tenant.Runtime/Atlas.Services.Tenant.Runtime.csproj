@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Atlas.BackgroundTasks\Atlas.BackgroundTasks.csproj" />
+    <ProjectReference Include="..\Atlas.Core\Atlas.Core.csproj" />
+    <ProjectReference Include="..\Atlas.Data.Abstractions\Atlas.Data.Abstractions.csproj" />
+    <ProjectReference Include="..\Atlas.Data.Global\Atlas.Data.Global.csproj" />
+    <ProjectReference Include="..\Atlas.Data.Tenant\Atlas.Data.Tenant.csproj" />
+    <ProjectReference Include="..\Atlas.Infrastructure.Caching\Atlas.Infrastructure.Caching.csproj" />
+    <ProjectReference Include="..\Atlas.Infrastructure.Common\Atlas.Infrastructure.Common.csproj" />
+    <ProjectReference Include="..\Atlas.Messaging.Abstractions\Atlas.Messaging.Abstractions.csproj" />
+    <ProjectReference Include="..\Atlas.Services.Tenant\Atlas.Services.Tenant.csproj" />
+  </ItemGroup>
+
+</Project>

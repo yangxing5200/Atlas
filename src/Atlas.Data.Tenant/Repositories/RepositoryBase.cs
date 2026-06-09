@@ -1,5 +1,6 @@
-﻿using Atlas.Core.Entities.Interfaces;
+using Atlas.Core.Entities.Interfaces;
 using Atlas.Data.Abstractions;
+using Atlas.Data.Common.Querying;
 using Atlas.Data.Tenant.Context;
 using Atlas.Models.Tenant.Responses;
 using Microsoft.EntityFrameworkCore;
@@ -101,27 +102,27 @@ namespace Atlas.Data.Tenant.Repositories
         /// <summary>
         /// 获取只读查询构建器（AsNoTracking）
         /// </summary>
-        public virtual async Task<QueryBuilder<TEntity>> QueryAsync(CancellationToken ct = default)
+        public virtual async Task<IQueryBuilder<TEntity>> QueryAsync(CancellationToken ct = default)
         {
             var db = await _dbFactory.GetReadonlyDbContextAsync(ct);
             var scope = await _dataScope.ResolveAsync(ct);
             var query = db.ScopedSet<TEntity>(scope)
                 .AsNoTracking();
-            return new QueryBuilder<TEntity>(query);
+            return new EfQueryBuilder<TEntity>(query);
         }
 
         /// <summary>
         /// 获取可追踪查询构建器（用于后续更新）
         /// </summary>
-        public virtual async Task<QueryBuilder<TEntity>> QueryTrackingAsync(CancellationToken ct = default)
+        public virtual async Task<IQueryBuilder<TEntity>> QueryTrackingAsync(CancellationToken ct = default)
         {
             var db = await _dbFactory.GetDbContextAsync(ct);
             var scope = await _dataScope.ResolveAsync(ct);
             var query = db.ScopedSet<TEntity>(scope);
-            return new QueryBuilder<TEntity>(query);
+            return new EfQueryBuilder<TEntity>(query);
         }
 
-        public virtual async Task<QueryBuilder<TEntity>> QueryDataScopeAsync(
+        public virtual async Task<IQueryBuilder<TEntity>> QueryDataScopeAsync(
             string resourceCode,
             AtlasDataScopeType scopeType,
             CancellationToken ct = default)
@@ -131,10 +132,10 @@ namespace Atlas.Data.Tenant.Repositories
             var query = db.ScopedSet<TEntity>(scope)
                 .AsNoTracking()
                 .Where(BuildDataScopePredicate(resourceCode, scopeType, scope));
-            return new QueryBuilder<TEntity>(query);
+            return new EfQueryBuilder<TEntity>(query);
         }
 
-        public virtual async Task<QueryBuilder<TEntity>> QueryDataScopeTrackingAsync(
+        public virtual async Task<IQueryBuilder<TEntity>> QueryDataScopeTrackingAsync(
             string resourceCode,
             AtlasDataScopeType scopeType,
             CancellationToken ct = default)
@@ -143,32 +144,32 @@ namespace Atlas.Data.Tenant.Repositories
             var scope = await _dataScope.ResolveAsync(ct);
             var query = db.ScopedSet<TEntity>(scope)
                 .Where(BuildDataScopePredicate(resourceCode, scopeType, scope));
-            return new QueryBuilder<TEntity>(query);
+            return new EfQueryBuilder<TEntity>(query);
         }
 
         /// <summary>
         /// 获取只读查询构建器（AsNoTracking）- 显式传入 tenantId
         /// 用于登录等无 Token 上下文的场景
         /// </summary>
-        public virtual async Task<QueryBuilder<TEntity>> QueryAsync(long tenantId, CancellationToken ct = default)
+        public virtual async Task<IQueryBuilder<TEntity>> QueryAsync(long tenantId, CancellationToken ct = default)
         {
             var db = await _dbFactory.GetReadonlyDbContextAsync(tenantId, ct);
             var scope = await _dataScope.ResolveAsync(ct);
             var query = db.ScopedSet<TEntity>(scope, explicitTenantId: tenantId)
                 .AsNoTracking();
-            return new QueryBuilder<TEntity>(query);
+            return new EfQueryBuilder<TEntity>(query);
         }
 
         /// <summary>
         /// 获取可追踪查询构建器（用于后续更新）- 显式传入 tenantId
         /// 用于登录等无 Token 上下文的场景
         /// </summary>
-        public virtual async Task<QueryBuilder<TEntity>> QueryTrackingAsync(long tenantId, CancellationToken ct = default)
+        public virtual async Task<IQueryBuilder<TEntity>> QueryTrackingAsync(long tenantId, CancellationToken ct = default)
         {
             var db = await _dbFactory.GetDbContextAsync(tenantId, ct);
             var scope = await _dataScope.ResolveAsync(ct);
             var query = db.ScopedSet<TEntity>(scope, explicitTenantId: tenantId);
-            return new QueryBuilder<TEntity>(query);
+            return new EfQueryBuilder<TEntity>(query);
         }
 
         public virtual async Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default)

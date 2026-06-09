@@ -33,17 +33,17 @@ namespace Atlas.Data.Abstractions
         /// </summary>
         /// <param name="ct"></param>
         /// <returns></returns>
-        Task<QueryBuilder<TEntity>> QueryAsync(CancellationToken ct = default);
+        Task<IQueryBuilder<TEntity>> QueryAsync(CancellationToken ct = default);
 
         /// <summary>
         /// 获取可追踪查询构建器，用于读取后修改并提交的场景。
         /// </summary>
-        Task<QueryBuilder<TEntity>> QueryTrackingAsync(CancellationToken ct = default);
+        Task<IQueryBuilder<TEntity>> QueryTrackingAsync(CancellationToken ct = default);
 
         /// <summary>
         /// 获取已应用声明式数据权限的不可追踪查询构建器。
         /// </summary>
-        Task<QueryBuilder<TEntity>> QueryDataScopeAsync(
+        Task<IQueryBuilder<TEntity>> QueryDataScopeAsync(
             string resourceCode,
             AtlasDataScopeType scopeType,
             CancellationToken ct = default);
@@ -51,7 +51,7 @@ namespace Atlas.Data.Abstractions
         /// <summary>
         /// 获取已应用声明式数据权限的可追踪查询构建器。
         /// </summary>
-        Task<QueryBuilder<TEntity>> QueryDataScopeTrackingAsync(
+        Task<IQueryBuilder<TEntity>> QueryDataScopeTrackingAsync(
             string resourceCode,
             AtlasDataScopeType scopeType,
             CancellationToken ct = default);
@@ -59,12 +59,12 @@ namespace Atlas.Data.Abstractions
         /// <summary>
         /// 获取不可追踪查询构建器（用于只读查询）- 显式传入 tenantId，用于登录等场景
         /// </summary>
-        Task<QueryBuilder<TEntity>> QueryAsync(long tenantId, CancellationToken ct = default);
+        Task<IQueryBuilder<TEntity>> QueryAsync(long tenantId, CancellationToken ct = default);
 
         /// <summary>
         /// 获取可追踪查询构建器（用于后续更新）- 显式传入 tenantId，用于登录等场景
         /// </summary>
-        Task<QueryBuilder<TEntity>> QueryTrackingAsync(long tenantId, CancellationToken ct = default);
+        Task<IQueryBuilder<TEntity>> QueryTrackingAsync(long tenantId, CancellationToken ct = default);
 
         /// <summary>
         /// 添加实体（显式传入 tenantId，用于登录等场景）

@@ -1,5 +1,6 @@
-﻿using Atlas.Core.Entities.Tenant;
+using Atlas.Core.Entities.Tenant;
 using Atlas.Data.Tenant.Context;
+using Atlas.Data.Tenant.EntityConfigurations;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -26,6 +27,30 @@ public sealed class EnterpriseSecurityModelTests
         AssertHasUniqueIndex<RefreshToken>(dbContext, nameof(RefreshToken.TenantId), nameof(RefreshToken.TokenHash));
         AssertHasIndex<AuditEvent>(dbContext, nameof(AuditEvent.TenantId), nameof(AuditEvent.CreatedAt));
         AssertHasIndex<AuditEvent>(dbContext, nameof(AuditEvent.TenantId), nameof(AuditEvent.UserId), nameof(AuditEvent.CreatedAt));
+    }
+
+    [Fact]
+    public void TenantModel_LoadsConfigurationsFromTenantDataAssembly()
+    {
+        using var dbContext = CreateTenantDbContext();
+
+        Assert.Equal(typeof(AtlasTenantDbContext).Assembly, typeof(UserConfiguration).Assembly);
+        AssertHasIndex<User>(dbContext, nameof(User.TenantId), nameof(User.UserName));
+    }
+
+    [Fact]
+    public void TenantModel_PreservesConfiguredForeignKeyDeleteBehavior()
+    {
+        using var dbContext = CreateTenantDbContext();
+        var entityType = dbContext.Model.FindEntityType(typeof(UserStore));
+
+        Assert.NotNull(entityType);
+        var storeForeignKey = entityType!.GetForeignKeys()
+            .Single(foreignKey => foreignKey.Properties
+                .Select(property => property.Name)
+                .SequenceEqual(new[] { nameof(UserStore.StoreId) }));
+
+        Assert.Equal(DeleteBehavior.Restrict, storeForeignKey.DeleteBehavior);
     }
 
     private static AtlasTenantDbContext CreateTenantDbContext()

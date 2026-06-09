@@ -40,8 +40,8 @@ namespace Atlas.Data.Tests
             modelBuilder.ApplyConfigurationsFromAssembly(
                 typeof(TestDbContext).Assembly);
 
-            // 2. 移除所有外键约束 
-            modelBuilder.RemoveAllForeignKeyConstraints();
+            // 2. 兼容旧测试模型：抑制外键约束名但保留导航和索引。
+            modelBuilder.ApplyForeignKeyConstraintPolicy(ForeignKeyConstraintPolicy.SuppressConstraintNames);
 
             // 3. 确保外键字段有索引
             modelBuilder.EnsureForeignKeyIndexes();

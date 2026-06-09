@@ -23,15 +23,16 @@ public sealed class RbacPermissionServiceCacheTests
         var writtenExpirations = new Dictionary<string, TimeSpan?>();
         var removedKeys = new List<string>();
         var cache = new Mock<ICacheService>(MockBehavior.Strict);
-        cache.Setup(x => x.Remove(It.IsAny<string>()))
-            .Callback<string>(removedKeys.Add)
-            .Returns(true);
-        cache.Setup(x => x.Set(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan?>()))
-            .Callback<string, string, TimeSpan?>((key, value, expiration) =>
+        cache.Setup(x => x.RemoveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, CancellationToken>((key, _) => removedKeys.Add(key))
+            .ReturnsAsync(true);
+        cache.Setup(x => x.SetAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, TimeSpan?, CancellationToken>((key, value, expiration, _) =>
             {
                 writtenValues[key] = value;
                 writtenExpirations[key] = expiration;
-            });
+            })
+            .Returns(Task.CompletedTask);
         var service = CreateService(cache.Object);
 
         await service.InvalidateUserPermissionsAsync(TenantId, UserId, storeId: null);

@@ -9,21 +9,26 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="coverlet.collector" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <PackageReference Include="xunit" />
-    <PackageReference Include="xunit.runner.visualstudio" />
-  </ItemGroup>
+    <ItemGroup>
+        <PackageReference Include="coverlet.collector" />
+        <PackageReference Include="Microsoft.Extensions.Configuration" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+        <PackageReference Include="Microsoft.NET.Test.Sdk" />
+        <PackageReference Include="Moq" />
+        <PackageReference Include="xunit" />
+        <PackageReference Include="xunit.runner.visualstudio" />
+    </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\..\src\Atlas.Extensions.DependencyInjection\Atlas.Extensions.DependencyInjection.csproj" />
-    <ProjectReference Include="..\..\src\Atlas.Infrastructure.Common\Atlas.Infrastructure.Common.csproj" />
-    <ProjectReference Include="..\..\src\Atlas.Messaging.Abstractions\Atlas.Messaging.Abstractions.csproj" />
-    <ProjectReference Include="..\..\src\Atlas.Services.Tenant\Atlas.Services.Tenant.csproj" />
-  </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\Atlas.Data.Abstractions\Atlas.Data.Abstractions.csproj" />
+        <ProjectReference Include="..\..\src\Atlas.Extensions.DependencyInjection\Atlas.Extensions.DependencyInjection.csproj" />
+        <ProjectReference Include="..\..\src\Atlas.Infrastructure.Common\Atlas.Infrastructure.Common.csproj" />
+        <ProjectReference Include="..\..\src\Atlas.Messaging.Abstractions\Atlas.Messaging.Abstractions.csproj" />
+        <ProjectReference Include="..\..\src\Atlas.Services\Atlas.Services.csproj" />
+        <ProjectReference Include="..\..\src\Atlas.Services.Abstractions\Atlas.Services.Abstractions.csproj" />
+        <ProjectReference Include="..\..\src\Atlas.Services.Tenant\Atlas.Services.Tenant.csproj" />
+        <ProjectReference Include="..\..\src\Atlas.Services.Tenant.Runtime\Atlas.Services.Tenant.Runtime.csproj" />
+    </ItemGroup>
 
   <ItemGroup>
     <Using Include="Xunit" />

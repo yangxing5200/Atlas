@@ -123,6 +123,76 @@ public static class AtlasCoreServiceExtensions
     }
 
     /// <summary>
+    /// Registers Atlas services for a Worker host. Worker mode enables messaging consumers and background execution by default.
+    /// </summary>
+    public static IServiceCollection AddAtlasWorker(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        params Assembly[] messagingConsumerAssemblies)
+    {
+        return services.AddAtlasCore(
+            configuration,
+            AtlasModuleCatalog.CreateWithBuiltInModules(Array.Empty<IAtlasModule>()),
+            messagingConsumerAssemblies,
+            AtlasRuntimeMode.Worker);
+    }
+
+    /// <summary>
+    /// Registers Atlas services for a Worker host with discovered modules.
+    /// </summary>
+    public static IServiceCollection AddAtlasWorker(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        Action<AtlasModuleRegistrationOptions> configureModules,
+        params Assembly[] messagingConsumerAssemblies)
+    {
+        ArgumentNullException.ThrowIfNull(configureModules);
+
+        var moduleOptions = new AtlasModuleRegistrationOptions();
+        configureModules(moduleOptions);
+
+        return services.AddAtlasCore(
+            configuration,
+            AtlasModuleCatalog.CreateWithBuiltInModules(moduleOptions.BuildModules()),
+            messagingConsumerAssemblies,
+            AtlasRuntimeMode.Worker);
+    }
+
+    /// <summary>
+    /// Registers Atlas services for a Migration host. Migration mode keeps background workers and consumers disabled by default.
+    /// </summary>
+    public static IServiceCollection AddAtlasMigration(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        return services.AddAtlasCore(
+            configuration,
+            AtlasModuleCatalog.CreateWithBuiltInModules(Array.Empty<IAtlasModule>()),
+            Array.Empty<Assembly>(),
+            AtlasRuntimeMode.Migration);
+    }
+
+    /// <summary>
+    /// Registers Atlas services for a Migration host with explicit modules.
+    /// </summary>
+    public static IServiceCollection AddAtlasMigration(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        Action<AtlasModuleRegistrationOptions> configureModules)
+    {
+        ArgumentNullException.ThrowIfNull(configureModules);
+
+        var moduleOptions = new AtlasModuleRegistrationOptions();
+        configureModules(moduleOptions);
+
+        return services.AddAtlasCore(
+            configuration,
+            AtlasModuleCatalog.CreateWithBuiltInModules(moduleOptions.BuildModules()),
+            Array.Empty<Assembly>(),
+            AtlasRuntimeMode.Migration);
+    }
+
+    /// <summary>
     /// Registers all Atlas core services, modules, and optional MassTransit consumer assemblies.
     /// </summary>
     public static IServiceCollection AddAtlasCore(
@@ -165,10 +235,10 @@ public static class AtlasCoreServiceExtensions
         services.AddAtlasDatabase(configuration);
         services.AddAtlasIdentity();
         services.AddAtlasCache(configuration);
-        services.AddAtlasMessaging(
+        services.AddAtlasMessagingRuntime(
             configuration,
-            CombineAssemblies(messagingConsumerAssemblies, moduleCatalog.ConsumerAssemblies),
-            runtimeOptions);
+            runtimeOptions,
+            CombineAssemblies(messagingConsumerAssemblies, moduleCatalog.ConsumerAssemblies));
         moduleCatalog.AddServices(services, configuration);
         services.AddAtlasModuleMapping(moduleCatalog.AutoMapperAssemblies);
         services.AddAtlasBackgroundTasks(configuration, runtimeOptions);
@@ -177,7 +247,10 @@ public static class AtlasCoreServiceExtensions
         return services;
     }
 
-    private static AtlasRuntimeModeOptions AddAtlasRuntimeOptions(
+    /// <summary>
+    /// Registers Atlas runtime mode, cache, and messaging options and returns the resolved runtime defaults.
+    /// </summary>
+    public static AtlasRuntimeModeOptions AddAtlasRuntimeOptions(
         this IServiceCollection services,
         IConfiguration configuration,
         AtlasRuntimeMode defaultRuntimeMode)
@@ -235,7 +308,7 @@ public static class AtlasCoreServiceExtensions
     /// <summary>
     /// Registers global database context with audit interceptor.
     /// </summary>
-    private static IServiceCollection AddAtlasDatabase(
+    public static IServiceCollection AddAtlasDatabase(
         this IServiceCollection services,
         IConfiguration configuration)
     {
@@ -261,13 +334,15 @@ public static class AtlasCoreServiceExtensions
     /// <summary>
     /// Registers current identity service for multi-tenant context.
     /// </summary>
-    private static IServiceCollection AddAtlasIdentity(this IServiceCollection services)
+    public static IServiceCollection AddAtlasIdentity(this IServiceCollection services)
     {
+        services.AddHttpContextAccessor();
         services.AddScoped<ICurrentIdentity>(sp =>
         {
             var accessor = sp.GetRequiredService<IHttpContextAccessor>();
             return new CurrentIdentity(accessor);
         });
+        services.TryAddScoped<Atlas.Core.Context.ITenantExecutionContext>(sp => sp.GetRequiredService<ICurrentIdentity>());
 
         return services;
     }
@@ -280,7 +355,7 @@ public static class AtlasCoreServiceExtensions
     /// Registers caching service based on configuration.
     /// Supports Memory, Redis, and Hybrid (L1+L2) strategies.
     /// </summary>
-    private static IServiceCollection AddAtlasCache(
+    public static IServiceCollection AddAtlasCache(
         this IServiceCollection services,
         IConfiguration configuration)
     {
@@ -333,11 +408,11 @@ public static class AtlasCoreServiceExtensions
 
     #region Infrastructure - Messaging
 
-    private static IServiceCollection AddAtlasMessaging(
+    public static IServiceCollection AddAtlasMessagingRuntime(
         this IServiceCollection services,
         IConfiguration configuration,
-        Assembly[] messagingConsumerAssemblies,
-        AtlasRuntimeModeOptions runtimeOptions)
+        AtlasRuntimeModeOptions runtimeOptions,
+        params Assembly[] messagingConsumerAssemblies)
     {
         var options = configuration.GetSection(AtlasMessagingOptions.SectionName).Get<AtlasMessagingOptions>()
             ?? new AtlasMessagingOptions();
@@ -468,7 +543,7 @@ public static class AtlasCoreServiceExtensions
 
     #region Background Tasks
 
-    private static IServiceCollection AddAtlasBackgroundTasks(
+    public static IServiceCollection AddAtlasBackgroundTasks(
         this IServiceCollection services,
         IConfiguration configuration,
         AtlasRuntimeModeOptions runtimeOptions)
@@ -485,7 +560,7 @@ public static class AtlasCoreServiceExtensions
 
     #region Infrastructure - Observability
 
-    private static IServiceCollection AddAtlasOpenTelemetry(
+    public static IServiceCollection AddAtlasOpenTelemetry(
         this IServiceCollection services,
         IConfiguration configuration)
     {

@@ -7,7 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
+namespace Atlas.Data.Tenant.EntityConfigurations
 {
     public class OperationLogConfiguration : BaseEntityConfiguration<OperationLog>
     {

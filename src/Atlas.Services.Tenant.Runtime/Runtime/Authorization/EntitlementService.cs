@@ -31,9 +31,9 @@ public sealed class EntitlementService : IEntitlementService
         if (context.TenantId <= 0)
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var version = GetEntitlementCacheVersion(context.TenantId, context.StoreId);
+        var version = await GetEntitlementCacheVersionAsync(context.TenantId, context.StoreId, ct);
         var cacheKey = BuildCapabilityCacheKey(context.TenantId, context.StoreId, version);
-        var cached = _cache.Get<string[]>(cacheKey);
+        var cached = await _cache.GetAsync<string[]>(cacheKey, ct);
         if (cached != null)
             return cached.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -49,7 +49,7 @@ public sealed class EntitlementService : IEntitlementService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        _cache.Set(cacheKey, result, CacheExpiration);
+        await _cache.SetAsync(cacheKey, result, CacheExpiration, ct);
         return result.ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
@@ -57,9 +57,9 @@ public sealed class EntitlementService : IEntitlementService
         EntitlementCheckContext context,
         CancellationToken ct = default)
     {
-        var version = GetEntitlementCacheVersion(context.TenantId, context.StoreId);
+        var version = await GetEntitlementCacheVersionAsync(context.TenantId, context.StoreId, ct);
         var cacheKey = BuildPermissionCacheKey(context.TenantId, context.StoreId, version);
-        var cached = _cache.Get<string[]>(cacheKey);
+        var cached = await _cache.GetAsync<string[]>(cacheKey, ct);
         if (cached != null)
             return cached.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -71,7 +71,7 @@ public sealed class EntitlementService : IEntitlementService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        _cache.Set(cacheKey, permissions, CacheExpiration);
+        await _cache.SetAsync(cacheKey, permissions, CacheExpiration, ct);
         return permissions.ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
@@ -96,13 +96,22 @@ public sealed class EntitlementService : IEntitlementService
             return Task.CompletedTask;
 
         if (storeId.HasValue)
-            BumpVersion(BuildStoreVersionCacheKey(tenantId, storeId.Value));
-        else
-            BumpVersion(BuildTenantVersionCacheKey(tenantId));
+            return InvalidateStoreEntitlementsAsync(tenantId, storeId.Value, ct);
+        return InvalidateTenantEntitlementsAsync(tenantId, ct);
+    }
 
-        _cache.Remove(BuildLegacyCapabilityCacheKey(tenantId, storeId));
-        _cache.Remove(BuildLegacyPermissionCacheKey(tenantId, storeId));
-        return Task.CompletedTask;
+    private async Task InvalidateTenantEntitlementsAsync(long tenantId, CancellationToken ct)
+    {
+        await BumpVersionAsync(BuildTenantVersionCacheKey(tenantId), ct);
+        await _cache.RemoveAsync(BuildLegacyCapabilityCacheKey(tenantId, null), ct);
+        await _cache.RemoveAsync(BuildLegacyPermissionCacheKey(tenantId, null), ct);
+    }
+
+    private async Task InvalidateStoreEntitlementsAsync(long tenantId, long storeId, CancellationToken ct)
+    {
+        await BumpVersionAsync(BuildStoreVersionCacheKey(tenantId, storeId), ct);
+        await _cache.RemoveAsync(BuildLegacyCapabilityCacheKey(tenantId, storeId), ct);
+        await _cache.RemoveAsync(BuildLegacyPermissionCacheKey(tenantId, storeId), ct);
     }
 
     private async Task<List<TenantEntitlement>> QueryActiveEntitlements(
@@ -156,23 +165,26 @@ public sealed class EntitlementService : IEntitlementService
         return capabilities;
     }
 
-    private string GetEntitlementCacheVersion(long tenantId, long? storeId)
+    private async Task<string> GetEntitlementCacheVersionAsync(
+        long tenantId,
+        long? storeId,
+        CancellationToken ct)
     {
-        var tenantVersion = _cache.Get<string>(BuildTenantVersionCacheKey(tenantId));
+        var tenantVersion = await _cache.GetAsync<string>(BuildTenantVersionCacheKey(tenantId), ct);
         tenantVersion = string.IsNullOrWhiteSpace(tenantVersion) ? "0" : tenantVersion;
 
         if (!storeId.HasValue)
             return tenantVersion;
 
-        var storeVersion = _cache.Get<string>(BuildStoreVersionCacheKey(tenantId, storeId.Value));
+        var storeVersion = await _cache.GetAsync<string>(BuildStoreVersionCacheKey(tenantId, storeId.Value), ct);
         storeVersion = string.IsNullOrWhiteSpace(storeVersion) ? "0" : storeVersion;
         return $"{tenantVersion}:{storeVersion}";
     }
 
-    private void BumpVersion(string key)
+    private async Task BumpVersionAsync(string key, CancellationToken ct)
     {
-        _cache.Remove(key);
-        _cache.Set(key, Guid.NewGuid().ToString("N"), VersionCacheExpiration);
+        await _cache.RemoveAsync(key, ct);
+        await _cache.SetAsync(key, Guid.NewGuid().ToString("N"), VersionCacheExpiration, ct);
     }
 
     private static string BuildCapabilityCacheKey(long tenantId, long? storeId, string version)
