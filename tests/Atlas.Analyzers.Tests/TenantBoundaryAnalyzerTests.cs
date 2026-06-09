@@ -185,6 +185,7 @@ public sealed class TenantBoundaryAnalyzerTests
     [Theory]
     [InlineData("Atlas.Data.Tenant")]
     [InlineData("Atlas.BackgroundTasks")]
+    [InlineData("Atlas.Exporting")]
     public async Task Approved_infrastructure_assemblies_are_not_reported(string assemblyName)
     {
         var diagnostics = await AnalyzeAsync(

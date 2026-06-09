@@ -361,11 +361,13 @@ public sealed class TenantBoundaryAnalyzer : DiagnosticAnalyzer
         // - Atlas.Data.* 拥有 DbContext、Repository、EF 配置和 migration 相关代码。
         // - Atlas.Extensions.DependencyInjection 负责组合基础设施服务。
         // - Atlas.BackgroundTasks 是后台执行平面，当前直接管理 global job claim SQL。
+        // - Atlas.Exporting 是导出基础设施层，负责 ExportJobs 和文件元数据编排。
         // - Atlas.Services.Tenant.Runtime 是受控的租户 runtime 实现项目。
         if (name.EndsWith(".Tests", StringComparison.Ordinal) ||
             name.StartsWith("Atlas.Data.", StringComparison.Ordinal) ||
             name is "Atlas.Analyzers" or "Atlas.LocalSetup" or
                 "Atlas.Extensions.DependencyInjection" or "Atlas.BackgroundTasks" or
+                "Atlas.Exporting" or
                 "Atlas.Services.Tenant.Runtime")
         {
             return false;

@@ -1,9 +1,11 @@
 using Atlas.Core.Exceptions;
+using Atlas.Exporting;
 using Atlas.Infrastructure.Security;
 using Atlas.Models.DTOs;
 using Atlas.Models.Tenant.Requests;
 using Atlas.Models.Tenant.Responses;
 using Atlas.Sample.ECommerce;
+using Atlas.Sample.ECommerce.Models;
 using Atlas.Services.Abstractions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -17,10 +19,14 @@ namespace Atlas.Sample.WebApi.Controllers;
 public sealed class ProductController : ControllerBase
 {
     private readonly IProductService _productService;
+    private readonly IExportJobService _exports;
 
-    public ProductController(IProductService productService)
+    public ProductController(
+        IProductService productService,
+        IExportJobService exports)
     {
         _productService = productService ?? throw new ArgumentNullException(nameof(productService));
+        _exports = exports ?? throw new ArgumentNullException(nameof(exports));
     }
 
     [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + SampleECommercePermissionCodes.ProductsRead)]
@@ -119,5 +125,45 @@ public sealed class ProductController : ControllerBase
         return string.IsNullOrWhiteSpace(keyword)
             ? _productService.PageQueryAsync(p => true, pageIndex, pageSize, ct)
             : _productService.PageQueryAsync(p => p.Name.Contains(keyword), pageIndex, pageSize, ct);
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + SampleECommercePermissionCodes.ProductsExport)]
+    [HttpPost("exports")]
+    [ProducesResponseType(typeof(ExportEnqueueResult), StatusCodes.Status202Accepted)]
+    public async Task<ActionResult<ExportEnqueueResult>> ExportAsync(
+        [FromBody] ExportProductsRequest request,
+        CancellationToken ct = default)
+    {
+        var result = await _exports.EnqueueAsync(
+            new ExportEnqueueRequest<ExportProductsRequest>
+            {
+                ExportTaskType = SampleECommerceExportTaskTypes.ProductList,
+                Query = request
+            },
+            ct);
+
+        return Accepted($"/api/product/exports/{result.ExportJobId}", result);
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + SampleECommercePermissionCodes.ProductsExport)]
+    [HttpGet("exports/{exportJobId:long}")]
+    [ProducesResponseType(typeof(ExportJobStatusDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ExportJobStatusDto>> GetExportAsync(
+        long exportJobId,
+        CancellationToken ct = default)
+    {
+        var result = await _exports.GetAsync(exportJobId, ct);
+        return result == null ? NotFound() : Ok(result);
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + SampleECommercePermissionCodes.ProductsExport)]
+    [HttpGet("exports/{exportJobId:long}/download")]
+    public async Task<IActionResult> DownloadExportAsync(
+        long exportJobId,
+        CancellationToken ct = default)
+    {
+        var result = await _exports.OpenDownloadAsync(exportJobId, ct);
+        return File(result.Content, result.ContentType, result.FileName);
     }
 }

@@ -301,7 +301,8 @@ public static class AtlasWebApiExtensions
             .AddCheck<AtlasCacheHealthCheck>("atlas-cache", tags: ["ready", "cache"])
             .AddCheck<AtlasRedisHealthCheck>("atlas-redis", tags: ["ready", "redis"])
             .AddCheck<AtlasRabbitMqHealthCheck>("atlas-rabbitmq", tags: ["ready", "rabbitmq"])
-            .AddCheck<AtlasBackgroundJobHealthCheck>("atlas-background-jobs", tags: ["ready", "background-jobs"]);
+            .AddCheck<AtlasBackgroundJobHealthCheck>("atlas-background-jobs", tags: ["ready", "background-jobs"])
+            .AddCheck<AtlasExportingHealthCheck>("atlas-exporting", tags: ["ready", "exporting"]);
 
         return services;
     }
