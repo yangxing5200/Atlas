@@ -1,9 +1,13 @@
 ﻿using Atlas.BackgroundTasks;
 using Atlas.Exporting;
+using Atlas.Core.Services;
+using Atlas.Data.Global;
 using Atlas.Extensions.DependencyInjection;
+using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Messaging.Abstractions;
 using Atlas.Services.Tenant;
 using Atlas.Services.Tenant.Runtime.Messaging;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -144,6 +148,114 @@ public sealed class RuntimeModeRegistrationTests
             service.ImplementationType == typeof(ExportJobHandler));
     }
 
+    [Fact]
+    public void AddAtlasWorker_WithoutConfiguredMode_DefaultsToWorkerExecutionPlane()
+    {
+        var services = new ServiceCollection();
+
+        services.AddAtlasWorker(
+            CreateCoreConfiguration(
+                AtlasRuntimeMode.WebApi,
+                messagingProvider: "RabbitMQ",
+                includeRuntimeMode: false));
+
+        Assert.Contains(services, IsHostedService<TenantOutboxDispatcher>);
+        Assert.Contains(services, IsHostedService<BackgroundJobWorker>);
+        Assert.Contains(services, IsHostedService<RecurringTaskRunner>);
+    }
+
+    [Fact]
+    public void AddAtlasMigration_WithoutConfiguredMode_DefaultsToNoBackgroundExecutionPlane()
+    {
+        var services = new ServiceCollection();
+
+        services.AddAtlasMigration(
+            CreateCoreConfiguration(
+                AtlasRuntimeMode.Worker,
+                messagingProvider: "RabbitMQ",
+                includeRuntimeMode: false));
+
+        Assert.DoesNotContain(services, service => service.ServiceType == typeof(IHostedService));
+        Assert.Contains(services, service => service.ServiceType == typeof(IBackgroundJobClient));
+        Assert.Contains(services, service => service.ServiceType == typeof(ITenantDomainEventOutbox));
+        Assert.Contains(services, service =>
+            service.ServiceType == typeof(IDomainEventPublisher) &&
+            service.ImplementationType == typeof(NoOpDomainEventPublisher));
+    }
+
+    [Fact]
+    public void AddAtlasRuntimeOptions_ReturnsResolvedOptionsAndRegistersOptions()
+    {
+        var services = new ServiceCollection();
+        var configuration = CreateCoreConfiguration(AtlasRuntimeMode.Migration);
+
+        var runtimeOptions = services.AddAtlasRuntimeOptions(configuration, AtlasRuntimeMode.WebApi);
+
+        Assert.Equal(AtlasRuntimeMode.Migration, runtimeOptions.Mode);
+
+        using var provider = services.BuildServiceProvider();
+        Assert.Equal(AtlasRuntimeMode.Migration, provider.GetRequiredService<IOptions<AtlasRuntimeModeOptions>>().Value.Mode);
+        Assert.Equal("Memory", provider.GetRequiredService<IOptions<AtlasCacheSettingsOptions>>().Value.Provider);
+        Assert.Equal("None", provider.GetRequiredService<IOptions<AtlasMessagingOptions>>().Value.Provider);
+    }
+
+    [Fact]
+    public void AddAtlasIdentity_RegistersHttpIdentityAndAccessor()
+    {
+        var services = new ServiceCollection();
+
+        services.AddAtlasIdentity();
+
+        Assert.Contains(services, service => service.ServiceType == typeof(IHttpContextAccessor));
+        Assert.Contains(services, service => service.ServiceType == typeof(ICurrentIdentity));
+    }
+
+    [Fact]
+    public void AddAtlasDatabase_RegistersGlobalDbContextWithoutHostedServices()
+    {
+        var services = new ServiceCollection();
+        var configuration = CreateCoreConfiguration(AtlasRuntimeMode.WebApi);
+
+        services.AddLogging();
+        services.AddAtlasSnowflakeId(configuration);
+        services.AddAtlasIdentity();
+        services.AddAtlasDatabase(configuration);
+
+        Assert.Contains(services, service => service.ServiceType == typeof(AtlasGlobalDbContext));
+        Assert.DoesNotContain(services, service => service.ServiceType == typeof(IHostedService));
+    }
+
+    [Fact]
+    public void AddAtlasCache_MemoryProvider_RegistersCacheOnlyRuntime()
+    {
+        var services = new ServiceCollection();
+
+        services.AddAtlasCache(CreateCoreConfiguration(AtlasRuntimeMode.WebApi));
+
+        Assert.Contains(services, service => service.ServiceType == typeof(ICacheService));
+        Assert.Contains(services, service => service.ServiceType == typeof(ICacheProvider));
+        Assert.Contains(services, service => service.ServiceType == typeof(IDistributedLockProvider));
+        Assert.DoesNotContain(services, service => service.ServiceType == typeof(IHostedService));
+    }
+
+    [Fact]
+    public void AddAtlasMessagingRuntime_NoneProvider_RegistersNoOpTransportOnly()
+    {
+        var services = new ServiceCollection();
+        var configuration = CreateCoreConfiguration(AtlasRuntimeMode.WebApi);
+        var runtimeOptions = AtlasRuntimeModeOptions.FromConfiguration(configuration, AtlasRuntimeMode.WebApi);
+
+        services.AddAtlasMessagingRuntime(configuration, runtimeOptions);
+
+        Assert.Contains(services, service =>
+            service.ServiceType == typeof(IDomainEventPublisher) &&
+            service.ImplementationType == typeof(NoOpDomainEventPublisher));
+        Assert.Contains(services, service =>
+            service.ServiceType == typeof(IDomainEventTransport) &&
+            service.ImplementationType == typeof(NoOpDomainEventTransport));
+        Assert.DoesNotContain(services, service => service.ServiceType == typeof(IHostedService));
+    }
+
     private static bool IsHostedService<THostedService>(ServiceDescriptor descriptor)
         where THostedService : IHostedService
     {
@@ -153,21 +265,26 @@ public sealed class RuntimeModeRegistrationTests
 
     private static IConfiguration CreateCoreConfiguration(
         AtlasRuntimeMode runtimeMode,
-        string messagingProvider = "None")
+        string messagingProvider = "None",
+        bool includeRuntimeMode = true)
     {
+        var values = new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:AtlasGlobal"] = "Server=localhost;Port=3306;Database=atlas_global;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;",
+            ["CacheSettings:Provider"] = "Memory",
+            ["Messaging:Provider"] = messagingProvider,
+            ["Messaging:RabbitMQ:Host"] = "localhost",
+            ["Messaging:RabbitMQ:Port"] = "5672",
+            ["Messaging:RabbitMQ:VirtualHost"] = "/",
+            ["Messaging:RabbitMQ:Username"] = "guest",
+            ["Messaging:RabbitMQ:Password"] = "guest"
+        };
+
+        if (includeRuntimeMode)
+            values["Atlas:Runtime:Mode"] = runtimeMode.ToString();
+
         return new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["ConnectionStrings:AtlasGlobal"] = "Server=localhost;Port=3306;Database=atlas_global;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;",
-                ["Atlas:Runtime:Mode"] = runtimeMode.ToString(),
-                ["CacheSettings:Provider"] = "Memory",
-                ["Messaging:Provider"] = messagingProvider,
-                ["Messaging:RabbitMQ:Host"] = "localhost",
-                ["Messaging:RabbitMQ:Port"] = "5672",
-                ["Messaging:RabbitMQ:VirtualHost"] = "/",
-                ["Messaging:RabbitMQ:Username"] = "guest",
-                ["Messaging:RabbitMQ:Password"] = "guest"
-            })
+            .AddInMemoryCollection(values)
             .Build();
     }
 }

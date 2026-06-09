@@ -4,7 +4,7 @@ using Atlas.Core.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-namespace Atlas.Data.Tenant.Migrations.EntityConfigurations;
+namespace Atlas.Data.Tenant.EntityConfigurations;
 
 public sealed class RoleConfiguration : BaseEntityConfiguration<Role>
 {

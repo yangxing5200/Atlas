@@ -140,10 +140,10 @@ namespace Atlas.Infrastructure.Caching.Providers.Hybrid
             var l1KeysTask = _l1Cache.GetKeysByPatternAsync(pattern, cancellationToken);
             var l2KeysTask = _l2Cache.GetKeysByPatternAsync(pattern, cancellationToken);
 
-            await Task.WhenAll(l1KeysTask, l2KeysTask);
+            var keySets = await Task.WhenAll(l1KeysTask, l2KeysTask);
 
-            return l1KeysTask.Result
-                .Concat(l2KeysTask.Result)
+            return keySets[0]
+                .Concat(keySets[1])
                 .Distinct()
                 .ToList();
         }

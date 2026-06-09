@@ -8,7 +8,7 @@ using Atlas.Infrastructure.Caching.Core.Models;
 namespace Atlas.Infrastructure.Caching.Abstractions
 {
     /// <summary>
-    /// 缓存服务接口（支持同步和异步方法）
+    /// 缓存服务接口（仅支持异步方法）
     /// </summary>
     /// <remarks>
     /// 推荐业务代码优先使用 CacheKeyDefinition 入口，统一作用域、过期时间、标签和键命名。
@@ -16,70 +16,27 @@ namespace Atlas.Infrastructure.Caching.Abstractions
     /// </remarks>
     public interface ICacheService
     {
-        // ========== 基础同步方法 ==========
+        // ========== Raw-key 异步方法 ==========
 
-        /// <summary>
-        /// 获取缓存，如果没有缓存返回 null
-        /// </summary>
-        T? Get<T>(string key);
+        Task<T?> GetAsync<T>(
+            string key,
+            CancellationToken cancellationToken = default);
 
-        /// <summary>
-        /// 设置缓存
-        /// </summary>
-        void Set<T>(string key, T value, TimeSpan? expiration = null);
-
-        /// <summary>
-        /// 删除缓存
-        /// </summary>
-        bool Remove(string key);
-
-        /// <summary>
-        /// 检查缓存是否存在
-        /// </summary>
-        bool Exists(string key);
-
-        // ========== Definition 的同步方法 ==========
-
-        /// <summary>
-        /// 【同步】获取缓存值
-        /// </summary>
-        T? Get<T>(
-            CacheKeyDefinition definition,
-            object? instanceValue = null);
-
-        /// <summary>
-        /// 【同步】设置缓存值
-        /// </summary>
-        void Set<T>(
-            CacheKeyDefinition definition,
+        Task SetAsync<T>(
+            string key,
             T value,
-            object? instanceValue = null,
-            CacheOptions? optionsOverride = null);
+            TimeSpan? expiration = null,
+            CancellationToken cancellationToken = default);
 
-        /// <summary>
-        /// 【同步】获取或设置缓存值
-        /// </summary>
-        CacheResult<T> GetOrSet<T>(
-            CacheKeyDefinition definition,
-            Func<T> factory,
-            object? instanceValue = null,
-            CacheOptions? optionsOverride = null);
+        Task<bool> RemoveAsync(
+            string key,
+            CancellationToken cancellationToken = default);
 
-        /// <summary>
-        /// 【同步】移除缓存（本地删除 + 通知其他服务器）
-        /// </summary>
-        bool Remove(
-            CacheKeyDefinition definition,
-            object? instanceValue = null);
+        Task<bool> ExistsAsync(
+            string key,
+            CancellationToken cancellationToken = default);
 
-        /// <summary>
-        /// 【同步】检查缓存是否存在
-        /// </summary>
-        bool Exists(
-            CacheKeyDefinition definition,
-            object? instanceValue = null);
-
-        // ========== 异步方法（原有的，保持不变） ==========
+        // ========== Definition 异步方法 ==========
 
         /// <summary>
         /// 获取缓存值

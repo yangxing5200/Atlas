@@ -22,14 +22,13 @@ public static class SampleECommercePermissionCodes
     public const string ProductsUpdate = "product.update";
     public const string ProductsDelete = "product.delete";
     public const string ProductsExport = "product.export";
+    public const string InventoriesRead = "inventory.read";
     public const string OrdersPlace = "order.place";
 }
 
 public static class SampleECommerceExportTaskTypes
 {
     public const string ProductList = "sample.ecommerce.product.list";
-    public const string InventoriesRead = "inventory.read";
-    public const string OrdersPlace = "order.place";
 }
 
 public static class SampleECommerceAuthorizationCodes
@@ -108,12 +107,13 @@ public sealed class SampleECommerceModule : AtlasModule
             .AddPermission(
                 SampleECommercePermissionCodes.ProductsExport,
                 "Export products",
-                "product.catalog",
+                SampleECommerceAuthorizationCodes.ProductCatalogCapability,
                 "Product",
                 PermissionScope.Store,
-                resource: "product",
+                resource: SampleECommerceAuthorizationCodes.ProductResource,
                 action: "export",
                 riskLevel: AtlasPermissionRiskLevel.Medium)
+            .AddPermission(
                 SampleECommercePermissionCodes.InventoriesRead,
                 "Read inventory",
                 SampleECommerceAuthorizationCodes.InventoryStockCapability,

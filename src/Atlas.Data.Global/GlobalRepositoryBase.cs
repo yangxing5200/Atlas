@@ -1,5 +1,6 @@
 ﻿using Atlas.Data.Abstractions;
 using Atlas.Data.Common;
+using Atlas.Data.Common.Querying;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
@@ -80,22 +81,22 @@ namespace Atlas.Data.Global
         /// <summary>
         /// 获取不可追踪查询构建器（用于只读查询）
         /// </summary>
-        public virtual Task<QueryBuilder<TEntity>> QueryAsync(CancellationToken ct = default)
+        public virtual Task<IQueryBuilder<TEntity>> QueryAsync(CancellationToken ct = default)
         {
             var query = _dbSet.AsNoTracking();
-            return Task.FromResult(new QueryBuilder<TEntity>(query));
+            return Task.FromResult<IQueryBuilder<TEntity>>(new EfQueryBuilder<TEntity>(query));
         }
 
         /// <summary>
         /// 获取可追踪查询构建器（用于需要更新的查询）
         /// </summary>
-        public virtual Task<QueryBuilder<TEntity>> QueryTrackingAsync(CancellationToken ct = default)
+        public virtual Task<IQueryBuilder<TEntity>> QueryTrackingAsync(CancellationToken ct = default)
         {
             var query = _dbSet.AsQueryable();
-            return Task.FromResult(new QueryBuilder<TEntity>(query));
+            return Task.FromResult<IQueryBuilder<TEntity>>(new EfQueryBuilder<TEntity>(query));
         }
 
-        public virtual Task<QueryBuilder<TEntity>> QueryDataScopeAsync(
+        public virtual Task<IQueryBuilder<TEntity>> QueryDataScopeAsync(
             string resourceCode,
             AtlasDataScopeType scopeType,
             CancellationToken ct = default)
@@ -103,7 +104,7 @@ namespace Atlas.Data.Global
             throw new NotSupportedException("全局仓储不支持租户数据权限裁剪");
         }
 
-        public virtual Task<QueryBuilder<TEntity>> QueryDataScopeTrackingAsync(
+        public virtual Task<IQueryBuilder<TEntity>> QueryDataScopeTrackingAsync(
             string resourceCode,
             AtlasDataScopeType scopeType,
             CancellationToken ct = default)
@@ -114,7 +115,7 @@ namespace Atlas.Data.Global
         /// <summary>
         /// 全局仓储不支持基于 tenantId 的查询（全局数据库不区分租户）
         /// </summary>
-        public virtual Task<QueryBuilder<TEntity>> QueryAsync(long tenantId, CancellationToken ct = default)
+        public virtual Task<IQueryBuilder<TEntity>> QueryAsync(long tenantId, CancellationToken ct = default)
         {
             throw new NotSupportedException(TenantQueryNotSupportedMessage);
         }
@@ -122,7 +123,7 @@ namespace Atlas.Data.Global
         /// <summary>
         /// 全局仓储不支持基于 tenantId 的查询（全局数据库不区分租户）
         /// </summary>
-        public virtual Task<QueryBuilder<TEntity>> QueryTrackingAsync(long tenantId, CancellationToken ct = default)
+        public virtual Task<IQueryBuilder<TEntity>> QueryTrackingAsync(long tenantId, CancellationToken ct = default)
         {
             throw new NotSupportedException(TenantQueryNotSupportedMessage);
         }

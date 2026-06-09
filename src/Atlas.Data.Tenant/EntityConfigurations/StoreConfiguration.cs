@@ -2,7 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
+namespace Atlas.Data.Tenant.EntityConfigurations
 {
     public class StoreConfiguration : VersionedEntityConfiguration<Store>
     {

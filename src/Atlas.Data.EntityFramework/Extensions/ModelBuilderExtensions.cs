@@ -4,13 +4,34 @@ using System.Linq.Expressions;
 using System.Reflection;
 namespace Atlas.Data.Common.Extensions
 {
+    public enum ForeignKeyConstraintPolicy
+    {
+        Preserve = 0,
+        SuppressConstraintNames = 1
+    }
+
     /// <summary>
     /// EF Core ModelBuilder 扩展方法
     /// </summary>
     public static class ModelBuilderExtensions
     {
         /// <summary>
-        /// 移除所有外键约束（保留导航属性和索引）
+        /// Applies the database foreign key constraint policy for the model.
+        /// </summary>
+        public static ModelBuilder ApplyForeignKeyConstraintPolicy(
+            this ModelBuilder modelBuilder,
+            ForeignKeyConstraintPolicy policy)
+        {
+            return policy switch
+            {
+                ForeignKeyConstraintPolicy.Preserve => modelBuilder,
+                ForeignKeyConstraintPolicy.SuppressConstraintNames => modelBuilder.RemoveAllForeignKeyConstraints(),
+                _ => throw new ArgumentOutOfRangeException(nameof(policy), policy, "Unsupported foreign key constraint policy.")
+            };
+        }
+
+        /// <summary>
+        /// 抑制所有外键约束名（保留导航属性和索引），仅用于兼容旧模型或测试场景。
         /// </summary>
         public static ModelBuilder RemoveAllForeignKeyConstraints(this ModelBuilder modelBuilder)
         {
@@ -179,4 +200,3 @@ namespace Atlas.Data.Common.Extensions
         }
     }
 }
-

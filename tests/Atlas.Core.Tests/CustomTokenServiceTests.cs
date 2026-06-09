@@ -141,7 +141,7 @@ namespace Atlas.Core.Tests
         }
 
         [Fact]
-        public void ValidateToken_WithRevokedSession_ShouldReturnNull()
+        public async Task ValidateTokenAsync_WithRevokedSession_ShouldReturnNull()
         {
             var user = new TestCurrentUserService
             {
@@ -152,13 +152,13 @@ namespace Atlas.Core.Tests
             var tokenInfo = TokenInfo.Create(user, 60, 1);
             var token = _tokenService.GenerateToken(tokenInfo);
 
-            _tokenCacheService.InvalidateSession(tokenInfo.SessionId);
+            await _tokenCacheService.InvalidateSessionAsync(tokenInfo.SessionId);
 
-            Assert.Null(_tokenService.ValidateToken(token));
+            Assert.Null(await _tokenService.ValidateTokenAsync(token));
         }
 
         [Fact]
-        public void ValidateToken_WithTokenVersionMismatch_ShouldReturnNull()
+        public async Task ValidateTokenAsync_WithTokenVersionMismatch_ShouldReturnNull()
         {
             var user = new TestCurrentUserService
             {
@@ -169,9 +169,9 @@ namespace Atlas.Core.Tests
             var tokenInfo = TokenInfo.Create(user, 60, 1);
             var token = _tokenService.GenerateToken(tokenInfo);
 
-            _tokenCacheService.SetUserTokenVersion(user.UserId!.Value, 2);
+            await _tokenCacheService.SetUserTokenVersionAsync(user.UserId!.Value, 2);
 
-            Assert.Null(_tokenService.ValidateToken(token));
+            Assert.Null(await _tokenService.ValidateTokenAsync(token));
         }
     }
 
@@ -181,29 +181,33 @@ namespace Atlas.Core.Tests
         private readonly Dictionary<long, int> _tokenVersions = new();
         private readonly HashSet<string> _invalidSessions = new();
 
-        public int? GetUserTokenVersion(long userId)
+        public Task<int?> GetUserTokenVersionAsync(long userId, CancellationToken ct = default)
         {
-            return _tokenVersions.TryGetValue(userId, out var version) ? version : null;
+            int? result = _tokenVersions.TryGetValue(userId, out var version) ? version : null;
+            return Task.FromResult(result);
         }
 
-        public void SetUserTokenVersion(long userId, int version)
+        public Task SetUserTokenVersionAsync(long userId, int version, CancellationToken ct = default)
         {
             _tokenVersions[userId] = version;
+            return Task.CompletedTask;
         }
 
-        public void InvalidateUserTokens(long userId)
+        public Task InvalidateUserTokensAsync(long userId, CancellationToken ct = default)
         {
             _tokenVersions.Remove(userId);
+            return Task.CompletedTask;
         }
 
-        public bool IsSessionValid(string sessionId)
+        public Task<bool> IsSessionValidAsync(string sessionId, CancellationToken ct = default)
         {
-            return !_invalidSessions.Contains(sessionId);
+            return Task.FromResult(!_invalidSessions.Contains(sessionId));
         }
 
-        public void InvalidateSession(string sessionId)
+        public Task InvalidateSessionAsync(string sessionId, CancellationToken ct = default)
         {
             _invalidSessions.Add(sessionId);
+            return Task.CompletedTask;
         }
     }
 

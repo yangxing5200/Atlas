@@ -3,7 +3,7 @@ using Atlas.Extensions.DependencyInjection;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-builder.Services.AddAtlasCore(
+builder.Services.AddAtlasWorker(
     builder.Configuration,
     modules => modules.AddModuleAssembly(typeof(OrderPlacedEventConsumer).Assembly));
 

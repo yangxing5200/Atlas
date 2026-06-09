@@ -131,9 +131,6 @@ public sealed class TenantBoundaryAnalyzer : DiagnosticAnalyzer
         INamedTypeSymbol? tenantDbContext,
         INamedTypeSymbol? efDbContext)
     {
-        if (IsApprovedRuntimeLocation(context))
-            return;
-
         // 该回调注册在多种声明节点上。这里先把不同声明形态统一提取为 type syntax，
         // 这样下面的语义检查逻辑可以复用。
         var typeSyntax = context.Node switch
@@ -167,9 +164,6 @@ public sealed class TenantBoundaryAnalyzer : DiagnosticAnalyzer
         SyntaxNodeAnalysisContext context,
         INamedTypeSymbol? efDbContext)
     {
-        if (IsApprovedRuntimeLocation(context))
-            return;
-
         if (context.Node is not InvocationExpressionSyntax invocation)
             return;
 
@@ -345,16 +339,6 @@ public sealed class TenantBoundaryAnalyzer : DiagnosticAnalyzer
     }
 
     /// <summary>
-    /// Runtime namespaces are the only approved place in non-data service assemblies that may touch tenant EF primitives.
-    /// </summary>
-    private static bool IsApprovedRuntimeLocation(SyntaxNodeAnalysisContext context)
-    {
-        var namespaceName = context.ContainingSymbol?.ContainingNamespace?.ToDisplayString();
-        return namespaceName != null &&
-               namespaceName.StartsWith("Atlas.Services.Tenant.Runtime", StringComparison.Ordinal);
-    }
-
-    /// <summary>
     /// 控制哪些程序集需要执行租户边界检查。
     /// </summary>
     /// <remarks>
@@ -378,11 +362,13 @@ public sealed class TenantBoundaryAnalyzer : DiagnosticAnalyzer
         // - Atlas.Extensions.DependencyInjection 负责组合基础设施服务。
         // - Atlas.BackgroundTasks 是后台执行平面，当前直接管理 global job claim SQL。
         // - Atlas.Exporting 是导出基础设施层，负责 ExportJobs 和文件元数据编排。
-        // - Atlas.Services.Tenant.Runtime.* 的细粒度豁免在 IsApprovedRuntimeLocation 中处理。
+        // - Atlas.Services.Tenant.Runtime 是受控的租户 runtime 实现项目。
         if (name.EndsWith(".Tests", StringComparison.Ordinal) ||
             name.StartsWith("Atlas.Data.", StringComparison.Ordinal) ||
             name is "Atlas.Analyzers" or "Atlas.LocalSetup" or
-                "Atlas.Extensions.DependencyInjection" or "Atlas.BackgroundTasks" or "Atlas.Exporting")
+                "Atlas.Extensions.DependencyInjection" or "Atlas.BackgroundTasks" or
+                "Atlas.Exporting" or
+                "Atlas.Services.Tenant.Runtime")
         {
             return false;
         }

@@ -82,7 +82,7 @@ public sealed class RefreshTokenService : IRefreshTokenService
         if (storedToken == null || !storedToken.IsActive(now))
             return RefreshTokenExchangeResult.Failed("Refresh token has expired or been revoked.");
 
-        if (!_tokenCacheService.IsSessionValid(storedToken.SessionId))
+        if (!await _tokenCacheService.IsSessionValidAsync(storedToken.SessionId, ct))
             return RefreshTokenExchangeResult.Failed("Session has been revoked.");
 
         var userQuery = await _users.QueryAsync(parsed.TenantId, ct);
@@ -96,7 +96,7 @@ public sealed class RefreshTokenService : IRefreshTokenService
         if (user == null)
             return RefreshTokenExchangeResult.Failed("User is not active.");
 
-        _tokenCacheService.SetUserTokenVersion(user.Id, user.TokenVersion);
+        await _tokenCacheService.SetUserTokenVersionAsync(user.Id, user.TokenVersion, ct);
 
         var accessTokenInfo = TokenInfo.Create(new RefreshTokenIdentity
         {

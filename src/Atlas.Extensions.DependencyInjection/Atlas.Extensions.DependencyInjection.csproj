@@ -41,6 +41,7 @@
     <ProjectReference Include="..\Atlas.Services.Abstractions\Atlas.Services.Abstractions.csproj" />
     <ProjectReference Include="..\Atlas.Services\Atlas.Services.csproj" />
     <ProjectReference Include="..\Atlas.Services.Tenant\Atlas.Services.Tenant.csproj" />
+    <ProjectReference Include="..\Atlas.Services.Tenant.Runtime\Atlas.Services.Tenant.Runtime.csproj" />
   </ItemGroup>
 
 </Project>

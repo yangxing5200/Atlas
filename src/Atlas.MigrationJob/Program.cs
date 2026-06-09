@@ -19,7 +19,7 @@ builder.Configuration["CacheSettings:Provider"] ??= "Memory";
 builder.Configuration["ConnectionStrings:AtlasGlobal"] ??=
     "Server=localhost;Port=3306;Database=atlas_global;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;";
 
-builder.Services.AddAtlasCore(builder.Configuration);
+builder.Services.AddAtlasMigration(builder.Configuration);
 
 using var host = builder.Build();
 using var scope = host.Services.CreateScope();

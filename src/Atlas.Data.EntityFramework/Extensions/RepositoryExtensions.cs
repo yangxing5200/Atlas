@@ -11,7 +11,7 @@ namespace Atlas.Data.Common.Extensions
     {
         public static async Task<List<TEntity>> ReadonlyQueryAsync<TEntity, TKey>(
             this IRepository<TEntity, TKey> repository,
-            Func<QueryBuilder<TEntity>, QueryBuilder<TEntity>> buildQuery,
+            Func<IQueryBuilder<TEntity>, IQueryBuilder<TEntity>> buildQuery,
             CancellationToken ct = default)
             where TEntity : class
         {
@@ -21,7 +21,7 @@ namespace Atlas.Data.Common.Extensions
 
         public static async Task<List<TEntity>> QueryWithTrackingAsync<TEntity, TKey>(
           this IRepository<TEntity, TKey> repository,
-          Func<QueryBuilder<TEntity>, QueryBuilder<TEntity>> buildQuery,
+          Func<IQueryBuilder<TEntity>, IQueryBuilder<TEntity>> buildQuery,
           CancellationToken ct = default)
           where TEntity : class
         {
@@ -31,7 +31,7 @@ namespace Atlas.Data.Common.Extensions
 
         public static async Task<TEntity?> TrackingFirstOrDefaultAsync<TEntity, TKey>(
           this IRepository<TEntity, TKey> repository,
-          Func<QueryBuilder<TEntity>, QueryBuilder<TEntity>> buildQuery,
+          Func<IQueryBuilder<TEntity>, IQueryBuilder<TEntity>> buildQuery,
           CancellationToken ct = default)
           where TEntity : class
         {
@@ -41,7 +41,7 @@ namespace Atlas.Data.Common.Extensions
 
         public static async Task<TEntity?> QueryFirstAsync<TEntity, TKey>(
             this IRepository<TEntity, TKey> repository,
-            Func<QueryBuilder<TEntity>, QueryBuilder<TEntity>> buildQuery,
+            Func<IQueryBuilder<TEntity>, IQueryBuilder<TEntity>> buildQuery,
             CancellationToken ct = default)
             where TEntity : class
         {
@@ -51,7 +51,7 @@ namespace Atlas.Data.Common.Extensions
 
         public static async Task<long> QueryCountAsync<TEntity, TKey>(
             this IRepository<TEntity, TKey> repository,
-            Func<QueryBuilder<TEntity>, QueryBuilder<TEntity>> buildQuery,
+            Func<IQueryBuilder<TEntity>, IQueryBuilder<TEntity>> buildQuery,
             CancellationToken ct = default)
             where TEntity : class
         {

@@ -285,30 +285,12 @@ namespace Atlas.Data.Tenant
                 return new List<long>();
             }
 
-            if (_cache?.Value == null)
-            {
-                _logger.LogWarning("Cache service unavailable, StoreId: {StoreId}", storeId.Value);
-                return new List<long> { storeId.Value };
-            }
+            _logger.LogWarning(
+                "Legacy synchronous scope path will use current store only, StoreId: {StoreId}. " +
+                "Use ResolveAsync or GetShareStoreIdsAsync for full shared-store scope.",
+                storeId.Value);
 
-            var shareIds = _cache.Value.Get<List<long>>(
-                TenantCacheKeys.ShareStoresCacheKey,
-                instanceValue: storeId.Value);
-
-            if (shareIds.IsNullOrEmpty())
-            {
-                _logger.LogWarning(
-                    "ShareStoreIds cache miss, StoreId: {StoreId}. " +
-                    "Legacy synchronous scope path will use current store only.",
-                    storeId.Value);
-
-                return new List<long> { storeId.Value };
-            }
-
-            _logger.LogDebug("Cache hit, StoreId: {StoreId}, Count: {Count}",
-                storeId.Value, shareIds!.Count);
-
-            return shareIds;
+            return new List<long> { storeId.Value };
         }
     }
 }
