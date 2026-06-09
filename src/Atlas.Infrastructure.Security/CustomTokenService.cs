@@ -109,7 +109,7 @@ namespace Atlas.Infrastructure.Security
                 {
                     // 命中缓存仍检查 Session 黑名单，确保退出登录能快速生效。
                     if (!string.IsNullOrEmpty(cachedInfo.SessionId) &&
-                        !WithTokenCache(tokenCache => tokenCache.IsSessionValid(cachedInfo.SessionId)))
+                        !await WithTokenCacheAsync(tokenCache => tokenCache.IsSessionValidAsync(cachedInfo.SessionId)))
                     {
                         _cache.Remove(cacheKey);
                         _logger.LogWarning("Session invalidated - UserId: {UserId}", cachedInfo.UserId);
@@ -127,13 +127,14 @@ namespace Atlas.Infrastructure.Security
             {
                 // 首次解析成功后再校验 Session 和 TokenVersion，保证服务端可主动撤销历史 Token。
                 if (!string.IsNullOrEmpty(result.SessionId) &&
-                    !WithTokenCache(tokenCache => tokenCache.IsSessionValid(result.SessionId)))
+                    !await WithTokenCacheAsync(tokenCache => tokenCache.IsSessionValidAsync(result.SessionId)))
                 {
                     _logger.LogWarning("Session invalidated - UserId: {UserId}", result.UserId);
                     return null;
                 }
 
-                var currentVersion = WithTokenCache(tokenCache => tokenCache.GetUserTokenVersion(result.UserId ?? 0));
+                var currentVersion = await WithTokenCacheAsync(
+                    tokenCache => tokenCache.GetUserTokenVersionAsync(result.UserId ?? 0));
                 if (currentVersion.HasValue && currentVersion.Value != result.TokenVersion)
                 {
                     _logger.LogWarning("TokenVersion mismatch - UserId: {UserId}, Expected: {Expected}, Got: {Got}",
@@ -157,48 +158,7 @@ namespace Atlas.Infrastructure.Security
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
 
-            var cacheKey = GetSecureCacheKey(token);
-
-            if (_cache.TryGetValue<TokenInfo>(cacheKey, out var cachedInfo) && cachedInfo != null)
-            {
-                if (!cachedInfo.IsExpired)
-                {
-                    // 只检查Session黑名单
-                    if (!string.IsNullOrEmpty(cachedInfo.SessionId) &&
-                        !WithTokenCache(tokenCache => tokenCache.IsSessionValid(cachedInfo.SessionId)))
-                    {
-                        _cache.Remove(cacheKey);
-                        _logger.LogWarning("Session invalidated - UserId: {UserId}", cachedInfo.UserId);
-                        return null;
-                    }
-                    return cachedInfo;
-                }
-
-                _cache.Remove(cacheKey);
-            }
-
-            var result = ValidateTokenCore(token);
-
-            if (result != null)
-            {
-                if (!string.IsNullOrEmpty(result.SessionId) &&
-                    !WithTokenCache(tokenCache => tokenCache.IsSessionValid(result.SessionId)))
-                {
-                    _logger.LogWarning("Session invalidated - UserId: {UserId}", result.UserId);
-                    return null;
-                }
-
-                var currentVersion = WithTokenCache(tokenCache => tokenCache.GetUserTokenVersion(result.UserId ?? 0));
-                if (currentVersion.HasValue && currentVersion.Value != result.TokenVersion)
-                {
-                    _logger.LogWarning("TokenVersion mismatch - UserId: {UserId}", result.UserId);
-                    return null;
-                }
-
-                _cache.Set(cacheKey, result, TimeSpan.FromSeconds(30));
-            }
-
-            return result;
+            return ValidateTokenCore(token);
         }
 
         private static string GetSecureCacheKey(string token)
@@ -208,11 +168,11 @@ namespace Atlas.Infrastructure.Security
             return $"token_{Convert.ToBase64String(hashBytes, 0, 16)}";
         }
 
-        private T WithTokenCache<T>(Func<ITokenCacheService, T> action)
+        private async Task<T> WithTokenCacheAsync<T>(Func<ITokenCacheService, Task<T>> action)
         {
             using var scope = _scopeFactory.CreateScope();
             var tokenCache = scope.ServiceProvider.GetRequiredService<ITokenCacheService>();
-            return action(tokenCache);
+            return await action(tokenCache);
         }
 
         private TokenInfo? ValidateTokenCore(string token)

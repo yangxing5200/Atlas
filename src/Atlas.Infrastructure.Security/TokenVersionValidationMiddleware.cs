@@ -81,7 +81,7 @@ namespace Atlas.Infrastructure.Security
                 // 先检查 Session 黑名单：这是最高频的主动失效路径，通常只访问本地缓存。
                 if (!string.IsNullOrEmpty(sessionIdClaim))
                 {
-                    if (!tokenCache.IsSessionValid(sessionIdClaim))
+                    if (!await tokenCache.IsSessionValidAsync(sessionIdClaim, context.RequestAborted))
                     {
                         _logger.LogWarning(
                             "Session invalidated - UserId: {UserId}, SessionId: {SessionId}",
@@ -92,7 +92,7 @@ namespace Atlas.Infrastructure.Security
                 }
 
                 // 再检查缓存中的 TokenVersion，避免每个请求都访问租户数据库。
-                var cachedVersion = tokenCache.GetUserTokenVersion(userId);
+                var cachedVersion = await tokenCache.GetUserTokenVersionAsync(userId, context.RequestAborted);
 
                 if (cachedVersion.HasValue)
                 {
@@ -128,12 +128,12 @@ namespace Atlas.Infrastructure.Security
                         _logger.LogWarning(
                             "TokenVersion mismatch (db) - UserId: {UserId}, Token: {TokenVersion}, Current: {CurrentVersion}",
                             userId, tokenVersion, currentVersion);
-                        tokenCache.InvalidateUserTokens(userId); // Clean dirty cache
+                        await tokenCache.InvalidateUserTokensAsync(userId, context.RequestAborted); // Clean dirty cache
                         await HandleInvalidToken(context);
                         return;
                     }
 
-                    tokenCache.SetUserTokenVersion(userId, currentVersion);
+                    await tokenCache.SetUserTokenVersionAsync(userId, currentVersion, context.RequestAborted);
                     _logger.LogDebug("TokenVersion validated from DB - UserId: {UserId}", userId);
                 }
             }

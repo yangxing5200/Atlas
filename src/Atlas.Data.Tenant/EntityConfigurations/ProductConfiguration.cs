@@ -2,7 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using Atlas.Core.Entities.Tenant;
 
-namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
+namespace Atlas.Data.Tenant.EntityConfigurations
 {
     public class ProductConfiguration : SharedEntityConfiguration<Product>
     {

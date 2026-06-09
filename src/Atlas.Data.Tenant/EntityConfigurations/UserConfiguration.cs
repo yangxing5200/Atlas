@@ -8,7 +8,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Atlas.Data.Tenant.Migrations.EntityConfigurations
+namespace Atlas.Data.Tenant.EntityConfigurations
 {
     // ========================================
     // User 实体配置

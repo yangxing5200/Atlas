@@ -46,6 +46,8 @@ internal sealed class AtlasBuiltInModule : AtlasModule
     {
         var services = context.Services;
 
+        services.TryAddScoped<Atlas.Core.Context.ITenantExecutionContext>(sp => sp.GetRequiredService<ICurrentIdentity>());
+        services.AddScoped<ITenantConnectionDirectory, TenantConnectionDirectory>();
         services.AddScoped<ITenantDbConnProvider, TenantDbConnProvider>();
         services.AddScoped<ITenantDbContextFactory, TenantDbContextFactory>();
 
@@ -79,6 +81,14 @@ internal sealed class AtlasBuiltInModule : AtlasModule
         services.AddScoped<ITenantSchemaMigrationService, TenantSchemaMigrationService>();
         services.AddScoped<ITenantProvisioningService, TenantProvisioningService>();
         services.AddScoped<IStoreService, StoreService>();
+        services.AddScoped<IUserStoreAccessService, UserStoreAccessService>();
+        services.AddScoped<IUserSecurityAuditWriter, UserSecurityAuditWriter>();
+        services.AddScoped<IUserLoginAuditWriter, UserLoginAuditWriter>();
+        services.AddScoped<IUserPasswordService, UserPasswordService>();
+        services.AddScoped<IUserAuthService, UserAuthService>();
+        services.AddScoped<IUserManagementService, UserManagementService>();
+        services.AddScoped<IUserAssignmentService, UserAssignmentService>();
+        services.AddScoped<IUserSessionService, UserSessionService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IUserSensitiveDataRevealService, UserSensitiveDataRevealService>();
         services.AddScoped<IUserLoginLogService, UserLoginLogService>();

@@ -57,14 +57,16 @@ namespace Atlas.Infrastructure.Caching.Core
             // L1 providers that own process-level state subscribe once instead.
         }
 
-        // ================= Raw-key synchronous API =================
+        // ================= Asynchronous API =================
 
-        public T? Get<T>(string key)
+        public async Task<T?> GetAsync<T>(
+            string key,
+            CancellationToken cancellationToken = default)
         {
             ValidateRawKey(key);
             Interlocked.Increment(ref _totalGets);
 
-            var data = _provider.GetAsync(key).GetAwaiter().GetResult();
+            var data = await _provider.GetAsync(key, cancellationToken);
             if (data == null)
             {
                 Interlocked.Increment(ref _totalMisses);
@@ -76,83 +78,42 @@ namespace Atlas.Infrastructure.Caching.Core
             return value;
         }
 
-        public void Set<T>(string key, T value, TimeSpan? expiration = null)
+        public async Task SetAsync<T>(
+            string key,
+            T value,
+            TimeSpan? expiration = null,
+            CancellationToken cancellationToken = default)
         {
             ValidateRawKey(key);
             ArgumentNullException.ThrowIfNull(value);
             Interlocked.Increment(ref _totalSets);
 
             var data = _serializer.Serialize(value);
-            _provider.SetAsync(key, data, expiration).GetAwaiter().GetResult();
+            await _provider.SetAsync(key, data, expiration, cancellationToken);
         }
 
-        public bool Remove(string key)
+        public async Task<bool> RemoveAsync(
+            string key,
+            CancellationToken cancellationToken = default)
         {
             ValidateRawKey(key);
-            var removed = _provider.RemoveAsync(key).GetAwaiter().GetResult();
+            var removed = await _provider.RemoveAsync(key, cancellationToken);
 
-            // Synchronous callers cannot await the notification, so publish in the background.
             if (removed && _invalidationBus != null)
             {
-                _ = _invalidationBus.PublishInvalidationAsync(key);
+                await _invalidationBus.PublishInvalidationAsync(key);
             }
 
             return removed;
         }
 
-        public bool Exists(string key)
+        public async Task<bool> ExistsAsync(
+            string key,
+            CancellationToken cancellationToken = default)
         {
             ValidateRawKey(key);
-            return _provider.ExistsAsync(key).GetAwaiter().GetResult();
+            return await _provider.ExistsAsync(key, cancellationToken);
         }
-
-        // ================= Definition-based synchronous API =================
-
-        public T? Get<T>(CacheKeyDefinition definition, object? instanceValue = null)
-        {
-            return GetAsync<T>(definition, instanceValue).GetAwaiter().GetResult();
-        }
-
-        public void Set<T>(
-            CacheKeyDefinition definition,
-            T value,
-            object? instanceValue = null,
-            CacheOptions? optionsOverride = null)
-        {
-            SetAsync(definition, value, instanceValue, optionsOverride).GetAwaiter().GetResult();
-        }
-
-        public CacheResult<T> GetOrSet<T>(
-            CacheKeyDefinition definition,
-            Func<T> factory,
-            object? instanceValue = null,
-            CacheOptions? optionsOverride = null)
-        {
-            if (definition == null)
-                throw new ArgumentNullException(nameof(definition));
-            if (factory == null)
-                throw new ArgumentNullException(nameof(factory));
-
-            return GetOrSetAsync(
-                    definition,
-                    () => Task.FromResult(factory()),
-                    instanceValue,
-                    optionsOverride)
-                .GetAwaiter()
-                .GetResult();
-        }
-
-        public bool Remove(CacheKeyDefinition definition, object? instanceValue = null)
-        {
-            return RemoveAsync(definition, instanceValue).GetAwaiter().GetResult();
-        }
-
-        public bool Exists(CacheKeyDefinition definition, object? instanceValue = null)
-        {
-            return ExistsAsync(definition, instanceValue).GetAwaiter().GetResult();
-        }
-
-        // ================= Asynchronous API =================
 
         public async Task<T?> GetAsync<T>(
             CacheKeyDefinition definition,

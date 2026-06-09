@@ -223,7 +223,7 @@ public sealed class TenantBoundaryAnalyzerTests
     }
 
     [Fact]
-    public async Task Tenant_runtime_namespace_is_not_reported()
+    public async Task Tenant_runtime_namespace_in_business_assembly_reports_boundary_diagnostics()
     {
         var diagnostics = await AnalyzeAsync(
             TenantInfrastructureSource +
@@ -256,6 +256,46 @@ public sealed class TenantBoundaryAnalyzerTests
             }
             """,
             "Atlas.Services.Tenant");
+
+        Assert.Contains(diagnostics, diagnostic => diagnostic.Id == "ATL001");
+        Assert.Contains(diagnostics, diagnostic => diagnostic.Id == "ATL002");
+        Assert.Contains(diagnostics, diagnostic => diagnostic.Id == "ATL003");
+    }
+
+    [Fact]
+    public async Task Tenant_runtime_project_is_not_reported()
+    {
+        var diagnostics = await AnalyzeAsync(
+            TenantInfrastructureSource +
+            """
+
+            namespace Atlas.Services.Tenant.Runtime.Messaging
+            {
+                using Atlas.Data.Tenant.Context;
+                using Microsoft.EntityFrameworkCore;
+
+                public sealed class Product
+                {
+                    public long Id { get; set; }
+                }
+
+                public sealed class ApprovedRuntimeService
+                {
+                    private readonly AtlasTenantDbContext _db;
+
+                    public ApprovedRuntimeService(AtlasTenantDbContext db)
+                    {
+                        _db = db;
+                    }
+
+                    public object Query()
+                    {
+                        return _db.Set<Product>().FromSqlRaw("select * from Products");
+                    }
+                }
+            }
+            """,
+            "Atlas.Services.Tenant.Runtime");
 
         Assert.Empty(diagnostics);
     }

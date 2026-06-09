@@ -66,37 +66,48 @@ namespace Atlas.Infrastructure.Caching.Tests.Core
                 _mockInvalidator.Object);
         }
 
-        #region Sync Definition API Tests
+        #region Interface Shape Tests
 
         [Fact]
-        public void Get_WithRawKey_UsesConfiguredProvider()
+        public void ICacheService_DoesNotExposeSynchronousCacheMethods()
         {
-            // Arrange
+            var syncMethods = typeof(ICacheService)
+                .GetMethods()
+                .Where(method => !method.Name.EndsWith("Async", StringComparison.Ordinal))
+                .Select(method => method.Name)
+                .Distinct()
+                .ToList();
+
+            syncMethods.Should().BeEmpty();
+        }
+
+        #endregion
+
+        #region Raw Key Async Tests
+
+        [Fact]
+        public async Task GetAsync_WithRawKey_UsesConfiguredProvider()
+        {
             var key = "raw:product:1";
             var product = TestDataGenerator.CreateProduct(1, "Raw Product");
             _mockProvider.Setup(x => x.GetAsync(key, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(_serializer.Serialize(product));
 
-            // Act
-            var result = _cacheService.Get<TestProduct>(key);
+            var result = await _cacheService.GetAsync<TestProduct>(key);
 
-            // Assert
             result.Should().NotBeNull();
             result!.Id.Should().Be(product.Id);
             _mockProvider.Verify(x => x.GetAsync(key, It.IsAny<CancellationToken>()), Times.Once);
         }
 
         [Fact]
-        public void Set_WithRawKey_UsesConfiguredProvider()
+        public async Task SetAsync_WithRawKey_UsesConfiguredProvider()
         {
-            // Arrange
             var key = "raw:product:1";
             var product = TestDataGenerator.CreateProduct(1, "Raw Product");
 
-            // Act
-            _cacheService.Set(key, product, TimeSpan.FromMinutes(5));
+            await _cacheService.SetAsync(key, product, TimeSpan.FromMinutes(5));
 
-            // Assert
             _mockProvider.Verify(x => x.SetAsync(
                 key,
                 It.IsAny<byte[]>(),
@@ -105,94 +116,29 @@ namespace Atlas.Infrastructure.Caching.Tests.Core
         }
 
         [Fact]
-        public void Remove_WithRawKey_UsesConfiguredProvider()
+        public async Task RemoveAsync_WithRawKey_UsesConfiguredProvider()
         {
-            // Arrange
             var key = "raw:product:1";
             _mockProvider.Setup(x => x.RemoveAsync(key, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(true);
 
-            // Act
-            var removed = _cacheService.Remove(key);
+            var removed = await _cacheService.RemoveAsync(key);
 
-            // Assert
             removed.Should().BeTrue();
             _mockProvider.Verify(x => x.RemoveAsync(key, It.IsAny<CancellationToken>()), Times.Once);
         }
 
         [Fact]
-        public void Exists_WithRawKey_UsesConfiguredProvider()
+        public async Task ExistsAsync_WithRawKey_UsesConfiguredProvider()
         {
-            // Arrange
             var key = "raw:product:1";
             _mockProvider.Setup(x => x.ExistsAsync(key, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(true);
 
-            // Act
-            var exists = _cacheService.Exists(key);
+            var exists = await _cacheService.ExistsAsync(key);
 
-            // Assert
             exists.Should().BeTrue();
             _mockProvider.Verify(x => x.ExistsAsync(key, It.IsAny<CancellationToken>()), Times.Once);
-        }
-
-        [Fact]
-        public void Get_WithDefinition_UsesConfiguredProvider()
-        {
-            // Arrange
-            var definition = TestHelpers.CreateKeyDefinition();
-            var product = TestDataGenerator.CreateProduct(1, "Sync Product");
-            var cachedValue = new CachedValue<TestProduct>
-            {
-                Value = product,
-                TagVersions = new Dictionary<string, long>(),
-                CachedAt = DateTime.UtcNow
-            };
-
-            _mockProvider.Setup(x => x.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(_serializer.Serialize(cachedValue));
-
-            // Act
-            var result = _cacheService.Get<TestProduct>(definition, 1);
-
-            // Assert
-            result.Should().NotBeNull();
-            result!.Id.Should().Be(product.Id);
-            _mockProvider.Verify(x => x.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-        }
-
-        [Fact]
-        public void Set_WithDefinition_UsesConfiguredProvider()
-        {
-            // Arrange
-            var definition = TestHelpers.CreateKeyDefinition();
-            var product = TestDataGenerator.CreateProduct(1, "Sync Product");
-
-            // Act
-            _cacheService.Set(definition, product, 1);
-
-            // Assert
-            _mockProvider.Verify(x => x.SetAsync(
-                It.IsAny<string>(),
-                It.IsAny<byte[]>(),
-                It.IsAny<TimeSpan?>(),
-                It.IsAny<CancellationToken>()), Times.Once);
-        }
-
-        [Fact]
-        public void Exists_WithDefinition_UsesConfiguredProvider()
-        {
-            // Arrange
-            var definition = TestHelpers.CreateKeyDefinition();
-            _mockProvider.Setup(x => x.ExistsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(true);
-
-            // Act
-            var exists = _cacheService.Exists(definition, 1);
-
-            // Assert
-            exists.Should().BeTrue();
-            _mockProvider.Verify(x => x.ExistsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
         }
 
         #endregion

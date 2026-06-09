@@ -103,26 +103,24 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
             ct);
     }
 
-    public Task InvalidateUserPermissionsAsync(
+    public async Task InvalidateUserPermissionsAsync(
         long tenantId,
         long userId,
         long? storeId = null,
         CancellationToken ct = default)
     {
         if (tenantId <= 0 || userId <= 0)
-            return Task.CompletedTask;
+            return;
 
         var versionKey = BuildPermissionVersionCacheKey(tenantId, userId);
 
         // Store permission caches include tenant-wide roles, so role changes invalidate by user version.
-        _cache.Remove(versionKey);
-        _cache.Set(versionKey, Guid.NewGuid().ToString("N"), PermissionVersionCacheExpiration);
+        await _cache.RemoveAsync(versionKey, ct);
+        await _cache.SetAsync(versionKey, Guid.NewGuid().ToString("N"), PermissionVersionCacheExpiration, ct);
 
-        _cache.Remove(BuildLegacyPermissionCacheKey(tenantId, userId, null));
+        await _cache.RemoveAsync(BuildLegacyPermissionCacheKey(tenantId, userId, null), ct);
         if (storeId.HasValue)
-            _cache.Remove(BuildLegacyPermissionCacheKey(tenantId, userId, storeId.Value));
-
-        return Task.CompletedTask;
+            await _cache.RemoveAsync(BuildLegacyPermissionCacheKey(tenantId, userId, storeId.Value), ct);
     }
 
     public async Task SeedTenantAsync(long tenantId, CancellationToken ct = default)
@@ -227,9 +225,9 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
         long? storeId,
         CancellationToken ct)
     {
-        var cacheVersion = GetPermissionCacheVersion(tenantId, userId);
+        var cacheVersion = await GetPermissionCacheVersionAsync(tenantId, userId, ct);
         var cacheKey = BuildPermissionCacheKey(tenantId, userId, storeId, cacheVersion);
-        var cached = _cache.Get<string[]>(cacheKey);
+        var cached = await _cache.GetAsync<string[]>(cacheKey, ct);
         if (cached != null)
             return cached;
 
@@ -242,7 +240,7 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
         var roleIds = userRoles.Select(x => x.RoleId).Distinct().ToArray();
         if (roleIds.Length == 0)
         {
-            _cache.Set(cacheKey, Array.Empty<string>(), PermissionCacheExpiration);
+            await _cache.SetAsync(cacheKey, Array.Empty<string>(), PermissionCacheExpiration, ct);
             return Array.Empty<string>();
         }
 
@@ -256,7 +254,7 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
         var enabledRoleIds = roles.Select(x => x.Id).Distinct().ToArray();
         if (enabledRoleIds.Length == 0)
         {
-            _cache.Set(cacheKey, Array.Empty<string>(), PermissionCacheExpiration);
+            await _cache.SetAsync(cacheKey, Array.Empty<string>(), PermissionCacheExpiration, ct);
             return Array.Empty<string>();
         }
 
@@ -275,7 +273,7 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
             .ToArray();
         if (permissionIds.Length == 0)
         {
-            _cache.Set(cacheKey, Array.Empty<string>(), PermissionCacheExpiration);
+            await _cache.SetAsync(cacheKey, Array.Empty<string>(), PermissionCacheExpiration, ct);
             return Array.Empty<string>();
         }
 
@@ -292,13 +290,13 @@ public sealed class RbacPermissionService : IPermissionChecker, IRbacSeedService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        _cache.Set(cacheKey, result, PermissionCacheExpiration);
+        await _cache.SetAsync(cacheKey, result, PermissionCacheExpiration, ct);
         return result;
     }
 
-    private string GetPermissionCacheVersion(long tenantId, long userId)
+    private async Task<string> GetPermissionCacheVersionAsync(long tenantId, long userId, CancellationToken ct)
     {
-        var version = _cache.Get<string>(BuildPermissionVersionCacheKey(tenantId, userId));
+        var version = await _cache.GetAsync<string>(BuildPermissionVersionCacheKey(tenantId, userId), ct);
         return string.IsNullOrWhiteSpace(version) ? DefaultPermissionCacheVersion : version;
     }
 

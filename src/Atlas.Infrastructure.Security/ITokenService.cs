@@ -23,27 +23,27 @@ namespace Atlas.Infrastructure.Security
         /// <summary>
         /// 获取用户 TokenVersion（优先缓存，未命中返回 null）
         /// </summary>
-        int? GetUserTokenVersion(long userId);
+        Task<int?> GetUserTokenVersionAsync(long userId, CancellationToken ct = default);
 
         /// <summary>
         /// 设置用户 TokenVersion 到缓存
         /// </summary>
-        void SetUserTokenVersion(long userId, int version);
+        Task SetUserTokenVersionAsync(long userId, int version, CancellationToken ct = default);
 
         /// <summary>
         /// 清除用户 TokenVersion 缓存（使所有 token 失效）
         /// </summary>
-        void InvalidateUserTokens(long userId);
+        Task InvalidateUserTokensAsync(long userId, CancellationToken ct = default);
 
         /// <summary>
         /// 检查 Session 是否有效（不在黑名单中）
         /// </summary>
-        bool IsSessionValid(string sessionId);
+        Task<bool> IsSessionValidAsync(string sessionId, CancellationToken ct = default);
 
         /// <summary>
         /// 加入 Session 黑名单（标记为已登出）
         /// </summary>
-        void InvalidateSession(string sessionId);
+        Task InvalidateSessionAsync(string sessionId, CancellationToken ct = default);
     }
 
     public interface IRefreshTokenService
