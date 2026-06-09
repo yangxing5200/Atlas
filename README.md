@@ -103,6 +103,8 @@ dotnet run --project samples/Atlas.Sample.WebApi
 graph TB
     subgraph Application["📱 Application Layer"]
         WebApi["Atlas.WebApi"]
+        Worker["Atlas.Worker"]
+        MigrationJob["Atlas.MigrationJob"]
         Sample["Atlas.Sample.WebApi"]
     end
     
@@ -110,6 +112,7 @@ graph TB
         ServicesAbs["Atlas.Services.Abstractions"]
         ServicesImpl["Atlas.Services"]
         ServicesTenant["Atlas.Services.Tenant"]
+        ServicesTenantRuntime["Atlas.Services.Tenant.Runtime"]
     end
     
     subgraph Data["💾 Data Layer"]
@@ -171,6 +174,7 @@ Atlas/
 │   ├── ⚙️ Atlas.Services.Abstractions/   # 服务抽象
 │   ├── ⚙️ Atlas.Services/                # 服务实现
 │   ├── ⚙️ Atlas.Services.Tenant/         # 租户服务
+│   ├── ⚙️ Atlas.Services.Tenant.Runtime/ # 租户运行时服务
 │   ├── 🏗️ Atlas.Infrastructure.Caching/  # 缓存基础设施
 │   ├── 🏗️ Atlas.Infrastructure.Common/   # 通用基础设施
 │   ├── 🏗️ Atlas.Infrastructure.Logging/  # 日志基础设施
@@ -179,7 +183,8 @@ Atlas/
 │   ├── 📨 Atlas.Messaging.RabbitMQ/      # RabbitMQ 消息实现
 │   ├── 🔌 Atlas.Extensions.DependencyInjection/ # DI 扩展
 │   ├── 📱 Atlas.WebApi/                  # 标准 WebAPI 宿主
-│   └── ⚙️ Atlas.Worker/                  # 独立后台 Worker 宿主
+│   ├── ⚙️ Atlas.Worker/                  # 独立后台 Worker 宿主
+│   └── 🧰 Atlas.MigrationJob/            # 租户迁移任务宿主
 └── 📁 tests/                             # 测试项目
     ├── Atlas.Core.Tests/
     ├── Atlas.Data.Tests/
