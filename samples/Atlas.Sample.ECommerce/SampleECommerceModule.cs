@@ -28,6 +28,18 @@ public static class SampleECommercePermissionCodes
 public static class SampleECommerceExportTaskTypes
 {
     public const string ProductList = "sample.ecommerce.product.list";
+    public const string InventoriesRead = "inventory.read";
+    public const string OrdersPlace = "order.place";
+}
+
+public static class SampleECommerceAuthorizationCodes
+{
+    public const string StandardPackage = "atlas.standard";
+    public const string ProductCatalogCapability = "product.catalog";
+    public const string InventoryStockCapability = "inventory.stock";
+    public const string OrderSalesCapability = "order.sales";
+    public const string ProductResource = "product";
+    public const string InventoryResource = "inventory";
 }
 
 public sealed class SampleECommerceModule : AtlasModule
@@ -54,42 +66,43 @@ public sealed class SampleECommerceModule : AtlasModule
     public override void ConfigureAuthorization(AtlasAuthorizationCatalogBuilder builder)
     {
         builder
-            .AddPackage("atlas.standard", "Atlas Standard", AtlasPackageType.Edition)
-            .AddCapability("product.catalog", "Product catalog", "ECommerce")
-            .AddCapability("order.sales", "Sales orders", "ECommerce")
+            .AddPackage(SampleECommerceAuthorizationCodes.StandardPackage, "Atlas Standard", AtlasPackageType.Edition)
+            .AddCapability(SampleECommerceAuthorizationCodes.ProductCatalogCapability, "Product catalog", "ECommerce")
+            .AddCapability(SampleECommerceAuthorizationCodes.InventoryStockCapability, "Inventory stock", "ECommerce")
+            .AddCapability(SampleECommerceAuthorizationCodes.OrderSalesCapability, "Sales orders", "ECommerce")
             .AddPermission(
                 SampleECommercePermissionCodes.ProductsRead,
                 "Read products",
-                "product.catalog",
+                SampleECommerceAuthorizationCodes.ProductCatalogCapability,
                 "Product",
                 PermissionScope.Store,
-                resource: "product",
+                resource: SampleECommerceAuthorizationCodes.ProductResource,
                 action: "read")
             .AddPermission(
                 SampleECommercePermissionCodes.ProductsCreate,
                 "Create products",
-                "product.catalog",
+                SampleECommerceAuthorizationCodes.ProductCatalogCapability,
                 "Product",
                 PermissionScope.Store,
-                resource: "product",
+                resource: SampleECommerceAuthorizationCodes.ProductResource,
                 action: "create",
                 riskLevel: AtlasPermissionRiskLevel.Medium)
             .AddPermission(
                 SampleECommercePermissionCodes.ProductsUpdate,
                 "Update products",
-                "product.catalog",
+                SampleECommerceAuthorizationCodes.ProductCatalogCapability,
                 "Product",
                 PermissionScope.Store,
-                resource: "product",
+                resource: SampleECommerceAuthorizationCodes.ProductResource,
                 action: "update",
                 riskLevel: AtlasPermissionRiskLevel.Medium)
             .AddPermission(
                 SampleECommercePermissionCodes.ProductsDelete,
                 "Delete products",
-                "product.catalog",
+                SampleECommerceAuthorizationCodes.ProductCatalogCapability,
                 "Product",
                 PermissionScope.Store,
-                resource: "product",
+                resource: SampleECommerceAuthorizationCodes.ProductResource,
                 action: "delete",
                 riskLevel: AtlasPermissionRiskLevel.High)
             .AddPermission(
@@ -101,17 +114,31 @@ public sealed class SampleECommerceModule : AtlasModule
                 resource: "product",
                 action: "export",
                 riskLevel: AtlasPermissionRiskLevel.Medium)
+                SampleECommercePermissionCodes.InventoriesRead,
+                "Read inventory",
+                SampleECommerceAuthorizationCodes.InventoryStockCapability,
+                "Inventory",
+                PermissionScope.Store,
+                resource: SampleECommerceAuthorizationCodes.InventoryResource,
+                action: "read")
             .AddPermission(
                 SampleECommercePermissionCodes.OrdersPlace,
                 "Place orders",
-                "order.sales",
+                SampleECommerceAuthorizationCodes.OrderSalesCapability,
                 "Order",
                 PermissionScope.Store,
                 resource: "order",
                 action: "place",
                 riskLevel: AtlasPermissionRiskLevel.Medium)
-            .AddPackageCapability("atlas.standard", "product.catalog")
-            .AddPackageCapability("atlas.standard", "order.sales")
+            .AddPackageCapability(
+                SampleECommerceAuthorizationCodes.StandardPackage,
+                SampleECommerceAuthorizationCodes.ProductCatalogCapability)
+            .AddPackageCapability(
+                SampleECommerceAuthorizationCodes.StandardPackage,
+                SampleECommerceAuthorizationCodes.InventoryStockCapability)
+            .AddPackageCapability(
+                SampleECommerceAuthorizationCodes.StandardPackage,
+                SampleECommerceAuthorizationCodes.OrderSalesCapability)
             .AddMenuItem(
                 "ecommerce.products",
                 "Products",
@@ -119,7 +146,7 @@ public sealed class SampleECommerceModule : AtlasModule
                 visibleWhen: AtlasAuthorizationCondition.RequirePermission(SampleECommercePermissionCodes.ProductsRead),
                 sortOrder: 200)
             .AddDataResource(
-                "product",
+                SampleECommerceAuthorizationCodes.ProductResource,
                 "Product",
                 entityType: typeof(Product).FullName,
                 storeField: "StoreId",
@@ -129,7 +156,7 @@ public sealed class SampleECommerceModule : AtlasModule
                     AtlasDataScopeType.SharedStores
                 })
             .AddDataResource(
-                "inventory",
+                SampleECommerceAuthorizationCodes.InventoryResource,
                 "Inventory",
                 entityType: typeof(Inventory).FullName,
                 storeField: "StoreId",
