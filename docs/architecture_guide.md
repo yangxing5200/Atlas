@@ -197,7 +197,12 @@ Atlas.Data 负责数据访问、ORM 实现、仓储和数据库上下文。
 
 ## ✔ Atlas.Infrastructure.Common
 - 文件操作
-- HttpClient 工具
+- 通用上下文和轻量基础设施工具
+
+## ✔ Atlas.Infrastructure.Http
+- 第三方 HTTP typed client 基建
+- 超时、重试、熔断、限流
+- 出站日志脱敏和统一错误映射
 - 时间、配置类实现
 
 ## ✔ Atlas.Infrastructure.Logging
@@ -297,7 +302,6 @@ Application 依赖所有下层，不被任何层依赖
 
 该文档用于作为团队开发、模块放置、架构规范的统一指导。  
 如项目新增模块，建议参考以上规范确保结构清晰、一致、可扩展。
-
 
 
 

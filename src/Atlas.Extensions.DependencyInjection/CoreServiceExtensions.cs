@@ -9,6 +9,7 @@ using Atlas.Exporting;
 using Atlas.Infrastructure.Caching.Abstractions;
 using Atlas.Infrastructure.Caching.Extensions;
 using Atlas.Infrastructure.Caching.Locking;
+using Atlas.Infrastructure.Http.Extensions;
 using Atlas.Messaging.Abstractions;
 using Atlas.Messaging.RabbitMQ;
 using Atlas.Services.Tenant;
@@ -236,6 +237,7 @@ public static class AtlasCoreServiceExtensions
         services.AddAtlasDatabase(configuration);
         services.AddAtlasIdentity();
         services.AddAtlasCache(configuration);
+        services.AddAtlasHttp(configuration);
         services.AddAtlasMessagingRuntime(
             configuration,
             runtimeOptions,
