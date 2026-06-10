@@ -60,3 +60,66 @@ Authorization: Bearer {{directToken}}
 Accept: application/json
 
 ###
+
+GET {{Atlas.Sample.WebApi_HostAddress}}/api/external-http-demo/products/SKU-1001/sourcing-summary
+Accept: application/json
+
+###
+
+# First upstream attempt returns 503, Atlas HTTP client retries the idempotent GET and succeeds.
+GET {{Atlas.Sample.WebApi_HostAddress}}/api/external-http-demo/products/SKU-RETRY/sourcing-summary?unstableSupplier=true
+Accept: application/json
+
+###
+
+# Supplier exists as a dependency, but does not know this SKU. Business API maps it to a controlled response.
+GET {{Atlas.Sample.WebApi_HostAddress}}/api/external-http-demo/products/SKU-MISSING-SUPPLIER/sourcing-summary
+Accept: application/json
+
+###
+
+# Local catalog misses this SKU before any third-party call is made.
+GET {{Atlas.Sample.WebApi_HostAddress}}/api/external-http-demo/products/SKU-NOT-IN-ATLAS/sourcing-summary
+Accept: application/json
+
+###
+
+# Third-party stock is below Atlas' business threshold, so the business response marks it as not sellable.
+GET {{Atlas.Sample.WebApi_HostAddress}}/api/external-http-demo/products/SKU-LOWSTOCK/sourcing-summary
+Accept: application/json
+
+###
+
+POST {{Atlas.Sample.WebApi_HostAddress}}/api/payment-demo/orders/90001/pay
+Content-Type: application/json
+Accept: application/json
+
+{
+  "paymentChannel": "PaymentX",
+  "simulateTransientFailure": false
+}
+
+###
+
+# PaymentX sandbox returns 503 once; Atlas retries because the request has Idempotency-Key.
+POST {{Atlas.Sample.WebApi_HostAddress}}/api/payment-demo/orders/90002/pay
+Content-Type: application/json
+Accept: application/json
+
+{
+  "paymentChannel": "PaymentX",
+  "simulateTransientFailure": true
+}
+
+###
+
+POST {{Atlas.Sample.WebApi_HostAddress}}/api/payment-demo/orders/99999/pay
+Content-Type: application/json
+Accept: application/json
+
+{
+  "paymentChannel": "PaymentX",
+  "simulateTransientFailure": false
+}
+
+###
