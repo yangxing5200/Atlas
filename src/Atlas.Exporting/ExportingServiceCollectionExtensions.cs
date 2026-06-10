@@ -1,6 +1,7 @@
 using Atlas.BackgroundTasks;
 using Atlas.Core.Services;
 using Atlas.Exporting.Cleanup;
+using Atlas.Exporting.Reconciliation;
 using Atlas.Exporting.Storage;
 using Atlas.Exporting.Writing;
 using Microsoft.Extensions.Configuration;
@@ -28,6 +29,7 @@ public static class ExportingServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Scoped<IExportFormatWriter, CsvExportFormatWriter>());
         services.TryAddEnumerable(ServiceDescriptor.Scoped<IBackgroundJobHandler, ExportJobHandler>());
         services.TryAddEnumerable(ServiceDescriptor.Scoped<IRecurringTask, ExportArtifactCleanupTask>());
+        services.TryAddEnumerable(ServiceDescriptor.Scoped<IRecurringTask, ExportJobReconciliationTask>());
 
         return services;
     }
@@ -43,7 +45,11 @@ public static class ExportingServiceCollectionExtensions
                !string.IsNullOrWhiteSpace(options.DefaultFormat) &&
                !string.IsNullOrWhiteSpace(options.LocalStorage.RootPath) &&
                options.Cleanup.IntervalMinutes > 0 &&
-               options.Cleanup.BatchSize > 0;
+               options.Cleanup.BatchSize > 0 &&
+               options.Reconciliation.IntervalMinutes > 0 &&
+               options.Reconciliation.StalePendingMinutes > 0 &&
+               options.Reconciliation.StaleRunningMinutes > 0 &&
+               options.Reconciliation.BatchSize > 0;
     }
 
     private static bool IsSupportedStorageProvider(string? provider)

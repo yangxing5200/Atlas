@@ -36,6 +36,8 @@
       <ProjectReference Include="..\..\src\Atlas.Data.Global.Migrations\Atlas.Data.Global.Migrations.csproj" />
       <ProjectReference Include="..\..\src\Atlas.Data.Tenant\Atlas.Data.Tenant.csproj" />
       <ProjectReference Include="..\..\src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj" />
+      <ProjectReference Include="..\..\src\Atlas.BackgroundTasks\Atlas.BackgroundTasks.csproj" />
+      <ProjectReference Include="..\..\src\Atlas.Exporting\Atlas.Exporting.csproj" />
       <ProjectReference Include="..\..\src\Atlas.Infrastructure.Caching\Atlas.Infrastructure.Caching.csproj" />
     </ItemGroup>
 
