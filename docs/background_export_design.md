@@ -1084,6 +1084,21 @@ public sealed class ExportArtifactCleanupTask : IRecurringTask
 
 清理任务必须分页执行。
 
+新增补偿任务：
+
+```csharp
+public sealed class ExportJobReconciliationTask : IRecurringTask
+```
+
+职责：
+
+1. 扫描长时间停留在 `Pending` 但缺少有效 `BackgroundJob` 的导出记录。
+2. 先按 `ExportJobId` 从后台任务 payload 反查已有任务，处理“后台任务已创建但未回填 `BackgroundJobId`”的崩溃窗口。
+3. 对缺失 `BackgroundJobId` 或指向不存在后台任务的记录重新入队。
+4. 对后台任务已经进入 `Dead` 或 `Canceled` 的导出记录同步标记为 `Failed`。
+5. 使用 `export:generate:{ExportJobId}` 作为补偿入队幂等键，避免重复补建。
+6. provider 或 writer 已不存在时标记 `Failed`，避免持续重试不可恢复任务。
+
 配置：
 
 ```json
@@ -1093,6 +1108,14 @@ public sealed class ExportArtifactCleanupTask : IRecurringTask
       "Enabled": true,
       "IntervalMinutes": 60,
       "BatchSize": 100
+    },
+    "Reconciliation": {
+      "Enabled": true,
+      "IntervalMinutes": 5,
+      "StalePendingMinutes": 1,
+      "StaleRunningMinutes": 60,
+      "BatchSize": 100,
+      "RunOnStartup": false
     }
   }
 }

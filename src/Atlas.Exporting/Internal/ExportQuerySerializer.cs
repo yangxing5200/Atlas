@@ -7,7 +7,7 @@ namespace Atlas.Exporting.Internal;
 
 internal static class ExportQuerySerializer
 {
-    private const string SchemaVersion = "v1";
+    internal const string SchemaVersion = "v1";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 

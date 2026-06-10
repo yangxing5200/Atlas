@@ -1,5 +1,6 @@
 ﻿using Atlas.BackgroundTasks;
 using Atlas.Exporting;
+using Atlas.Exporting.Reconciliation;
 using Atlas.Core.Services;
 using Atlas.Data.Global;
 using Atlas.Extensions.DependencyInjection;
@@ -146,6 +147,9 @@ public sealed class RuntimeModeRegistrationTests
         Assert.Contains(services, service =>
             service.ServiceType == typeof(IBackgroundJobHandler) &&
             service.ImplementationType == typeof(ExportJobHandler));
+        Assert.Contains(services, service =>
+            service.ServiceType == typeof(IRecurringTask) &&
+            service.ImplementationType == typeof(ExportJobReconciliationTask));
     }
 
     [Fact]
