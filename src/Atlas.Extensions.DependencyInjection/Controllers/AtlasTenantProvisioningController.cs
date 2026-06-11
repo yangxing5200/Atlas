@@ -1,20 +1,20 @@
-﻿using Atlas.Services.Tenant;
 using Atlas.Infrastructure.Security;
-using Atlas.Infrastructure.Security.Permissions;
+using Atlas.Services.Tenant;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
-namespace Atlas.Sample.WebApi.Controllers;
+namespace Atlas.Extensions.DependencyInjection.Controllers;
 
 [ApiController]
 [Route("api/tenant-provisioning")]
 [Produces("application/json")]
 [Authorize(Policy = AuthorizationPolicies.RequireTenantProvisioning)]
-public sealed class TenantProvisioningController : ControllerBase
+public sealed class AtlasTenantProvisioningController : ControllerBase
 {
     private readonly ITenantProvisioningService _provisioningService;
 
-    public TenantProvisioningController(ITenantProvisioningService provisioningService)
+    public AtlasTenantProvisioningController(ITenantProvisioningService provisioningService)
     {
         _provisioningService = provisioningService ?? throw new ArgumentNullException(nameof(provisioningService));
     }
@@ -22,12 +22,11 @@ public sealed class TenantProvisioningController : ControllerBase
     [HttpPost]
     [ProducesResponseType(typeof(TenantProvisioningResult), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<TenantProvisioningResult>> Provision(
+    public async Task<ActionResult<TenantProvisioningResult>> ProvisionAsync(
         [FromBody] TenantProvisioningRequest request,
         CancellationToken ct)
     {
         var result = await _provisioningService.ProvisionAsync(request, ct);
         return Created($"/api/tenant-provisioning/{result.TenantId}", result);
     }
-
 }

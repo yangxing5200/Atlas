@@ -14,6 +14,7 @@ internal sealed class AtlasModuleCatalog
         ControllerAssemblies = GetDistinctAssemblies(modules, module => module.ControllerAssemblies);
         ConsumerAssemblies = GetDistinctAssemblies(modules, module => module.ConsumerAssemblies);
         AutoMapperAssemblies = GetDistinctAssemblies(modules, module => module.AutoMapperAssemblies);
+        EntityConfigurationAssemblies = GetDistinctAssemblies(modules, module => module.EntityConfigurationAssemblies);
         AuthorizationCatalog = BuildAuthorizationCatalog(modules);
     }
 
@@ -26,6 +27,8 @@ internal sealed class AtlasModuleCatalog
     public IReadOnlyCollection<Assembly> ConsumerAssemblies { get; }
 
     public IReadOnlyCollection<Assembly> AutoMapperAssemblies { get; }
+
+    public IReadOnlyCollection<Assembly> EntityConfigurationAssemblies { get; }
 
     public AtlasAuthorizationCatalog AuthorizationCatalog { get; }
 

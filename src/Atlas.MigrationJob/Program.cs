@@ -1,4 +1,5 @@
-﻿using Atlas.Extensions.DependencyInjection;
+using Atlas.Extensions.DependencyInjection;
+using Atlas.Modules.BidOps;
 using Atlas.Services.Tenant.Runtime.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -19,7 +20,9 @@ builder.Configuration["CacheSettings:Provider"] ??= "Memory";
 builder.Configuration["ConnectionStrings:AtlasGlobal"] ??=
     "Server=localhost;Port=3306;Database=atlas_global;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;";
 
-builder.Services.AddAtlasMigration(builder.Configuration);
+builder.Services.AddAtlasMigration(
+    builder.Configuration,
+    modules => modules.AddModulesFromAssembly(typeof(BidOpsModule).Assembly));
 
 using var host = builder.Build();
 using var scope = host.Services.CreateScope();

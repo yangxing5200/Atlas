@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Atlas.BackgroundTasks\Atlas.BackgroundTasks.csproj" />
+    <ProjectReference Include="..\Atlas.Core\Atlas.Core.csproj" />
+    <ProjectReference Include="..\Atlas.Data.Abstractions\Atlas.Data.Abstractions.csproj" />
+    <ProjectReference Include="..\Atlas.Extensions.DependencyInjection\Atlas.Extensions.DependencyInjection.csproj" />
+    <ProjectReference Include="..\Atlas.Infrastructure.Security\Atlas.Infrastructure.Security.csproj" />
+    <ProjectReference Include="..\Atlas.Models.Tenant\Atlas.Models.csproj" />
+  </ItemGroup>
+
+</Project>

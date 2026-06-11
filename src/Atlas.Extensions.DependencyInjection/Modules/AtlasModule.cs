@@ -15,6 +15,8 @@ public abstract class AtlasModule : IAtlasModule
 
     public virtual IReadOnlyCollection<Assembly> AutoMapperAssemblies => new[] { Assembly };
 
+    public virtual IReadOnlyCollection<Assembly> EntityConfigurationAssemblies => new[] { Assembly };
+
     public virtual void AddServices(AtlasModuleContext context)
     {
     }

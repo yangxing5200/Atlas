@@ -15,6 +15,7 @@
     <ProjectReference Include="..\Atlas.Data.Global.Migrations\Atlas.Data.Global.Migrations.csproj" />
     <ProjectReference Include="..\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj" />
     <ProjectReference Include="..\Atlas.Extensions.DependencyInjection\Atlas.Extensions.DependencyInjection.csproj" />
+    <ProjectReference Include="..\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj" />
     <ProjectReference Include="..\Atlas.Services.Tenant\Atlas.Services.Tenant.csproj" />
     <ProjectReference Include="..\Atlas.Services.Tenant.Runtime\Atlas.Services.Tenant.Runtime.csproj" />
   </ItemGroup>

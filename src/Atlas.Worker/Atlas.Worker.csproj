@@ -12,7 +12,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Atlas.Consumers\Atlas.Consumers.csproj" />
+    <ProjectReference Include="..\Atlas.Data.Global.Migrations\Atlas.Data.Global.Migrations.csproj" />
     <ProjectReference Include="..\Atlas.Extensions.DependencyInjection\Atlas.Extensions.DependencyInjection.csproj" />
+    <ProjectReference Include="..\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj" />
   </ItemGroup>
 
 </Project>

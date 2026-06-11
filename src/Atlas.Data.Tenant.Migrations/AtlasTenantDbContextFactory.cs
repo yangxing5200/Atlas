@@ -4,6 +4,7 @@ using Atlas.Data.Tenant.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.Configuration;
+using System.Reflection;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -24,6 +25,8 @@ namespace Atlas.Data.Tenant.Migrations
         /// Environment variable name for tenant database connection string.
         /// </summary>
         private const string ConnectionStringEnvVar = "ATLAS_TENANT_DB_CONNECTION";
+
+        private const string EntityConfigurationAssembliesEnvVar = "ATLAS_TENANT_ENTITY_CONFIGURATION_ASSEMBLIES";
         
         public AtlasTenantDbContext CreateDbContext(string[] args)
         {
@@ -38,7 +41,9 @@ namespace Atlas.Data.Tenant.Migrations
                  options.MigrationsAssembly("Atlas.Data.Tenant.Migrations");
              });
 
-            var context = new AtlasTenantDbContext(optionsBuilder.Options);
+            var context = new AtlasTenantDbContext(
+                optionsBuilder.Options,
+                GetEntityConfigurationAssemblies());
             return context;
         }
         
@@ -79,6 +84,47 @@ namespace Atlas.Data.Tenant.Migrations
             
             // 3. Fall back to default for local development
             return DefaultConnectionString;
+        }
+
+        private static IReadOnlyCollection<Assembly> GetEntityConfigurationAssemblies()
+        {
+            var assemblyNames = new List<string>();
+
+            var envAssemblies = Environment.GetEnvironmentVariable(EntityConfigurationAssembliesEnvVar);
+            if (!string.IsNullOrWhiteSpace(envAssemblies))
+            {
+                assemblyNames.AddRange(SplitAssemblyNames(envAssemblies));
+            }
+
+            try
+            {
+                var basePath = Directory.GetCurrentDirectory();
+                var configuration = new ConfigurationBuilder()
+                    .SetBasePath(basePath)
+                    .AddJsonFile("appsettings.json", optional: true)
+                    .AddJsonFile("appsettings.Development.json", optional: true)
+                    .Build();
+
+                assemblyNames.AddRange(configuration
+                    .GetSection("Atlas:TenantEntityConfigurationAssemblies")
+                    .Get<string[]>() ?? Array.Empty<string>());
+            }
+            catch (Exception)
+            {
+                // Design-time migration runs may not have application configuration available.
+            }
+
+            return assemblyNames
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => name.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(Assembly.Load)
+                .ToArray();
+        }
+
+        private static IEnumerable<string> SplitAssemblyNames(string value)
+        {
+            return value.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         }
     }
 }

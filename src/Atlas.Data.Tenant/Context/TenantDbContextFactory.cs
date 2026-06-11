@@ -25,6 +25,7 @@ namespace Atlas.Data.Tenant.Context
         private readonly ITenantDbConnProvider _connProvider;
         private readonly ICurrentIdentity _currentIdentity;
         private readonly AuditInterceptor _auditInterceptor;
+        private readonly IAtlasTenantEntityConfigurationAssemblyProvider _entityConfigurationAssemblies;
         private readonly ILogger<TenantDbContextFactory> _logger;
 
         private readonly SemaphoreSlim _lock = new(1, 1);
@@ -43,11 +44,13 @@ namespace Atlas.Data.Tenant.Context
             ITenantDbConnProvider connProvider,
             ICurrentIdentity currentIdentity,
             AuditInterceptor auditInterceptor,
+            IAtlasTenantEntityConfigurationAssemblyProvider entityConfigurationAssemblies,
             ILogger<TenantDbContextFactory> logger)
         {
             _connProvider = connProvider;
             _currentIdentity = currentIdentity;
             _auditInterceptor = auditInterceptor;
+            _entityConfigurationAssemblies = entityConfigurationAssemblies;
             _logger = logger;
         }
 
@@ -261,7 +264,9 @@ namespace Atlas.Data.Tenant.Context
                 optionsBuilder.AddInterceptors(_auditInterceptor);
             }
 
-            return new AtlasTenantDbContext(optionsBuilder.Options);
+            return new AtlasTenantDbContext(
+                optionsBuilder.Options,
+                _entityConfigurationAssemblies.Assemblies);
         }
 
         private void ThrowIfDisposed()

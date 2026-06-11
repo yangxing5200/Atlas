@@ -7,6 +7,7 @@ using Atlas.Data.Common.Extensions;
 using Atlas.Data.Tenant;
 using Microsoft.EntityFrameworkCore;
 using Pomelo.EntityFrameworkCore.MySql.Internal;
+using System.Reflection;
 
 namespace Atlas.Data.Tenant.Context
 {
@@ -15,10 +16,17 @@ namespace Atlas.Data.Tenant.Context
     /// </summary>
     public class AtlasTenantDbContext : DbContextBase
     {
+        private readonly IReadOnlyCollection<Assembly> _entityConfigurationAssemblies;
+
         public AtlasTenantDbContext(
-            DbContextOptions<AtlasTenantDbContext> options)
+            DbContextOptions<AtlasTenantDbContext> options,
+            IEnumerable<Assembly>? entityConfigurationAssemblies = null)
             : base(options)
         {
+            _entityConfigurationAssemblies = (entityConfigurationAssemblies ?? Array.Empty<Assembly>())
+                .Where(assembly => assembly is not null)
+                .Distinct()
+                .ToArray();
         }
 
         public IQueryable<TEntity> ScopedSet<TEntity>(IDataScope dataScope)
@@ -56,6 +64,13 @@ namespace Atlas.Data.Tenant.Context
             base.OnModelCreating(modelBuilder);
             // 应用租户数据项目内的实体配置。配置类型必须随运行时数据项目一起发布。
             modelBuilder.ApplyConfigurationsFromAssembly(typeof(AtlasTenantDbContext).Assembly);
+            foreach (var assembly in _entityConfigurationAssemblies)
+            {
+                if (assembly == typeof(AtlasTenantDbContext).Assembly)
+                    continue;
+
+                modelBuilder.ApplyConfigurationsFromAssembly(assembly);
+            }
 
             // 配置ID生成策略
             modelBuilder.ConfigureIdGenerationStrategy();

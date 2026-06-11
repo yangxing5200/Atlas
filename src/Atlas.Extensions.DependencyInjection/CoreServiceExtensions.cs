@@ -4,6 +4,7 @@ using Atlas.Core.Services;
 using Atlas.Core.Telemetry;
 using Atlas.Data.Common.Interceptors;
 using Atlas.Data.Global;
+using Atlas.Data.Tenant.Context;
 using Atlas.Data.Tenant.Identity;
 using Atlas.Exporting;
 using Atlas.Infrastructure.Caching.Abstractions;
@@ -242,6 +243,9 @@ public static class AtlasCoreServiceExtensions
             configuration,
             runtimeOptions,
             CombineAssemblies(messagingConsumerAssemblies, moduleCatalog.ConsumerAssemblies));
+        services.RemoveAll<IAtlasTenantEntityConfigurationAssemblyProvider>();
+        services.AddSingleton<IAtlasTenantEntityConfigurationAssemblyProvider>(
+            new AtlasTenantEntityConfigurationAssemblyProvider(moduleCatalog.EntityConfigurationAssemblies));
         moduleCatalog.AddServices(services, configuration);
         services.AddAtlasModuleMapping(moduleCatalog.AutoMapperAssemblies);
         services.AddAtlasBackgroundTasks(configuration, runtimeOptions);
