@@ -19,6 +19,7 @@ public sealed class AtlasModuleTests
         Assert.Contains(assembly, module.ControllerAssemblies);
         Assert.Contains(assembly, module.ConsumerAssemblies);
         Assert.Contains(assembly, module.AutoMapperAssemblies);
+        Assert.Contains(assembly, module.EntityConfigurationAssemblies);
     }
 
     [Fact]
@@ -47,6 +48,7 @@ public sealed class AtlasModuleTests
         Assert.Contains(assembly, module.ControllerAssemblies);
         Assert.Contains(assembly, module.ConsumerAssemblies);
         Assert.Contains(assembly, module.AutoMapperAssemblies);
+        Assert.Contains(assembly, module.EntityConfigurationAssemblies);
     }
 
     [Fact]

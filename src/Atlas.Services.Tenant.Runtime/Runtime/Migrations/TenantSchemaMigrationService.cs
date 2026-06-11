@@ -15,17 +15,20 @@ public sealed class TenantSchemaMigrationService : ITenantSchemaMigrationService
     private readonly AtlasGlobalDbContext _globalDbContext;
     private readonly ITenantDbConnProvider _tenantConnectionProvider;
     private readonly ITenantSchemaMigrationStateRepository _stateRepository;
+    private readonly IAtlasTenantEntityConfigurationAssemblyProvider _entityConfigurationAssemblies;
     private readonly ILogger<TenantSchemaMigrationService> _logger;
 
     public TenantSchemaMigrationService(
         AtlasGlobalDbContext globalDbContext,
         ITenantDbConnProvider tenantConnectionProvider,
         ITenantSchemaMigrationStateRepository stateRepository,
+        IAtlasTenantEntityConfigurationAssemblyProvider entityConfigurationAssemblies,
         ILogger<TenantSchemaMigrationService> logger)
     {
         _globalDbContext = globalDbContext ?? throw new ArgumentNullException(nameof(globalDbContext));
         _tenantConnectionProvider = tenantConnectionProvider ?? throw new ArgumentNullException(nameof(tenantConnectionProvider));
         _stateRepository = stateRepository ?? throw new ArgumentNullException(nameof(stateRepository));
+        _entityConfigurationAssemblies = entityConfigurationAssemblies ?? throw new ArgumentNullException(nameof(entityConfigurationAssemblies));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -211,7 +214,7 @@ public sealed class TenantSchemaMigrationService : ITenantSchemaMigrationService
                 mysql => mysql.MigrationsAssembly("Atlas.Data.Tenant.Migrations"))
             .Options;
 
-        return new AtlasTenantDbContext(options);
+        return new AtlasTenantDbContext(options, _entityConfigurationAssemblies.Assemblies);
     }
 
     private static string Truncate(string value, int maxLength)

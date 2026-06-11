@@ -15,6 +15,8 @@ public interface IAtlasModule
 
     IReadOnlyCollection<Assembly> AutoMapperAssemblies { get; }
 
+    IReadOnlyCollection<Assembly> EntityConfigurationAssemblies { get; }
+
     void AddServices(AtlasModuleContext context);
 
     void ConfigureAuthorization(AtlasAuthorizationCatalogBuilder builder);

@@ -2,6 +2,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\Atlas.Data.Tenant\Atlas.Data.Tenant.csproj" />
+        <ProjectReference Include="..\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj" />
     </ItemGroup>
 
     <ItemGroup>
