@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Configuration;
+using Atlas.BackgroundTasks.Operations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -51,6 +52,10 @@ public static class BackgroundTaskServiceCollectionExtensions
 
         // 入队客户端始终注册；是否启动 Worker 由配置控制，便于 Web/API 节点只写入任务不消费。
         services.TryAddScoped<IBackgroundJobClient, BackgroundJobClient>();
+        services.TryAddScoped<IBackgroundJobOperationsService, BackgroundJobOperationsService>();
+        services.TryAddScoped<IBackgroundWorkerOperationsService, BackgroundWorkerOperationsService>();
+        services.TryAddSingleton<ISensitiveJsonMasker, SensitiveJsonMasker>();
+        services.TryAddSingleton<BackgroundWorkerHeartbeatState>();
 
         if (recurringOptions.Enabled)
         {
@@ -60,6 +65,11 @@ public static class BackgroundTaskServiceCollectionExtensions
         if (workerOptions.Enabled)
         {
             services.AddHostedService<BackgroundJobWorker>();
+        }
+
+        if (recurringOptions.Enabled || workerOptions.Enabled)
+        {
+            services.AddHostedService<BackgroundWorkerHeartbeatService>();
         }
 
         return services;

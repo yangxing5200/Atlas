@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Atlas.Modules.BidOps;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -164,7 +165,7 @@ Rules:
 - Use only facts present in the public notice text.
 - Keep original Chinese names and requirement text.
 - Do not invent buyer, agency, budget, package, or dates.
-- If package data is absent, return one package with packageNo "UNSPECIFIED" and packageName equal to projectName.
+- If package data is absent, return one package with empty packageNo and packageName equal to projectName.
 - Include qualification, deadline, bid document, warranty, performance, and rejection-risk requirements when present.
 - Fallback deterministic extraction for reference: {{fallbackJson}}
 
@@ -230,12 +231,13 @@ Notice text:
                     }
                 }
 
+                var rootProjectName = FirstNonEmpty(GetString(root, "projectName"), fallback.ProjectName);
                 var packageName = GetString(item, "packageName");
                 packages.Add(new BidOpsPackageExtract(
-                    Trim(EmptyToDefault(GetString(item, "lotNo"), "UNSPECIFIED"), 128),
+                    Trim(GetString(item, "lotNo"), 128),
                     Trim(EmptyToDefault(GetString(item, "lotName"), "未分标段"), 300),
-                    Trim(EmptyToDefault(GetString(item, "packageNo"), "UNSPECIFIED"), 128),
-                    Trim(EmptyToDefault(packageName, GetString(root, "projectName")), 500),
+                    Trim(GetString(item, "packageNo"), 128),
+                    Trim(EmptyToDefault(packageName, rootProjectName), 500),
                     NormalizeCategory(GetString(item, "category")),
                     GetDecimal(item, "quantity"),
                     Trim(GetString(item, "unit"), 64),
@@ -305,9 +307,10 @@ Notice text:
 
     private static string GetString(JsonElement element, string name)
     {
-        return TryGetProperty(element, name, out var value)
+        var raw = TryGetProperty(element, name, out var value)
             ? value.ValueKind == JsonValueKind.String ? value.GetString()?.Trim() ?? string.Empty : value.GetRawText().Trim('"')
             : string.Empty;
+        return BidOpsTextQuality.CleanExtractedValue(raw);
     }
 
     private static decimal? GetDecimal(JsonElement element, string name)
@@ -359,7 +362,21 @@ Notice text:
 
     private static string EmptyToDefault(string value, string fallback)
     {
-        return string.IsNullOrWhiteSpace(value) ? fallback : value;
+        return string.IsNullOrWhiteSpace(value)
+            ? BidOpsTextQuality.CleanExtractedValue(fallback)
+            : BidOpsTextQuality.CleanExtractedValue(value);
+    }
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        foreach (var value in values)
+        {
+            var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+            if (!string.IsNullOrWhiteSpace(cleaned))
+                return cleaned;
+        }
+
+        return string.Empty;
     }
 
     private static decimal ClampConfidence(decimal value)
@@ -392,7 +409,7 @@ Notice text:
 
     private static string Trim(string value, int maxLength)
     {
-        var trimmed = value.Trim();
+        var trimmed = BidOpsTextQuality.CleanExtractedValue(value);
         return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
 
@@ -431,11 +448,17 @@ public static partial class BidOpsDeterministicNoticeParser
         var category = DetectCategory(text, values.First("PUR_TYPE_NAME", "CATEGORY"));
         var region = DetectRegion(title, buyerName, values.First("REGION", "PROVINCE", "PublishOrgName"));
 
+        var lotNo = FirstNonEmpty(
+            values.First("LOT_NO", "BID_SECTION_NO", "SECTION_NO", "LOTNO", "BIDSECTIONNO", "SECTIONNO", "分标编号", "分标号", "标段编号", "标段号"),
+            ExtractLotNo(text));
+        var packageNo = FirstNonEmpty(
+            values.First("PACKAGE_NO", "PKG_NO", "BID_PACKAGE_NO", "PACKAGENO", "PKGNO", "BIDPACKAGENO", "包件编号", "包件号", "包号", "标包编号", "标包号", "分包编号", "分包号"),
+            ExtractPackageNo(text));
         var requirements = ExtractRequirements(text, signupDeadline, bidDeadline, openBidTime);
         var package = new BidOpsPackageExtract(
-            LotNo: FirstNonEmpty(values.First("LOT_NO", "BID_SECTION_NO", "SECTION_NO"), "UNSPECIFIED"),
+            LotNo: lotNo,
             LotName: FirstNonEmpty(values.First("LOT_NAME", "BID_SECTION_NAME", "SECTION_NAME"), "未分标段"),
-            PackageNo: FirstNonEmpty(values.First("PACKAGE_NO", "PKG_NO", "BID_PACKAGE_NO"), "UNSPECIFIED"),
+            PackageNo: packageNo,
             PackageName: projectName,
             Category: category,
             Quantity: null,
@@ -468,7 +491,7 @@ public static partial class BidOpsDeterministicNoticeParser
         if (string.IsNullOrWhiteSpace(value))
             return null;
 
-        var normalized = value
+        var normalized = BidOpsTextQuality.CleanExtractedValue(value)
             .Trim()
             .Replace('年', '-')
             .Replace('月', '-')
@@ -735,13 +758,57 @@ public static partial class BidOpsDeterministicNoticeParser
 
     private static string ExtractProjectCode(string text)
     {
-        var match = ProjectCodeRegex().Match(text);
-        return match.Success ? match.Groups["code"].Value.Trim() : string.Empty;
+        foreach (var candidate in EnumerateTextSources(text))
+        {
+            foreach (Match match in ProjectCodeRegex().Matches(candidate))
+            {
+                var code = NormalizeExtractedCode(match.Groups["code"].Value);
+                if (!IsInvalidProjectCode(code))
+                    return code;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string ExtractLotNo(string text)
+    {
+        return ExtractCode(text, LotNoRegex(), IsInvalidPackageCode);
+    }
+
+    private static string ExtractPackageNo(string text)
+    {
+        return ExtractCode(text, PackageNoRegex(), IsInvalidPackageCode);
+    }
+
+    private static string ExtractCode(
+        string text,
+        Regex regex,
+        Func<string, bool> isInvalid)
+    {
+        foreach (var candidate in EnumerateTextSources(text))
+        {
+            foreach (Match match in regex.Matches(candidate))
+            {
+                var code = NormalizeExtractedCode(match.Groups["code"].Value);
+                if (!isInvalid(code))
+                    return code;
+            }
+        }
+
+        return string.Empty;
     }
 
     private static string FirstNonEmpty(params string[] values)
     {
-        return values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim() ?? string.Empty;
+        foreach (var value in values)
+        {
+            var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+            if (!string.IsNullOrWhiteSpace(cleaned))
+                return cleaned;
+        }
+
+        return string.Empty;
     }
 
     private static bool HasCoreFields(string projectCode, string buyerName, string agencyName)
@@ -757,8 +824,57 @@ public static partial class BidOpsDeterministicNoticeParser
 
     private static string Trim(string value, int maxLength)
     {
-        var trimmed = value.Trim();
+        var trimmed = BidOpsTextQuality.CleanExtractedValue(value);
         return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
+    }
+
+    private static IEnumerable<string> EnumerateTextSources(string text)
+    {
+        yield return text;
+
+        var decoded = System.Net.WebUtility.HtmlDecode(text);
+        if (!string.Equals(decoded, text, StringComparison.Ordinal))
+            yield return decoded;
+
+        var strippedWithSpaces = HtmlTagRegex().Replace(decoded, " ");
+        if (!string.Equals(strippedWithSpaces, text, StringComparison.Ordinal))
+            yield return strippedWithSpaces;
+
+        var strippedWithoutSpaces = HtmlTagRegex().Replace(decoded, string.Empty);
+        if (!string.Equals(strippedWithoutSpaces, text, StringComparison.Ordinal) &&
+            !string.Equals(strippedWithoutSpaces, strippedWithSpaces, StringComparison.Ordinal))
+        {
+            yield return strippedWithoutSpaces;
+        }
+    }
+
+    private static string NormalizeExtractedCode(string value)
+    {
+        var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+        return CodeWhitespaceRegex().Replace(cleaned, string.Empty);
+    }
+
+    private static bool IsInvalidProjectCode(string value)
+    {
+        return string.IsNullOrWhiteSpace(value) ||
+               BidOpsTextQuality.IsUnknownMarker(value) ||
+               BidOpsTextQuality.LooksUnreadablePlaceholder(value) ||
+               value.Equals("ListPublishTime", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("PublishTime", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("Doctype", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("MenuId", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("NoticeId", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("FirstPageDocId", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("ProjectCode", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("SourceUrl", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsInvalidPackageCode(string value)
+    {
+        if (IsInvalidProjectCode(value))
+            return true;
+
+        return ContainsAny(value, "详见", "见附件", "附件", "公告", "正文", "无");
     }
 
     [GeneratedRegex("[。；;\\r\\n]+", RegexOptions.Compiled)]
@@ -770,8 +886,20 @@ public static partial class BidOpsDeterministicNoticeParser
     [GeneratedRegex("\\d+(?:\\.\\d+)?")]
     private static partial Regex NumberRegex();
 
-    [GeneratedRegex("(?:项目编号|招标编号|采购编号|分标编号|PURPRJ_CODE|ProjectCode)[:：\\s]+(?<code>[A-Za-z0-9_.\\-]+)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("<[^>]+>", RegexOptions.Compiled)]
+    private static partial Regex HtmlTagRegex();
+
+    [GeneratedRegex("(?:项[^\\S\\r\\n]*目[^\\S\\r\\n]*编[^\\S\\r\\n]*号|招[^\\S\\r\\n]*标[^\\S\\r\\n]*编[^\\S\\r\\n]*号|采[^\\S\\r\\n]*购[^\\S\\r\\n]*编[^\\S\\r\\n]*号|分[^\\S\\r\\n]*标[^\\S\\r\\n]*编[^\\S\\r\\n]*号|PURPRJ_CODE|ProjectCode)[^\\S\\r\\n]*[:：][^\\S\\r\\n]*(?<code>[A-Za-z0-9_.\\-]+)", RegexOptions.IgnoreCase)]
     private static partial Regex ProjectCodeRegex();
+
+    [GeneratedRegex("(?:分[^\\S\\r\\n]*标[^\\S\\r\\n]*(?:编[^\\S\\r\\n]*)?号|标[^\\S\\r\\n]*段[^\\S\\r\\n]*(?:编[^\\S\\r\\n]*)?号|LOT_NO|BID_SECTION_NO|SECTION_NO)[^\\S\\r\\n]*[:：][^\\S\\r\\n]*(?<code>[\\p{L}\\p{N}_.\\-/]+)", RegexOptions.IgnoreCase)]
+    private static partial Regex LotNoRegex();
+
+    [GeneratedRegex("(?:包[^\\S\\r\\n]*件[^\\S\\r\\n]*(?:编[^\\S\\r\\n]*)?号|包[^\\S\\r\\n]*号|标[^\\S\\r\\n]*包[^\\S\\r\\n]*(?:编[^\\S\\r\\n]*)?号|分[^\\S\\r\\n]*包[^\\S\\r\\n]*(?:编[^\\S\\r\\n]*)?号|PACKAGE_NO|BID_PACKAGE_NO|PKG_NO)[^\\S\\r\\n]*[:：][^\\S\\r\\n]*(?<code>[\\p{L}\\p{N}_.\\-/]+)", RegexOptions.IgnoreCase)]
+    private static partial Regex PackageNoRegex();
+
+    [GeneratedRegex("\\s+", RegexOptions.Compiled)]
+    private static partial Regex CodeWhitespaceRegex();
 
     private sealed class KeyValueBag
     {
@@ -791,7 +919,7 @@ public static partial class BidOpsDeterministicNoticeParser
                     continue;
 
                 var key = line[..separator].Trim();
-                var value = line[(separator + 1)..].Trim();
+                var value = BidOpsTextQuality.CleanExtractedValue(line[(separator + 1)..]);
                 if (key.Length == 0 || value.Length == 0)
                     continue;
 

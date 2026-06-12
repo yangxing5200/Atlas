@@ -1,4 +1,5 @@
 ﻿using Atlas.BackgroundTasks;
+using Atlas.BackgroundTasks.Operations;
 using Atlas.Exporting;
 using Atlas.Exporting.Reconciliation;
 using Atlas.Core.Services;
@@ -75,6 +76,8 @@ public sealed class RuntimeModeRegistrationTests
             enableBackgroundJobWorkerByDefault: false);
 
         Assert.Contains(services, service => service.ServiceType == typeof(IBackgroundJobClient));
+        Assert.Contains(services, service => service.ServiceType == typeof(IBackgroundJobOperationsService));
+        Assert.Contains(services, service => service.ServiceType == typeof(ISensitiveJsonMasker));
         Assert.DoesNotContain(services, IsHostedService<RecurringTaskRunner>);
         Assert.DoesNotContain(services, IsHostedService<BackgroundJobWorker>);
     }

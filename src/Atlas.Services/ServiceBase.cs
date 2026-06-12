@@ -25,18 +25,7 @@ namespace Atlas.Services
             Func<Task<T>> action,
             CancellationToken ct = default)
         {
-            await UnitOfWork.BeginTransactionAsync(ct);
-            try
-            {
-                var result = await action();
-                await UnitOfWork.CommitAsync(ct);
-                return result;
-            }
-            catch
-            {
-                await UnitOfWork.RollbackAsync(ct);
-                throw;
-            }
+            return await UnitOfWork.ExecuteInTransactionAsync(_ => action(), ct);
         }
 
         /// <summary>
@@ -46,17 +35,7 @@ namespace Atlas.Services
             Func<Task> action,
             CancellationToken ct = default)
         {
-            await UnitOfWork.BeginTransactionAsync(ct);
-            try
-            {
-                await action();
-                await UnitOfWork.CommitAsync(ct);
-            }
-            catch
-            {
-                await UnitOfWork.RollbackAsync(ct);
-                throw;
-            }
+            await UnitOfWork.ExecuteInTransactionAsync(_ => action(), ct);
         }
         protected async Task CommitAsync(CancellationToken ct = default)
         {

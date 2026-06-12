@@ -121,6 +121,59 @@ namespace Atlas.Data.Tenant
         }
 
         /// <summary>
+        /// Executes a transaction inside the provider execution strategy.
+        /// Required when MySQL retry-on-failure is enabled.
+        /// </summary>
+        public async Task<T> ExecuteInTransactionAsync<T>(
+            Func<CancellationToken, Task<T>> action,
+            CancellationToken ct = default)
+        {
+            if (action == null) throw new ArgumentNullException(nameof(action));
+            ThrowIfDisposed();
+
+            if (_transaction != null)
+                throw new InvalidOperationException("Transaction already in progress.");
+
+            _dbContext = await EnsureDbContextAsync(ct);
+            var strategy = _dbContext.Database.CreateExecutionStrategy();
+
+            return await strategy.ExecuteAsync(async () =>
+            {
+                await BeginTransactionAsync(ct);
+                try
+                {
+                    var result = await action(ct);
+                    await CommitAsync(ct);
+                    return result;
+                }
+                catch
+                {
+                    await RollbackAsync(CancellationToken.None);
+                    throw;
+                }
+            });
+        }
+
+        /// <summary>
+        /// Executes a transaction inside the provider execution strategy.
+        /// Required when MySQL retry-on-failure is enabled.
+        /// </summary>
+        public async Task ExecuteInTransactionAsync(
+            Func<CancellationToken, Task> action,
+            CancellationToken ct = default)
+        {
+            if (action == null) throw new ArgumentNullException(nameof(action));
+
+            await ExecuteInTransactionAsync<object?>(
+                async token =>
+                {
+                    await action(token);
+                    return null;
+                },
+                ct);
+        }
+
+        /// <summary>
         /// Ensures DbContext is initialized with thread-safe lazy loading.
         /// Uses double-checked locking pattern to prevent race conditions.
         /// </summary>

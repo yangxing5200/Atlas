@@ -42,22 +42,28 @@ public sealed class AttachmentProcessJobHandler : IBackgroundJobHandler
         var result = await _attachments.ProcessRawNoticeAttachmentsAsync(payload.RawNoticeId, ct);
         var raw = await _rawNotices.GetByIdAsync(payload.RawNoticeId, ct);
         var contentHash = raw?.ContentHash ?? "unknown";
+        var parseDeduplicationKey = string.IsNullOrWhiteSpace(payload.ForceParseRunId)
+            ? $"bidops:structured-parse:{BidOpsSystemValues.StructuredParserVersion}:{payload.TenantId}:{payload.RawNoticeId}:{contentHash}"
+            : $"bidops:structured-parse:{BidOpsSystemValues.StructuredParserVersion}:{payload.TenantId}:{payload.RawNoticeId}:manual-reparse:{payload.ForceParseRunId}";
 
         await _jobs.EnqueueAsync(
             new EnqueueBackgroundJobRequest<StructuredParseJobPayload>
             {
                 JobType = BidOpsBackgroundJobTypes.StructuredParse,
                 Queue = BidOpsBackgroundJobQueues.BidOps,
-                JobName = "BidOps structured notice parse",
+                JobName = string.IsNullOrWhiteSpace(payload.ForceParseRunId)
+                    ? "BidOps structured notice parse"
+                    : "BidOps structured notice reparse",
                 TenantId = payload.TenantId,
                 StoreId = payload.StoreId,
-                DeduplicationKey = $"bidops:structured-parse:{BidOpsSystemValues.StructuredParserVersion}:{payload.TenantId}:{payload.RawNoticeId}:{contentHash}",
+                DeduplicationKey = parseDeduplicationKey,
                 Payload = new StructuredParseJobPayload(
                     payload.TenantId,
                     payload.StoreId,
                     payload.UserId,
                     payload.UserName,
-                    payload.RawNoticeId)
+                    payload.RawNoticeId,
+                    payload.ForceParseRunId)
             },
             ct);
 

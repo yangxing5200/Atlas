@@ -39,3 +39,8 @@ coverage.cobertura.xml
 *.log
 *.sql
 *.cache
+
+# Local runtime data
+/logs/
+/var/
+/src/Atlas.Worker/var/

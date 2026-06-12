@@ -20,16 +20,18 @@ namespace Atlas.BackgroundTasks;
 public sealed class BackgroundJobWorker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly BackgroundWorkerHeartbeatState _heartbeatState;
     private readonly ILogger<BackgroundJobWorker> _logger;
     private readonly BackgroundJobWorkerOptions _options;
-    private readonly string _workerId = $"{Environment.MachineName}:{Guid.NewGuid():N}";
 
     public BackgroundJobWorker(
         IServiceScopeFactory scopeFactory,
+        BackgroundWorkerHeartbeatState heartbeatState,
         IOptions<BackgroundJobWorkerOptions> options,
         ILogger<BackgroundJobWorker> logger)
     {
         _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+        _heartbeatState = heartbeatState ?? throw new ArgumentNullException(nameof(heartbeatState));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _options = options?.Value ?? new BackgroundJobWorkerOptions();
     }
@@ -107,6 +109,7 @@ public sealed class BackgroundJobWorker : BackgroundService
 
             // 领取成功后重新加载，确保当前 DbContext 中的实体状态与数据库锁定结果一致。
             await db.Entry(job).ReloadAsync(ct);
+            _heartbeatState.SetCurrentJob(job.Id, job.JobType, job.Queue);
 
             using var activity = AtlasTelemetry.ActivitySource.StartActivity(
                 "atlas.background_job.execute",
@@ -146,6 +149,10 @@ public sealed class BackgroundJobWorker : BackgroundService
                 await MarkFailedAsync(db, job, ex, ct);
                 processed++;
             }
+            finally
+            {
+                _heartbeatState.ClearCurrentJob(job.Id);
+            }
         }
 
         return processed;
@@ -169,7 +176,7 @@ public sealed class BackgroundJobWorker : BackgroundService
              UPDATE BackgroundJobs
              SET Status = {running},
                  LockedAtUtc = {now},
-                 LockedBy = {_workerId},
+                 LockedBy = {_heartbeatState.WorkerId},
                  StartedAtUtc = COALESCE(StartedAtUtc, {now}),
                  AttemptCount = AttemptCount + 1,
                  NextAttemptAtUtc = NULL,

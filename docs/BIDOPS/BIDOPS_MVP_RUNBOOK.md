@@ -1,6 +1,6 @@
 # BidOps MVP Runbook
 
-Date: 2026-06-11
+Date: 2026-06-12
 
 ## Scope
 
@@ -18,6 +18,17 @@ manual public URL import or mock crawl
 -> bidops_review_task
 -> human approve
 -> bidops_notice / bidops_tender_package / bidops_requirement_item
+```
+
+Phase B through Phase E add the first经营层 capabilities on top of this loop:
+
+```text
+formal TenderPackage
+-> Opportunity management / dashboard / maintenance scans
+-> Supplier profile / contacts / capabilities / evidence metadata
+-> supplier evidence expiry scan in Worker
+-> package supplier matching / missing evidence checks / Go-No-Go decisions
+-> Pursuit work tracking / tasks / follow records / stage transitions
 ```
 
 ## Host Wiring
@@ -192,18 +203,71 @@ All endpoints use Atlas permission policies.
 - `POST /api/bidops/crawl-channels`
 - `PUT /api/bidops/crawl-channels/{id}`
 - `POST /api/bidops/crawl-channels/{id}/scan-now`
+- `GET /api/bidops/dashboard/summary`
 - `GET /api/bidops/raw-notices`
 - `GET /api/bidops/raw-notices/{id}`
+- `GET /api/bidops/raw-notices/{id}/pipeline`
+- `GET /api/bidops/raw-notices/{id}/attachments`
+- `GET /api/bidops/raw-notices/{id}/attachments/{attachmentId}/text`
+- `GET /api/bidops/raw-notices/{id}/attachments/{attachmentId}/file`
+- `POST /api/bidops/raw-notices/{id}/reparse`
 - `POST /api/bidops/raw-notices/import-url`
+- `GET /api/bidops/crawl-run-logs`
+- `GET /api/bidops/crawl-run-logs/{id}`
 - `GET /api/bidops/review-tasks`
 - `GET /api/bidops/review-tasks/{id}`
 - `POST /api/bidops/review-tasks/{id}/approve`
 - `POST /api/bidops/review-tasks/{id}/ignore`
+- `GET /api/bidops/processing/failures`
 - `GET /api/bidops/notices`
 - `GET /api/bidops/notices/{id}`
 - `GET /api/bidops/packages`
 - `GET /api/bidops/packages/{id}`
+- `GET /api/bidops/packages/{id}/timeline`
 - `GET /api/bidops/packages/{id}/requirements`
+- `GET /api/bidops/opportunities`
+- `POST /api/bidops/opportunities`
+- `GET /api/bidops/opportunities/{id}`
+- `PUT /api/bidops/opportunities/{id}`
+- `POST /api/bidops/opportunities/{id}/watch`
+- `POST /api/bidops/opportunities/{id}/assess`
+- `POST /api/bidops/opportunities/{id}/stage`
+- `GET /api/bidops/suppliers`
+- `POST /api/bidops/suppliers`
+- `GET /api/bidops/suppliers/{id}`
+- `PUT /api/bidops/suppliers/{id}`
+- `POST /api/bidops/suppliers/{id}/contacts`
+- `POST /api/bidops/suppliers/{id}/capabilities`
+- `POST /api/bidops/suppliers/{id}/evidence-documents`
+- `POST /api/bidops/packages/{id}/match-suppliers`
+- `GET /api/bidops/matching/runs`
+- `GET /api/bidops/matching/runs/{id}`
+- `GET /api/bidops/matching/runs/{id}/results`
+- `GET /api/bidops/packages/{id}/decisions`
+- `POST /api/bidops/packages/{id}/decisions`
+- `GET /api/bidops/pursuits`
+- `POST /api/bidops/pursuits`
+- `GET /api/bidops/pursuits/{id}`
+- `PUT /api/bidops/pursuits/{id}`
+- `POST /api/bidops/pursuits/{id}/status`
+- `GET /api/bidops/pursuits/{id}/tasks`
+- `POST /api/bidops/pursuits/{id}/tasks`
+- `PUT /api/bidops/pursuits/{id}/tasks/{taskId}`
+- `GET /api/bidops/pursuits/{id}/follow-records`
+- `POST /api/bidops/pursuits/{id}/follow-records`
+- `GET /api/ops/background-jobs`
+- `GET /api/ops/background-jobs/summary`
+- `GET /api/ops/background-jobs/{id}`
+- `POST /api/ops/background-jobs/{id}/retry`
+- `POST /api/ops/background-jobs/{id}/cancel`
+- `GET /api/ops/workers`
+- `GET /api/bidops/operations/dashboard`
+- `GET /api/bidops/operations/jobs`
+- `GET /api/bidops/operations/config-check`
+- `GET /api/bidops/operations/channels/health`
+- `GET /api/bidops/operations/worker-heartbeats`
+- `POST /api/bidops/operations/jobs/{id}/retry`
+- `POST /api/bidops/operations/jobs/{id}/cancel`
 
 Example manual import body:
 
@@ -315,6 +379,77 @@ dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj -- seed-bido
   --tenant "Server=localhost;Port=3306;Database=atlas_bidops_runtime;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;"
 ```
 
+If the local BidOps tenant DB was created before the Phase B opportunity
+migration and has no EF migration history, prepare opportunity tables and
+permissions idempotently for local smoke testing:
+
+```powershell
+dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -- ensure-bidops-opportunities `
+  --global "Server=localhost;Port=3306;Database=atlas_global_bidops;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;" `
+  --tenant "Server=localhost;Port=3306;Database=atlas_bidops_runtime;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;"
+```
+
+For a local BidOps tenant created before the Phase C supplier migration,
+prepare supplier tables and permissions idempotently for local smoke testing:
+
+```powershell
+dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -- ensure-bidops-suppliers `
+  --global "Server=localhost;Port=3306;Database=atlas_global_bidops;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;" `
+  --tenant "Server=localhost;Port=3306;Database=atlas_bidops_runtime;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;"
+```
+
+For a local BidOps tenant created before the Phase D matching migration,
+prepare matching tables and permissions idempotently for local smoke testing:
+
+```powershell
+dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -- ensure-bidops-matching `
+  --global "Server=localhost;Port=3306;Database=atlas_global_bidops;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;" `
+  --tenant "Server=localhost;Port=3306;Database=atlas_bidops_runtime;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;"
+```
+
+For a local BidOps tenant created before the Phase E pursuit migration,
+prepare pursuit tables and permissions idempotently for local smoke testing:
+
+```powershell
+dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -- ensure-bidops-pursuits `
+  --global "Server=localhost;Port=3306;Database=atlas_global_bidops;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;" `
+  --tenant "Server=localhost;Port=3306;Database=atlas_bidops_runtime;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;"
+```
+
+For a local BidOps tenant created before the public outcome supplier lead
+migration, prepare the outcome lead table idempotently:
+
+```powershell
+dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -- ensure-bidops-outcomes `
+  --global "Server=localhost;Port=3306;Database=atlas_global_bidops;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;" `
+  --tenant "Server=localhost;Port=3306;Database=atlas_bidops_runtime;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;"
+```
+
+Public outcome supplier leads come from explicit supplier/candidate/winner
+fields in public中标/成交/候选公示 and extracted attachments. They are stored in
+`bidops_outcome_supplier_record` as traceable leads with source and package
+snapshots. They do not automatically create supplier master data or contact
+actions.
+
+To backfill local public outcome supplier leads after improving extraction rules
+or attachment text extraction, use the authenticated API:
+
+```powershell
+POST /api/bidops/suppliers/outcome-records/backfill?maxItems=200
+```
+
+If historical local smoke data contains parser placeholders such as
+`UNSPECIFIED`, `????`, or question-mark-plus-timestamp supplier names, run the
+idempotent data-quality repair command. It does not invent real identifiers; it
+clears unknown package numbers and marks unreadable supplier names as
+`待补录厂家`.
+
+```powershell
+dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -- repair-bidops-data-quality `
+  --global "Server=localhost;Port=3306;Database=atlas_global_bidops;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;" `
+  --tenant "Server=localhost;Port=3306;Database=atlas_bidops_runtime;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;"
+```
+
 Start Worker against the isolated Global DB:
 
 ```powershell
@@ -323,7 +458,8 @@ $env:ConnectionStrings__AtlasGlobal='Server=localhost;Port=3306;Database=atlas_g
 dotnet run --no-build --project src\Atlas.Worker\Atlas.Worker.csproj
 ```
 
-`BidOpsLocal` enables recurring scan/recovery for tenant `300001`:
+`BidOpsLocal` enables recurring scan/recovery, opportunity maintenance, and
+supplier evidence maintenance for tenant `300001`:
 
 ```json
 {
@@ -336,6 +472,15 @@ dotnet run --no-build --project src\Atlas.Worker\Atlas.Worker.csproj
     "Recovery": {
       "Enabled": true,
       "TenantIds": [ 300001 ]
+    },
+    "OpportunityMaintenance": {
+      "Enabled": true,
+      "TenantIds": [ 300001 ]
+    },
+    "SupplierMaintenance": {
+      "Enabled": true,
+      "TenantIds": [ 300001 ],
+      "EvidenceWarningDays": 30
     },
     "StateGridEcp": {
       "MaxNoticesPerScan": 2

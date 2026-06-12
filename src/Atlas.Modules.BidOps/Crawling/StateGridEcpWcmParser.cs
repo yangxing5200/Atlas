@@ -61,6 +61,8 @@ public static partial class StateGridEcpWcmParser
             var doctype = GetString(item, "doctype");
             var menuId = GetString(item, "firstPageMenuId");
             var noticeId = GetLong(item, "noticeId");
+            if (noticeId <= 0)
+                noticeId = GetLong(item, "id");
             var firstPageDocId = GetNullableLong(item, "firstPageDocId");
             if (string.IsNullOrWhiteSpace(title) || noticeId <= 0)
                 continue;
@@ -77,7 +79,7 @@ public static partial class StateGridEcpWcmParser
             var detailUrl = BuildPortalDetailUrl(
                 portalBaseUrl,
                 doctype,
-                firstPageDocId ?? noticeId,
+                noticeId,
                 menuId);
 
             notices.Add(new StateGridEcpApiNotice(
@@ -178,6 +180,38 @@ public static partial class StateGridEcpWcmParser
             "doci-win" => "index/getNoticeWin",
             _ => "index/getNoticeBid"
         };
+    }
+
+    public static string? GetAttachmentApiPath(string doctype)
+    {
+        return doctype.Trim().ToLowerInvariant() switch
+        {
+            "doci-win" => "index/getWinFile",
+            _ => null
+        };
+    }
+
+    public static IReadOnlyList<StateGridAttachmentDocument> ParseNoticeFileList(
+        string json,
+        StateGridEcpApiNotice notice,
+        string portalBaseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return Array.Empty<StateGridAttachmentDocument>();
+
+        using var document = JsonDocument.Parse(json);
+        EnsureSuccessful(document.RootElement);
+
+        if (!TryGetProperty(document.RootElement, "resultValue", out var resultValue))
+            return Array.Empty<StateGridAttachmentDocument>();
+
+        if (!Uri.TryCreate(portalBaseUrl, UriKind.Absolute, out var baseUri))
+            baseUri = new Uri("https://ecp.sgcc.com.cn/ecp2.0/portal/");
+
+        var results = new List<StateGridAttachmentDocument>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        DiscoverNoticeFileList(resultValue, baseUri, notice, results, seen, 0);
+        return results;
     }
 
     private static void EnsureSuccessful(JsonElement root)
@@ -313,6 +347,67 @@ public static partial class StateGridEcpWcmParser
         }
     }
 
+    private static void DiscoverNoticeFileList(
+        JsonElement element,
+        Uri baseUri,
+        StateGridEcpApiNotice notice,
+        List<StateGridAttachmentDocument> results,
+        HashSet<string> seen,
+        int depth)
+    {
+        if (depth > 8 || results.Count >= 100)
+            return;
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            TryAddNoticeFileObject(element, baseUri, notice, results, seen);
+            foreach (var property in element.EnumerateObject())
+            {
+                DiscoverNoticeFileList(property.Value, baseUri, notice, results, seen, depth + 1);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                DiscoverNoticeFileList(item, baseUri, notice, results, seen, depth + 1);
+            }
+        }
+    }
+
+    private static void TryAddNoticeFileObject(
+        JsonElement element,
+        Uri baseUri,
+        StateGridEcpApiNotice notice,
+        List<StateGridAttachmentDocument> results,
+        HashSet<string> seen)
+    {
+        var normalizedDoctype = notice.Doctype.Trim().ToLowerInvariant();
+        if (normalizedDoctype != "doci-win")
+            return;
+
+        var filePath = FindFirstStringByNameHint(element, "filepath", "file_path");
+        if (string.IsNullOrWhiteSpace(filePath))
+            return;
+
+        var fileName = FindFirstStringByNameHint(element, "filename", "file_name", "name", "title");
+        if (string.IsNullOrWhiteSpace(fileName))
+            fileName = $"state-grid-attachment-{notice.NoticeId}";
+
+        var fileSizeText = FindFirstStringByNameHint(element, "filesize", "file_size", "size");
+        var fileSize = long.TryParse(fileSizeText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedSize)
+            ? parsedSize
+            : (long?)null;
+
+        AddAttachment(
+            baseUri,
+            results,
+            seen,
+            fileName,
+            BuildWinFileDownloadUrl(baseUri, filePath, fileName),
+            fileSize);
+    }
+
     private static void TryAddAttachmentFromObject(
         JsonElement element,
         Uri baseUri,
@@ -356,8 +451,20 @@ public static partial class StateGridEcpWcmParser
         results.Add(new StateGridAttachmentDocument(
             Trim(normalizedName, 500),
             normalizedUrl,
-            DetectFileType(normalizedUrl),
+            DetectFileType($"{normalizedName} {normalizedUrl}"),
             fileSize));
+    }
+
+    private static string BuildWinFileDownloadUrl(Uri baseUri, string filePath, string fileName)
+    {
+        var builder = new UriBuilder(baseUri.Scheme, baseUri.Host)
+        {
+            Path = "/ecp2.0/ecpwcmcore/index/downLoadWinFile",
+            Query = string.IsNullOrWhiteSpace(fileName)
+                ? $"filePath={Uri.EscapeDataString(filePath.Trim())}"
+                : $"filePath={Uri.EscapeDataString(filePath.Trim())}&fileName={Uri.EscapeDataString(fileName.Trim())}"
+        };
+        return builder.Uri.ToString();
     }
 
     private static string? FindFirstStringByNameHint(JsonElement element, params string[] hints)

@@ -1,0 +1,28 @@
+export const BIDOPS_PERMISSIONS = {
+  DASHBOARD_READ: 'bidops.dashboard.read',
+  CRAWL_READ: 'bidops.crawl.read',
+  CRAWL_MANAGE: 'bidops.crawl.manage',
+  CRAWL_IMPORT: 'bidops.crawl.import',
+  REVIEW_READ: 'bidops.review.read',
+  REVIEW_APPROVE: 'bidops.review.approve',
+  BUSINESS_READ: 'bidops.business.read',
+  OPPORTUNITY_READ: 'bidops.opportunity.read',
+  OPPORTUNITY_MANAGE: 'bidops.opportunity.manage',
+  OPPORTUNITY_WATCH: 'bidops.opportunity.watch',
+  OPPORTUNITY_ASSESS: 'bidops.opportunity.assess',
+  SUPPLIER_READ: 'bidops.supplier.read',
+  SUPPLIER_MANAGE: 'bidops.supplier.manage',
+  SUPPLIER_EVIDENCE_READ: 'bidops.supplier.evidence.read',
+  SUPPLIER_EVIDENCE_MANAGE: 'bidops.supplier.evidence.manage',
+  MATCHING_READ: 'bidops.matching.read',
+  MATCHING_RUN: 'bidops.matching.run',
+  MATCHING_DECIDE: 'bidops.matching.decide',
+  PURSUIT_READ: 'bidops.pursuit.read',
+  PURSUIT_MANAGE: 'bidops.pursuit.manage',
+  PURSUIT_TASK_MANAGE: 'bidops.pursuit.task.manage',
+  PURSUIT_FOLLOW_RECORD_MANAGE: 'bidops.pursuit.follow-record.manage',
+  OPS_READ: 'bidops.ops.read',
+  OPS_MANAGE: 'bidops.ops.manage',
+} as const
+
+export const BIDOPS_PERMISSION_VALUES = Object.values(BIDOPS_PERMISSIONS)

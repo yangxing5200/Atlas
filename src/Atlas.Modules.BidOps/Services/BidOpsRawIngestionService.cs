@@ -280,11 +280,20 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
             }
 
             var normalizedUrl = uri.ToString();
+            var fileHash = _hasher.HashUrl(normalizedUrl);
             var existing = await _rawAttachments.FirstOrDefaultAsync(
-                x => x.RawNoticeId == rawNoticeId && x.FileUrl == normalizedUrl,
+                x => x.RawNoticeId == rawNoticeId && (x.FileHash == fileHash || x.FileUrl == normalizedUrl),
                 ct);
             if (existing != null)
+            {
+                existing.FileUrl = Trim(normalizedUrl, 1500);
+                existing.FileHash = fileHash;
+                if (!string.IsNullOrWhiteSpace(candidate.FileName))
+                    existing.FileName = Trim(candidate.FileName.Trim(), 500);
+                existing.FileType = Trim(NormalizeFileType(candidate.FileType, normalizedUrl), 64);
+                existing.FileSize = candidate.FileSize ?? existing.FileSize;
                 continue;
+            }
 
             var fileName = string.IsNullOrWhiteSpace(candidate.FileName)
                 ? Path.GetFileName(uri.LocalPath)
@@ -300,7 +309,7 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
                 FileUrl = Trim(normalizedUrl, 1500),
                 FileType = Trim(NormalizeFileType(candidate.FileType, normalizedUrl), 64),
                 FileSize = candidate.FileSize,
-                FileHash = _hasher.HashUrl(normalizedUrl),
+                FileHash = fileHash,
                 StorageProvider = BidOpsSystemValues.LocalStorageProvider,
                 DownloadStatus = DownloadStatus.Pending,
                 TextExtractStatus = TextExtractStatus.Pending

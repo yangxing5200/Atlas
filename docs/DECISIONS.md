@@ -41,3 +41,190 @@
 
 - BidOps URL hashing includes SPA fragments because State Grid ECP public detail links encode their document identity in `#/doc/...`.
 - `BidOpsLocal` scheduled scanning is paused after the manual 4-channel verification run so the local Worker can drain attachment and structured-parse jobs without repeatedly enqueueing duplicate scans. Manual scan jobs can still be queued with `Atlas.LocalSetup seed-bidops-state-grid`.
+
+## 2026-06-11 BidOps Admin Frontend
+
+- Added the BidOps admin frontend as an independent Vite project under `frontend/atlas-admin`, not under `src/` and without changing the Atlas .NET solution.
+- `pnpm` was not available on this machine, so npm was used according to the frontend execution spec fallback.
+- The local Node runtime is `v18.16.0`; Vite is kept on the Node 18 compatible Vite 5 line instead of using current latest packages that require newer Node/Vite peers.
+- Vue Router is pinned to the Vue 3 compatible 4.x line. The current latest router release in npm pulled Vite 7/8 peer expectations and was not used.
+- The frontend only calls BidOps APIs that currently exist in `src/Atlas.Modules.BidOps/Controllers`. Missing detail/dashboard/attachment/timeline APIs are documented in `frontend/atlas-admin/docs/BIDOPS_FRONTEND_GAPS.md` and rendered as disabled/placeholder UI.
+- The frontend uses the real Atlas login flow and permission context. Local development does not bypass authentication; it pre-fills the seeded BidOps account only for convenience.
+- The Vite development proxy defaults to `http://localhost:5260` because `src/Atlas.WebApi` exposes its local HTTP launch profile there. `VITE_DEV_API_PROXY_TARGET` can still override this for HTTPS or custom ports.
+
+## 2026-06-12 BidOps Admin Login Integration
+
+- Atlas WebApi now exposes the existing user authentication operations from a built-in controller assembly at `/api/user/login`, `/api/user/refresh-token`, `/api/user/logout`, `/api/user/switch-store`, and `/api/user/accessible-stores`.
+- Only authentication/session endpoints were promoted from the sample API surface. Sample user CRUD remains outside the production WebApi surface.
+- The BidOps admin frontend stores real access/refresh tokens, tenant/store context, user display data, and permissions returned by `/api/auth/context`; it no longer seeds permissions locally.
+- Added a `bidops-local` WebApi launch profile and `appsettings.BidOpsLocal.json` so local WebApi uses `atlas_global_bidops`, matching the seeded `bidops` tenant.
+- The local seeded account remains a development account only: tenant domain `bidops`, username `bidops_admin`, password `Pass1234!`.
+
+## 2026-06-12 BidOps Review Usability
+
+- BidOps review task lists expose business review summary fields directly: project, buyer, region, key dates, package count, requirement count, reject-risk count, and parser confidence.
+- Review detail reads Raw notice text from `IBidOpsFileStore` using the stored text key and falls back to `TextPreview` if the file is unavailable. Full Raw text remains outside MySQL.
+- `BidOpsLocal` uses `var/bidops-storage` as the primary file-store root and keeps the old Worker bin storage as a read-only fallback for existing local data.
+- Frontend BidOps identifiers are treated as strings because Atlas snowflake IDs exceed JavaScript's safe integer range. Route IDs must not be converted with `Number(...)`.
+
+## 2026-06-12 State Grid ECP Detail URL Identity
+
+- State Grid WCM procurement lists route public detail pages as `/doc/{doctype}/{id}_{firstPageMenuId}`, where `id` is the business `noticeId`/`id` value from `noteList`.
+- `firstPageDocId` is retained as source metadata only. It must not be used as the public detail route ID for `doci-*` procurement notices because some values do not resolve in the portal detail APIs.
+
+## 2026-06-12 State Grid ECP Attachment Identity
+
+- State Grid `doci-win` detail pages load public attachments through `index/getWinFile` and download them through `index/downLoadWinFile`.
+- The `FILE_PATH` value is an encrypted/volatile download token and can change between calls. BidOps therefore does not use the full `downLoadWinFile` URL as the stable attachment identity.
+- For MVP, `BidOpsContentHasher.HashUrl` normalizes State Grid `downLoadWinFile` attachment hashes by public download path plus decoded `fileName`, ignoring the volatile `filePath` token. This is conservative for current SGCC result/candidate notices where each Raw notice exposes one public PDF attachment by name.
+- Attachment binaries remain Worker-only local file-store content. The frontend opens the public source `FileUrl` returned by the backend and does not construct or expose local storage keys.
+
+## 2026-06-12 Tenant Transaction Execution Strategy
+
+- Tenant MySQL DbContexts enable retry-on-failure, so user-initiated transactions must run inside EF Core's configured execution strategy.
+- BidOps and shared tenant services should use `IUnitOfWork.ExecuteInTransactionAsync` for multi-entity transactional work instead of calling `BeginTransactionAsync` directly from business services.
+- BidOps business code still does not inject `AtlasTenantDbContext` or call `DbContext.Set<T>()`; execution strategy access stays encapsulated in `TenantUnitOfWork`.
+
+## 2026-06-12 BidOps Attachment Text Storage
+
+- Raw attachment metadata stays in `bidops_raw_attachment`; binary and extracted text content stay outside MySQL in `IBidOpsFileStore`.
+- `RawAttachment.StorageKey` points to the downloaded source file, and `RawAttachment.TextContentStorageKey` points to the extracted `.extracted.txt` object.
+- The frontend never exposes local storage keys. It can still show the public source `FileUrl`, reads extracted text through `GET /api/bidops/raw-notices/{id}/attachments/{attachmentId}/text`, and reads original downloaded binaries through authorized `GET /api/bidops/raw-notices/{id}/attachments/{attachmentId}/file`.
+- In `BidOpsLocal`, relative file-store paths resolve from the repository root first. WebApi also keeps `src/Atlas.Worker/var/bidops-storage` and the older Worker bin storage as fallback roots so local data created before the path alignment remains readable.
+
+## 2026-06-12 BidOps Controlled Attachment Preview And Download
+
+- Original downloaded attachment binaries are served only through authorized backend APIs. The API opens `IBidOpsFileStore` by `RawAttachment.StorageKey` after tenant/data-scope checks and never returns the storage key to the frontend.
+- `GET /api/bidops/raw-notices/{id}/attachments/{attachmentId}/file` returns `inline` content by default for browser preview and uses `?download=true` for attachment download.
+- The frontend uses Axios blob requests so the existing Authorization header, tenant id, and store id are sent. It does not rely on query-string tokens or unauthenticated direct file URLs.
+- Missing RawNotice, missing attachment metadata, missing storage key, or missing local file returns 404 instead of placeholder success.
+
+## 2026-06-12 BidOps PDF Text Extraction
+
+- PDF extraction uses the stable `PdfPig` package instead of scanning raw PDF bytes with regular expressions.
+- This is required for State Grid WPS/SimSun/Identity-H PDFs where real text is encoded through PDF font/CMap mappings; raw byte scanning surfaces compressed streams and PDF object markers as garbage.
+- PDF text normalization now preserves page line breaks and horizontal spacing where PdfPig exposes it, instead of applying the general `\s+` whitespace collapse used for HTML/TXT snippets. This keeps review text readable and table-like rows separated, but it remains text extraction rather than pixel-perfect PDF rendering.
+- MVP still does not perform OCR. Image-only or scanned PDFs will need a later OCR provider, while text-based PDFs should now produce readable text.
+
+## 2026-06-12 BidOps Raw Notice Display Text
+
+- Raw notice files remain source-oriented snapshots in `IBidOpsFileStore` so deterministic parsing, traceability, and source diffing can still use original public API field paths.
+- Review and Raw detail APIs format Raw notice text into Chinese display labels at query time. This hides internal source field names such as `resultValue.notice.CONT`, converts known fields to labels such as `公告内容`/`发布单位`/`代理机构`, removes internal IDs and volatile file tokens, and strips HTML tags for readable review.
+- Attachment extracted text is not passed through this source-field formatter because PDF/DOC/TXT attachment text should remain as extracted document text.
+
+## 2026-06-12 BidOps Package Detail Timeline
+
+- MVP package timeline is a read model synthesized from existing Notice, TenderPackage, and RequirementItem timestamps. It does not introduce a new workflow-event table yet.
+- Timeline events currently cover public notice publication, formal notice import, package creation, requirement generation, and package update when an update timestamp exists.
+- Package detail APIs stay under the existing `bidops.business.read` permission and tenant data-scope repository path.
+
+## 2026-06-12 Background Task Observability P0
+
+- Initial P0 task observability used the existing global `BackgroundJobs` table without adding `BackgroundJobEvent`, `RecurringTaskRun`, or `OperationLogEntry`. P0-07 later adds the lightweight `BackgroundWorkerHeartbeat` table for Worker liveness.
+- Background job query/management code lives in `Atlas.BackgroundTasks` because module projects are not allowed to reference `AtlasGlobalDbContext` directly.
+- BidOps operations pages call the shared background job operations service and keep BidOps tenant data queries on repositories/DataScope.
+- P0 system operations routes use existing BidOps crawl permissions for local usability. Dedicated `ops.*` permissions and a standalone Operations module remain P1 hardening work.
+- Running jobs are not force-canceled. P0 cancel only marks Pending/Failed/Dead jobs as `Canceled`; retry always creates a new job row.
+
+## 2026-06-12 BidOps Worker Heartbeat P0
+
+- Worker liveness is stored in the Atlas Global DB as `BackgroundWorkerHeartbeat` because Worker identity and queues are process-wide rather than tenant-owned business data.
+- The Worker upserts heartbeat rows best-effort every 15 seconds and throttles warning logs if the table or database is unavailable. A heartbeat failure must not stop job processing.
+- `WorkerId` is constrained to `varchar(191)` so its unique index remains compatible with older MySQL/InnoDB index byte limits.
+- `GET /api/ops/workers` is implemented in the shared background task operations service and exposed through the BidOps module for P0 compatibility.
+- The P0 endpoint keeps existing BidOps crawl read permission compatibility. Dedicated system operations permissions remain a separate hardening step.
+
+## 2026-06-12 BidOps Non-Breaking Module Evolution
+
+- The 13-module BidOps expansion is an additive product/module blueprint, not a destructive refactor mandate.
+- Existing BidOps controllers, API routes, request/response semantics, permission codes, frontend routes, entities, and table ownership remain compatible.
+- New module names such as `Intelligence`, `Processing`, `Opportunities`, `Operations`, and future fine-grained permissions must be added alongside the current `crawl`, `review`, and `business` surface.
+- Any future cleanup or route/permission deprecation requires a separate compatibility decision and migration plan; it must not be bundled into feature delivery.
+
+## 2026-06-12 BidOps Unimplemented API Semantics
+
+- Planned BidOps APIs that are not implemented should remain unregistered or return `501 NotImplemented` with an explicit explanation.
+- Unimplemented APIs must not return `200 OK`, empty arrays, empty objects, default DTOs, `success: true`, or placeholder text as if the operation succeeded.
+- Empty results are allowed only for implemented read models where the data source and query path are real and the tenant simply has no matching data.
+- Frontend ComingSoon routes must not force backend placeholder success endpoints into existence.
+
+## 2026-06-12 BidOps Operations Permission Compatibility
+
+- `bidops.ops.read` and `bidops.ops.manage` are now registered as BidOps P0 operations permissions and exposed to the frontend permission constants.
+- Existing operations APIs still keep the old `bidops.crawl.read/manage` authorization policies for compatibility with seeded and existing local tenant roles.
+- Switching runtime authorization from `crawl` to `ops` requires a separate compatibility step: either backend OR-permission policies or a role migration that grants `ops` permissions before old policies are removed.
+
+## 2026-06-12 BidOps Raw Notice Reparse Entry
+
+- P0 reparse is a reviewer action under the existing `bidops.review.approve` permission. A future `bidops.processing.reparse` permission can be added without removing the existing route.
+- `POST /api/bidops/raw-notices/{id}/reparse` only changes RawNotice/staging/review task state and enqueues Worker work. WebApi does not run attachment processing or structured parsing synchronously.
+- Approved RawNotice rows and RawNotice rows already imported into formal Notice records cannot be reparsed in MVP; callers receive an error instead of silently mutating formal business data.
+- Manual reparse carries a force-run id through attachment processing so the subsequent structured parse uses a new deduplication key even when the RawNotice content hash has not changed.
+- Attachment processing keeps duplicate-content runs idempotent by retaining a RawAttachment's existing URL identity hash when the downloaded file content hash is already used by another attachment on the same RawNotice.
+
+## 2026-06-12 BidOps Opportunity MVP
+
+- Opportunity is an additive BidOps tenant model layered on top of existing `Notice`, `TenderPackage`, and `RequirementItem`; it does not replace formal tendering data created by review approval.
+- MVP enforces at most one active opportunity per package with tenant-scoped `(TenantId, PackageId, ActiveMarker)` uniqueness. Active rows use `ActiveMarker = "active"` and inactive/closed rows clear the marker.
+- Existing package and business read surfaces stay compatible: opportunity list/detail APIs allow the current `bidops.business.read` policy, while create/update/watch/assess/stage use the new `bidops.opportunity.*` permissions.
+- Dedicated opportunity calendar, notification delivery records, and separate assessment-record APIs remain unimplemented. Frontend calendar/assessment routes must stay `ComingSoon` until real APIs and tasks exist.
+- The formal tenant migration lives in `src/Atlas.Data.Tenant.Migrations`. The existing local BidOps tenant database has historical tables but missing EF migration history, so local smoke used `tools/Atlas.LocalSetup ensure-bidops-opportunities` to create the new tables and seed permissions idempotently without replaying old migrations into existing tables.
+
+## 2026-06-12 BidOps Dashboard Summary
+
+- `GET /api/bidops/dashboard/summary` is the first real business dashboard API. It reads existing tenant data from RawNotice, ReviewTask, Notice, TenderPackage, RequirementItem, and Opportunity; it does not create mock dashboard rows.
+- `bidops.dashboard.read` is registered and seeded, but the API currently uses `bidops.business.read` for runtime authorization compatibility with existing local roles. A later role migration can switch it to the dashboard-specific permission.
+- Split APIs such as `/todos`, `/deadlines`, `/risks`, and `/pipeline` remain unimplemented until they have dedicated read models.
+
+## 2026-06-12 BidOps Opportunity Maintenance Jobs
+
+- Opportunity maintenance runs as a recurring task that enqueues auditable one-time jobs on the existing `bidops` queue.
+- `bidops.opportunity.value-assessment` only fills missing initial value score/level for active opportunities. It does not overwrite human-entered assessment values or make Go/No-Go decisions.
+- `deadline-reminder`, `watch-reminder`, and `stale-state-scan` currently produce background job results with real counts. They do not send external messages or create notification records until a later notification model exists.
+
+## 2026-06-12 BidOps Supplier Capability MVP
+
+- Supplier capability is implemented as an additive Phase C BidOps tenant model: `Supplier`, `SupplierContact`, `SupplierCapability`, and `SupplierEvidenceDocument`.
+- Supplier evidence keeps only metadata, public/controlled file URL references, hash fields, and effective dates in MySQL. Binary content remains outside MySQL through file storage; `StorageKey` is not exposed in frontend DTOs.
+- Local MySQL compatibility required avoiding long string composite indexes that exceed older InnoDB 767-byte key limits. MVP keeps tenant-scoped practical indexes and relies on normal filtered queries for supplier name/category search until a later search index or generated normalized key is introduced.
+- `bidops.supplier.evidence-expiry-scan` updates evidence statuses to valid, expiring soon, or expired as a Worker job. Notification delivery and acknowledgement records are intentionally left for the later notification/config phase.
+- Supplier list/detail APIs are real repository-backed endpoints. Dedicated child GET endpoints and the evidence-expiry list remain unimplemented until they have their own query surfaces; frontend routes for those views stay `ComingSoon`.
+
+## 2026-06-12 BidOps Matching MVP
+
+- Matching is implemented as an additive Phase D BidOps tenant model: `SupplierMatchRun`, `SupplierMatchResult`, `MissingEvidenceCheck`, and `GoNoGoDecision`.
+- WebApi only starts and queries matching work. `POST /api/bidops/packages/{id}/match-suppliers` creates a run and enqueues `bidops.matching.supplier-match-run`; Worker executes matching and persists results.
+- MVP scoring is deliberately rule-based and explainable, using package category, region, supplier quality, and evidence coverage. It records missing/expired/expiring evidence instead of hiding gaps behind a single score.
+- Go/No-Go remains an explicit human decision record. The matching service does not automatically create pursuits, submit bids, contact suppliers, or override opportunity stages.
+- Matching APIs and pages are real repository-backed surfaces. Matching rules, scoring versioning, and score-refresh APIs remain unimplemented until a `MatchingRuleSet` model and audit trail are added.
+- The frontend auth guard now refreshes `/api/auth/context` once per app startup for authenticated sessions so newly seeded permissions such as `bidops.matching.*` appear without forcing users to clear cached permission state manually.
+
+## 2026-06-12 BidOps Pursuit MVP
+
+- Pursuit is an additive Phase E BidOps tenant model layered on top of `Notice`, `TenderPackage`, optional `Opportunity`, optional `GoNoGoDecision`, and optional supplier snapshots.
+- MVP enforces at most one active pursuit per package with tenant-scoped `(TenantId, PackageId, ActiveMarker)` uniqueness. Active rows use `ActiveMarker = "active"` and closed/archived rows clear the marker.
+- `PursuitTask` and `PursuitFollowRecord` are operational tracking records only. They do not generate bid documents, submit bids, contact suppliers, or create external side effects.
+- Creating a pursuit from a Go/No-Go decision is allowed only when the referenced decision is `Go`; non-Go decisions fail explicitly instead of silently starting work.
+- Work APIs and pages are real repository-backed surfaces. Calendar, deadline reminders, overdue-task scans, response matrix, bid file versioning, and submission checks remain unimplemented until their own models and tasks exist.
+- The existing local BidOps tenant database predates formal migration history, so local smoke uses `tools/Atlas.LocalSetup ensure-bidops-pursuits --tenant atlas_bidops_runtime` to create tables and seed permissions idempotently without replaying historical migrations.
+
+## 2026-06-12 BidOps Parsed Text Data Quality
+
+- `UNSPECIFIED` is no longer a persisted package or lot number. Unknown package identifiers stay empty in Raw/Staging/Formal data and the frontend displays them as `待补录`.
+- Values that are only question marks, replacement characters, or question marks plus generated numeric suffixes are treated as unreadable placeholders. Required supplier fields reject these values; optional supplier fields are normalized to empty.
+- The deterministic parser now attempts to extract package and lot numbers from public text/HTML labels such as `包件号`, `包号`, `标包号`, `分包编号`, `标段号`, and `分标编号` before leaving the value empty.
+- Local historical cleanup is handled through `tools/Atlas.LocalSetup repair-bidops-data-quality`; it only targets obvious placeholder values and does not invent real package numbers or supplier names.
+
+## 2026-06-12 BidOps Supplier Analysis Read Model
+
+- BidOps suppliers currently come from the tenant supplier master library (`Supplier`) through manual/API creation or local setup data. Public notice crawling does not automatically create supplier master records.
+- `GET /api/bidops/suppliers/analysis/summary` is a real read model over existing Supplier, capability, evidence, matching result, Go/No-Go, and pursuit data. It uses `bidops.supplier.read` for compatibility and does not add a new analytics permission in this compatibility step.
+- The new `/bidops/suppliers/analysis` page replaces the former `ComingSoon` capability route while keeping `/bidops/suppliers/capabilities` as a frontend alias.
+- Outcome-announcement extraction of candidate/winning suppliers is implemented as a public-result lead table (`OutcomeSupplierRecord`). Durable `SupplierPerformance`, win-rate analytics, and review conclusions remain unimplemented until the results/review module owns `BidOutcome` or equivalent source data.
+
+## 2026-06-12 BidOps Public Outcome Supplier Leads
+
+- Public中标/成交/候选公示里的厂家信息 is stored as `OutcomeSupplierRecord`, not as automatic `Supplier` master data. The record preserves source announcement, evidence text, notice/package snapshots, outcome type, rank, amount, and a weak link to an existing supplier when the normalized name already matches.
+- WebApi only exposes reads and enqueues `bidops.outcome.supplier-extract`; extraction runs in Worker and is idempotent per RawNotice by deleting and rebuilding that RawNotice's outcome leads.
+- The extractor intentionally prefers precision over recall. It only accepts explicit supplier/candidate/winner fields or equivalent table keys, and skips announcement intros, buyer/agency/publisher fields, supplier instructions, fee/payment/postage text, and generic company-name mentions.
+- Outcome leads are used for analysis and manual package-to-supplier research. The system must not auto-create contacts, auto-contact suppliers, infer private relationships, or generate collusion/bribery-oriented recommendations.

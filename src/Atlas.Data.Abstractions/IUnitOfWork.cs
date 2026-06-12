@@ -18,6 +18,20 @@ public interface IUnitOfWork : IDisposable, IAsyncDisposable
     Task RollbackAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// 在数据库执行策略内执行一个事务单元。
+    /// </summary>
+    Task<T> ExecuteInTransactionAsync<T>(
+        Func<CancellationToken, Task<T>> action,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// 在数据库执行策略内执行一个事务单元。
+    /// </summary>
+    Task ExecuteInTransactionAsync(
+        Func<CancellationToken, Task> action,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// 保存更改到 DbContext 的 ChangeTracker（但不提交事务）
     /// </summary>
     Task<int> SaveChangesAsync(CancellationToken ct = default);

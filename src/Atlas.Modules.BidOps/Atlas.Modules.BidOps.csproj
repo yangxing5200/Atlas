@@ -9,6 +9,7 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="PdfPig" />
   </ItemGroup>
 
   <ItemGroup>
