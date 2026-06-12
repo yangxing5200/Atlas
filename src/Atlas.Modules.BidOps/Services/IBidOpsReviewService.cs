@@ -13,4 +13,9 @@ public interface IBidOpsReviewService
         long reviewTaskId,
         ReviewDecisionRequest request,
         CancellationToken ct = default);
+
+    Task<EnqueueJobDto> EnqueueRawNoticeReparseAsync(
+        long rawNoticeId,
+        ReparseRawNoticeRequest request,
+        CancellationToken ct = default);
 }

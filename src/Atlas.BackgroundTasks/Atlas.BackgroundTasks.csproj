@@ -18,6 +18,7 @@
     <ProjectReference Include="..\Atlas.Core\Atlas.Core.csproj" />
     <ProjectReference Include="..\Atlas.Data.Global\Atlas.Data.Global.csproj" />
     <ProjectReference Include="..\Atlas.Infrastructure.Caching\Atlas.Infrastructure.Caching.csproj" />
+    <ProjectReference Include="..\Atlas.Models.Tenant\Atlas.Models.csproj" />
   </ItemGroup>
 
 </Project>

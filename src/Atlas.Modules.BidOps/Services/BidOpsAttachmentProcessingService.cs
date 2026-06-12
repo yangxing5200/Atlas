@@ -66,7 +66,7 @@ public sealed class BidOpsAttachmentProcessingService : IBidOpsAttachmentProcess
             {
                 if (attachment.DownloadStatus != DownloadStatus.Succeeded)
                 {
-                    await DownloadAsync(raw, attachment, ct);
+                    await DownloadAsync(raw, attachment, attachments, ct);
                     downloaded++;
                 }
 
@@ -102,6 +102,7 @@ public sealed class BidOpsAttachmentProcessingService : IBidOpsAttachmentProcess
     private async Task DownloadAsync(
         RawNotice raw,
         RawAttachment attachment,
+        IReadOnlyCollection<RawAttachment> rawAttachments,
         CancellationToken ct)
     {
         if (!Uri.TryCreate(attachment.FileUrl, UriKind.Absolute, out var uri) ||
@@ -133,9 +134,32 @@ public sealed class BidOpsAttachmentProcessingService : IBidOpsAttachmentProcess
         attachment.StorageProvider = stored.StorageProvider;
         attachment.StorageKey = stored.StorageKey;
         attachment.FileSize = stored.FileSize;
-        attachment.FileHash = stored.FileHash;
+        attachment.FileHash = ResolveDownloadedFileHash(raw.Id, attachment, stored.FileHash, rawAttachments);
         attachment.FileType = NormalizeFileType(attachment.FileType, stored.FileName, contentType);
         attachment.DownloadStatus = DownloadStatus.Succeeded;
+    }
+
+    private string ResolveDownloadedFileHash(
+        long rawNoticeId,
+        RawAttachment attachment,
+        string downloadedFileHash,
+        IReadOnlyCollection<RawAttachment> rawAttachments)
+    {
+        if (string.IsNullOrWhiteSpace(downloadedFileHash))
+            return attachment.FileHash;
+
+        var hasCollision = rawAttachments.Any(x =>
+            x.Id != attachment.Id &&
+            string.Equals(x.FileHash, downloadedFileHash, StringComparison.OrdinalIgnoreCase));
+        if (!hasCollision)
+            return downloadedFileHash;
+
+        _logger.LogInformation(
+            "BidOps attachment {AttachmentId} for raw notice {RawNoticeId} downloaded duplicate content hash {FileHash}; keeping the existing attachment identity hash.",
+            attachment.Id,
+            rawNoticeId,
+            downloadedFileHash);
+        return attachment.FileHash;
     }
 
     private async Task<bool> ExtractTextAsync(

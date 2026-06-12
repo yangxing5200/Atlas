@@ -1,3 +1,4 @@
+using Atlas.BackgroundTasks;
 using Atlas.Core.Exceptions;
 using Atlas.Core.IdGenerators;
 using Atlas.Core.Services;
@@ -21,6 +22,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
     private readonly IRepository<TenderPackage> _packages;
     private readonly IRepository<RequirementItem> _requirements;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IBackgroundJobClient _jobs;
     private readonly ICurrentIdentity _identity;
     private readonly IIdGenerator _idGenerator;
 
@@ -34,6 +36,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         IRepository<TenderPackage> packages,
         IRepository<RequirementItem> requirements,
         IUnitOfWork unitOfWork,
+        IBackgroundJobClient jobs,
         ICurrentIdentity identity,
         IIdGenerator idGenerator)
     {
@@ -46,6 +49,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         _packages = packages ?? throw new ArgumentNullException(nameof(packages));
         _requirements = requirements ?? throw new ArgumentNullException(nameof(requirements));
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
+        _jobs = jobs ?? throw new ArgumentNullException(nameof(jobs));
         _identity = identity ?? throw new ArgumentNullException(nameof(identity));
         _idGenerator = idGenerator ?? throw new ArgumentNullException(nameof(idGenerator));
     }
@@ -57,112 +61,111 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        await _unitOfWork.BeginTransactionAsync(ct);
-        try
+        return await _unitOfWork.ExecuteInTransactionAsync(
+            token => ApproveCoreAsync(reviewTaskId, request, token),
+            ct);
+    }
+
+    private async Task<NoticeDto> ApproveCoreAsync(
+        long reviewTaskId,
+        ReviewDecisionRequest request,
+        CancellationToken ct)
+    {
+        var task = await GetTaskForUpdateAsync(reviewTaskId, ct);
+        if (task.BizType != "NoticeStaging")
+            throw new AtlasException($"Unsupported BidOps review task type: {task.BizType}");
+
+        var noticeStaging = await GetNoticeStagingForUpdateAsync(task.BizId, ct);
+        var raw = await GetRawForUpdateAsync(noticeStaging.RawNoticeId, ct);
+        var existingNotice = await _notices.FirstOrDefaultAsync(x => x.RawNoticeId == raw.Id, ct);
+        if (existingNotice != null)
         {
-            var task = await GetTaskForUpdateAsync(reviewTaskId, ct);
-            if (task.BizType != "NoticeStaging")
-                throw new AtlasException($"Unsupported BidOps review task type: {task.BizType}");
-
-            var noticeStaging = await GetNoticeStagingForUpdateAsync(task.BizId, ct);
-            var raw = await GetRawForUpdateAsync(noticeStaging.RawNoticeId, ct);
-            var existingNotice = await _notices.FirstOrDefaultAsync(x => x.RawNoticeId == raw.Id, ct);
-            if (existingNotice != null)
-            {
-                MarkApproved(task, noticeStaging, request.Remark);
-                raw.Status = RawNoticeStatus.Approved;
-                await _unitOfWork.SaveChangesAsync(ct);
-                await _unitOfWork.CommitAsync(ct);
-                return Map(existingNotice);
-            }
-
-            var notice = new Notice
-            {
-                Id = _idGenerator.NextId(),
-                RawNoticeId = raw.Id,
-                NoticeStagingId = noticeStaging.Id,
-                Title = raw.Title,
-                NoticeType = noticeStaging.NoticeType,
-                ProjectName = noticeStaging.ProjectName,
-                ProjectCode = noticeStaging.ProjectCode,
-                BuyerName = noticeStaging.BuyerName,
-                AgencyName = noticeStaging.AgencyName,
-                Region = noticeStaging.Region,
-                BudgetAmount = noticeStaging.BudgetAmount,
-                PublishTime = noticeStaging.PublishTime,
-                SignupDeadline = noticeStaging.SignupDeadline,
-                BidDeadline = noticeStaging.BidDeadline,
-                OpenBidTime = noticeStaging.OpenBidTime,
-                Status = "Active"
-            };
-            await _notices.AddAsync(notice, ct);
-
-            var stagingPackageQuery = await _packageStaging.QueryTrackingAsync(ct);
-            var stagingPackages = await stagingPackageQuery
-                .Where(x => x.NoticeStagingId == noticeStaging.Id)
-                .ToListAsync(ct);
-
-            foreach (var stagingPackage in stagingPackages)
-            {
-                var package = new TenderPackage
-                {
-                    Id = _idGenerator.NextId(),
-                    NoticeId = notice.Id,
-                    PackageStagingId = stagingPackage.Id,
-                    LotNo = stagingPackage.LotNo,
-                    LotName = stagingPackage.LotName,
-                    PackageNo = stagingPackage.PackageNo,
-                    PackageName = stagingPackage.PackageName,
-                    Category = stagingPackage.Category,
-                    Quantity = stagingPackage.Quantity,
-                    Unit = stagingPackage.Unit,
-                    BudgetAmount = stagingPackage.BudgetAmount,
-                    MaxPrice = stagingPackage.MaxPrice,
-                    DeliveryPlace = stagingPackage.DeliveryPlace,
-                    DeliveryPeriod = stagingPackage.DeliveryPeriod,
-                    Status = "New"
-                };
-                await _packages.AddAsync(package, ct);
-                stagingPackage.ReviewStatus = ReviewStatus.Approved;
-
-                var stagingRequirementQuery = await _requirementStaging.QueryTrackingAsync(ct);
-                var stagingRequirements = await stagingRequirementQuery
-                    .Where(x => x.PackageStagingId == stagingPackage.Id)
-                    .ToListAsync(ct);
-
-                foreach (var stagingRequirement in stagingRequirements)
-                {
-                    await _requirements.AddAsync(new RequirementItem
-                    {
-                        Id = _idGenerator.NextId(),
-                        PackageId = package.Id,
-                        RequirementStagingId = stagingRequirement.Id,
-                        RequirementType = stagingRequirement.RequirementType,
-                        OriginalText = stagingRequirement.OriginalText,
-                        SourceFileId = stagingRequirement.SourceFileId,
-                        SourcePage = stagingRequirement.SourcePage,
-                        IsMandatory = stagingRequirement.IsMandatory,
-                        IsRejectRisk = stagingRequirement.IsRejectRisk,
-                        RequiredEvidenceType = stagingRequirement.RequiredEvidenceType,
-                        RiskLevel = stagingRequirement.RiskLevel,
-                        AiExplanation = stagingRequirement.AiExplanation
-                    }, ct);
-                    stagingRequirement.ReviewStatus = ReviewStatus.Approved;
-                }
-            }
-
             MarkApproved(task, noticeStaging, request.Remark);
             raw.Status = RawNoticeStatus.Approved;
             await _unitOfWork.SaveChangesAsync(ct);
-            await _unitOfWork.CommitAsync(ct);
+            return Map(existingNotice);
+        }
 
-            return Map(notice);
-        }
-        catch
+        var notice = new Notice
         {
-            await _unitOfWork.RollbackAsync(CancellationToken.None);
-            throw;
+            Id = _idGenerator.NextId(),
+            RawNoticeId = raw.Id,
+            NoticeStagingId = noticeStaging.Id,
+            Title = raw.Title,
+            NoticeType = noticeStaging.NoticeType,
+            ProjectName = noticeStaging.ProjectName,
+            ProjectCode = noticeStaging.ProjectCode,
+            BuyerName = noticeStaging.BuyerName,
+            AgencyName = noticeStaging.AgencyName,
+            Region = noticeStaging.Region,
+            BudgetAmount = noticeStaging.BudgetAmount,
+            PublishTime = noticeStaging.PublishTime,
+            SignupDeadline = noticeStaging.SignupDeadline,
+            BidDeadline = noticeStaging.BidDeadline,
+            OpenBidTime = noticeStaging.OpenBidTime,
+            Status = "Active"
+        };
+        await _notices.AddAsync(notice, ct);
+
+        var stagingPackageQuery = await _packageStaging.QueryTrackingAsync(ct);
+        var stagingPackages = await stagingPackageQuery
+            .Where(x => x.NoticeStagingId == noticeStaging.Id)
+            .ToListAsync(ct);
+
+        foreach (var stagingPackage in stagingPackages)
+        {
+            var package = new TenderPackage
+            {
+                Id = _idGenerator.NextId(),
+                NoticeId = notice.Id,
+                PackageStagingId = stagingPackage.Id,
+                LotNo = stagingPackage.LotNo,
+                LotName = stagingPackage.LotName,
+                PackageNo = stagingPackage.PackageNo,
+                PackageName = stagingPackage.PackageName,
+                Category = stagingPackage.Category,
+                Quantity = stagingPackage.Quantity,
+                Unit = stagingPackage.Unit,
+                BudgetAmount = stagingPackage.BudgetAmount,
+                MaxPrice = stagingPackage.MaxPrice,
+                DeliveryPlace = stagingPackage.DeliveryPlace,
+                DeliveryPeriod = stagingPackage.DeliveryPeriod,
+                Status = "New"
+            };
+            await _packages.AddAsync(package, ct);
+            stagingPackage.ReviewStatus = ReviewStatus.Approved;
+
+            var stagingRequirementQuery = await _requirementStaging.QueryTrackingAsync(ct);
+            var stagingRequirements = await stagingRequirementQuery
+                .Where(x => x.PackageStagingId == stagingPackage.Id)
+                .ToListAsync(ct);
+
+            foreach (var stagingRequirement in stagingRequirements)
+            {
+                await _requirements.AddAsync(new RequirementItem
+                {
+                    Id = _idGenerator.NextId(),
+                    PackageId = package.Id,
+                    RequirementStagingId = stagingRequirement.Id,
+                    RequirementType = stagingRequirement.RequirementType,
+                    OriginalText = stagingRequirement.OriginalText,
+                    SourceFileId = stagingRequirement.SourceFileId,
+                    SourcePage = stagingRequirement.SourcePage,
+                    IsMandatory = stagingRequirement.IsMandatory,
+                    IsRejectRisk = stagingRequirement.IsRejectRisk,
+                    RequiredEvidenceType = stagingRequirement.RequiredEvidenceType,
+                    RiskLevel = stagingRequirement.RiskLevel,
+                    AiExplanation = stagingRequirement.AiExplanation
+                }, ct);
+                stagingRequirement.ReviewStatus = ReviewStatus.Approved;
+            }
         }
+
+        MarkApproved(task, noticeStaging, request.Remark);
+        raw.Status = RawNoticeStatus.Approved;
+        await _unitOfWork.SaveChangesAsync(ct);
+
+        return Map(notice);
     }
 
     public async Task IgnoreAsync(
@@ -193,6 +196,78 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         await _unitOfWork.SaveChangesAsync(ct);
     }
 
+    public async Task<EnqueueJobDto> EnqueueRawNoticeReparseAsync(
+        long rawNoticeId,
+        ReparseRawNoticeRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var tenant = RequireTenant();
+        var userId = RequireUser();
+        var raw = await GetRawForUpdateAsync(rawNoticeId, ct);
+        if (raw.Status == RawNoticeStatus.Approved ||
+            await _notices.FirstOrDefaultAsync(x => x.RawNoticeId == raw.Id, ct) != null)
+        {
+            throw new AtlasException("Approved BidOps raw notices cannot be reparsed in MVP.");
+        }
+
+        var reason = BuildReparseReason(request.Reason);
+        raw.Status = RawNoticeStatus.ParseQueued;
+        raw.LastError = reason;
+
+        var stagingQuery = await _noticeStaging.QueryTrackingAsync(ct);
+        var staging = await stagingQuery
+            .Where(x => x.RawNoticeId == raw.Id)
+            .OrderByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (staging != null)
+        {
+            staging.ReviewStatus = ReviewStatus.ReparseRequired;
+            staging.ReviewerId = null;
+            staging.ReviewedAt = null;
+
+            var taskQuery = await _reviewTasks.QueryTrackingAsync(ct);
+            var task = await taskQuery
+                .Where(x => x.BizType == "NoticeStaging" && x.BizId == staging.Id)
+                .OrderByDescending(x => x.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+            if (task != null)
+            {
+                task.Status = ReviewTaskStatus.ReparseRequired;
+                task.Decision = "ReparseRequired";
+                task.Remark = reason;
+                task.ReviewerId = null;
+                task.ReviewedAt = null;
+            }
+        }
+
+        await _unitOfWork.SaveChangesAsync(ct);
+
+        var reparseRunId = Guid.NewGuid().ToString("N");
+        var result = await _jobs.EnqueueAsync(
+            new EnqueueBackgroundJobRequest<AttachmentProcessJobPayload>
+            {
+                JobType = BidOpsBackgroundJobTypes.AttachmentProcess,
+                Queue = BidOpsBackgroundJobQueues.BidOps,
+                JobName = "BidOps raw notice reparse",
+                TenantId = tenant,
+                StoreId = _identity.StoreId,
+                DeduplicationKey = $"bidops:manual-reparse:{tenant}:{raw.Id}:{reparseRunId}",
+                MaxAttempts = 3,
+                Payload = new AttachmentProcessJobPayload(
+                    tenant,
+                    _identity.StoreId,
+                    userId,
+                    _identity.UserName,
+                    raw.Id,
+                    reparseRunId)
+            },
+            ct);
+
+        return new EnqueueJobDto(result.JobId, result.JobType, result.Queue, result.AlreadyExists);
+    }
+
     private async Task<ReviewTask> GetTaskForUpdateAsync(long reviewTaskId, CancellationToken ct)
     {
         var taskQuery = await _reviewTasks.QueryTrackingAsync(ct);
@@ -221,6 +296,26 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
             throw new AtlasException($"BidOps raw notice does not exist: {id}");
 
         return raw;
+    }
+
+    private long RequireTenant()
+    {
+        return _identity.TenantId
+            ?? throw new AtlasException("Tenant context is required for BidOps operations.");
+    }
+
+    private long RequireUser()
+    {
+        return _identity.UserId
+            ?? throw new AtlasException("Authenticated user context is required for BidOps operations.");
+    }
+
+    private static string BuildReparseReason(string? reason)
+    {
+        var value = string.IsNullOrWhiteSpace(reason)
+            ? "Reparse requested by reviewer."
+            : $"Reparse requested by reviewer: {reason.Trim()}";
+        return value.Length <= 2000 ? value : value[..2000];
     }
 
     private void MarkApproved(

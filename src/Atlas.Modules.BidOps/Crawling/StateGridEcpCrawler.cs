@@ -313,7 +313,12 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
                 source,
                 payload,
                 ct);
-            return StateGridEcpWcmParser.ParseNoticeDetail(json, notice);
+            var document = StateGridEcpWcmParser.ParseNoticeDetail(json, notice);
+            var apiAttachments = await FetchApiAttachmentDocumentsAsync(source, channel, notice, backgroundJobId, ct);
+            return document with
+            {
+                Attachments = MergeAttachments(document.Attachments, apiAttachments)
+            };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -325,6 +330,36 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
                 $"State Grid detail API failed for notice {notice.NoticeId}; using list metadata. {ex.Message}",
                 ct);
             return StateGridEcpWcmParser.CreateFallbackDocument(notice);
+        }
+    }
+
+    private async Task<IReadOnlyList<StateGridAttachmentDocument>> FetchApiAttachmentDocumentsAsync(
+        CrawlSource source,
+        CrawlChannel channel,
+        StateGridEcpApiNotice notice,
+        long? backgroundJobId,
+        CancellationToken ct)
+    {
+        var attachmentApiPath = StateGridEcpWcmParser.GetAttachmentApiPath(notice.Doctype);
+        if (string.IsNullOrWhiteSpace(attachmentApiPath))
+            return Array.Empty<StateGridAttachmentDocument>();
+
+        try
+        {
+            var payload = JsonSerializer.Serialize(notice.NoticeId);
+            var json = await PostJsonAsync(BuildApiUri(source, attachmentApiPath), source, payload, ct);
+            return StateGridEcpWcmParser.ParseNoticeFileList(json, notice, source.BaseUrl);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await AddLogAsync(
+                source.Id,
+                channel.Id,
+                backgroundJobId,
+                "AttachmentListFailed",
+                $"State Grid attachment API failed for notice {notice.NoticeId}: {ex.Message}",
+                ct);
+            return Array.Empty<StateGridAttachmentDocument>();
         }
     }
 
@@ -501,5 +536,28 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
                 x.FileType,
                 x.FileSize))
             .ToArray();
+    }
+
+    private static IReadOnlyList<StateGridAttachmentDocument> MergeAttachments(
+        IReadOnlyList<StateGridAttachmentDocument> primary,
+        IReadOnlyList<StateGridAttachmentDocument> secondary)
+    {
+        if (primary.Count == 0)
+            return secondary;
+
+        if (secondary.Count == 0)
+            return primary;
+
+        var merged = new List<StateGridAttachmentDocument>(primary.Count + secondary.Count);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var attachment in primary.Concat(secondary))
+        {
+            if (string.IsNullOrWhiteSpace(attachment.FileUrl) || !seen.Add(attachment.FileUrl))
+                continue;
+
+            merged.Add(attachment);
+        }
+
+        return merged;
     }
 }

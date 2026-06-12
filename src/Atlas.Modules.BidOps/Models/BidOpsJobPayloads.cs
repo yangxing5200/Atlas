@@ -40,7 +40,8 @@ public sealed record AttachmentProcessJobPayload(
     long? StoreId,
     long UserId,
     string UserName,
-    long RawNoticeId)
+    long RawNoticeId,
+    string? ForceParseRunId = null)
     : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
 
 public sealed record StructuredParseJobPayload(
@@ -48,10 +49,47 @@ public sealed record StructuredParseJobPayload(
     long? StoreId,
     long UserId,
     string UserName,
-    long RawNoticeId)
+    long RawNoticeId,
+    string? ForceParseRunId = null)
     : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
 
 public sealed record MockAiParseJobPayload(
+    long TenantId,
+    long? StoreId,
+    long UserId,
+    string UserName,
+    long RawNoticeId)
+    : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
+
+public sealed record OpportunityMaintenanceJobPayload(
+    long TenantId,
+    long? StoreId,
+    long UserId,
+    string UserName,
+    int MaxItems,
+    int DeadlineWarningDays,
+    int StaleDays)
+    : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
+
+public sealed record SupplierEvidenceExpiryScanJobPayload(
+    long TenantId,
+    long? StoreId,
+    long UserId,
+    string UserName,
+    int MaxItems,
+    int WarningDays)
+    : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
+
+public sealed record SupplierMatchRunJobPayload(
+    long TenantId,
+    long? StoreId,
+    long UserId,
+    string UserName,
+    long RunId,
+    int MaxSuppliers)
+    : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
+
+public sealed record OutcomeSupplierExtractJobPayload(
     long TenantId,
     long? StoreId,
     long UserId,

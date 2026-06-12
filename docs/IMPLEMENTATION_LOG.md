@@ -136,3 +136,716 @@ Verification:
 - `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-restore` succeeded with 0 warnings and 0 errors.
 - `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-restore --verbosity minimal` succeeded: 58 passed.
 - Atlas.WebApi was reachable at `http://localhost:5260/swagger/index.html` with HTTP 200.
+
+## 2026-06-11 BidOps Admin Frontend
+
+Completed:
+
+- Added `frontend/atlas-admin` as an independent Vue 3 + Vite + TypeScript admin frontend.
+- Added Element Plus, Pinia, Vue Router, Axios, Dayjs, and DOMPurify integration.
+- Implemented Vite alias `@`, `/api` development proxy, `.env.example`, and npm scripts for `dev`, `typecheck`, `build`, and `preview`.
+- Implemented `BasicLayout`, `BlankLayout`, router guards, auth/app/permission stores, and an Axios HTTP client with Bearer/Cookie support plus `X-Tenant-Id` and `X-Store-Id` headers.
+- Added BidOps permission constants, TypeScript DTO/request types, and API wrappers for crawl sources, crawl channels, raw notices, review tasks, notices, and packages.
+- Implemented BidOps pages:
+  - `/bidops`
+  - `/bidops/crawl/sources`
+  - `/bidops/crawl/channels`
+  - `/bidops/crawl/raw-notices`
+  - `/bidops/crawl/raw-notices/:id`
+  - `/bidops/review/tasks`
+  - `/bidops/review/tasks/:id`
+  - `/bidops/notices`
+  - `/bidops/packages`
+  - `/bidops/packages/:id`
+- Added shared components and composables for page containers, search forms, form drawers, tables, empty states, pagination/query loading, permissions, and requests.
+- Added BidOps UI components for status tags, risk tags, deadline countdowns, permission buttons, raw notice text preview, manual public URL import, requirement tables, and review decisions.
+- Added `frontend/atlas-admin/docs/BIDOPS_API_MAPPING.md` and `frontend/atlas-admin/docs/BIDOPS_FRONTEND_GAPS.md`.
+
+Verification:
+
+- `npm install` succeeded. Runtime dependency audit with `npm audit --omit=dev` reported 0 vulnerabilities.
+- `npm run typecheck` succeeded.
+- `npm run build` succeeded. Vite reported non-fatal warnings about Rollup comment annotations in a dependency and chunk size after minification.
+- Started the Vite dev server at `http://localhost:5173/`; `Invoke-WebRequest http://localhost:5173` returned HTTP 200.
+- Browser smoke check confirmed `/bidops` renders the Atlas Admin title, left menu, and 6 BidOps entry cards.
+- Browser smoke check confirmed `/bidops/crawl/sources` renders search, compliance warning, create action, table headers, and empty state even when the backend proxy returns an error.
+- Browser smoke check confirmed `/bidops/packages/1` renders the documented missing package detail/timeline placeholders and requirements table.
+
+## 2026-06-12 BidOps Frontend Proxy Fix
+
+Completed:
+
+- Updated the Vite development proxy default from `https://localhost:5001` to `http://localhost:5260`, matching the local `src/Atlas.WebApi` launch profile.
+- Updated `frontend/atlas-admin/.env.example` and README proxy instructions.
+- Confirmed the previous menu errors were Vite proxy failures to `::1:5001`, while `http://localhost:5260/swagger/index.html` returned HTTP 200 and BidOps API endpoints returned authorization responses from the real backend.
+
+## 2026-06-12 State Grid ECP Detail URL Fix
+
+Completed:
+
+- Fixed State Grid WCM list parsing so public detail URLs are built from `noticeId`/`id` plus `firstPageMenuId`, matching the portal's `/doc/{doctype}/{id}_{menuId}` router.
+- Stopped using `firstPageDocId` as the route document ID for `doci-*` procurement notices. Public checks showed a sampled `firstPageDocId` returned `SYS001` from `/index/getNoticeWin`, while the matching `noticeId` returned the correct notice.
+- Added a regression test for the `doci-win` failure mode reported from the local review pool.
+- Repaired local `atlas_bidops_runtime` SGCC Raw data: 80 active Raw URLs, URL hashes, text previews, text snapshots, and HTML snapshots now use the correct `noticeId` route. One historical duplicate pending review row was marked ignored because its corrected URL collides with an already-approved Raw notice.
+- Added the `atlas_global_bidops` connection string to Worker `BidOpsLocal` configuration so local Worker restarts use the same seeded BidOps tenant as WebApi.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-restore --filter "FullyQualifiedName~BidOpsModuleTests" --verbosity minimal` succeeded: 12 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-restore --verbosity minimal` succeeded: 59 passed.
+- Local WebApi was restarted on `http://localhost:5260`, local Worker was restarted in `BidOpsLocal`, and Worker recovery completed against tenant `300001`.
+- Authenticated API verification confirmed review task `323460760351150083` returns `https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-win/2606108456217237_2018060501171111` in both `RawNotice.DetailUrl` and Raw full-text `SourceUrl`.
+
+## 2026-06-12 BidOps Project Code Extraction Fix
+
+Completed:
+
+- Fixed deterministic project-code extraction so a blank `ProjectCode:` line cannot consume the next metadata field name such as `ListPublishTime`.
+- Added HTML-aware project-code extraction for State Grid WCM detail content, including labels split by HTML tags such as `采购编</span><span>号`.
+- Repaired local `atlas_bidops_runtime` staging data: 39 `ProjectCode = ListPublishTime` rows were corrected, with 9 real codes restored and 30 rows cleared because no reliable public project code was present.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-restore --filter "FullyQualifiedName~BidOpsModuleTests" --verbosity minimal` succeeded: 14 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-restore --verbosity minimal` succeeded: 61 passed.
+- Local WebApi and Worker were restarted in `BidOpsLocal`.
+- Authenticated review-list API verification returned 79 pending rows and `ListPublishTimeItems = 0`; sample project codes included `17FH05`, `932668`, `552635`, and `19FJAC`.
+
+## 2026-06-12 BidOps Admin Login Integration
+
+Completed:
+
+- Added `AtlasUserAuthController` under `src/Atlas.Extensions.DependencyInjection` to expose Atlas user login, refresh-token, logout, switch-store, and accessible-store endpoints from the WebApi.
+- Added `src/Atlas.WebApi/appsettings.BidOpsLocal.json` and a `bidops-local` launch profile so the local WebApi uses the seeded `atlas_global_bidops` global database.
+- Added frontend auth API wrappers, a `/login` route/page, real session storage, route guard permission-context loading, 401 redirect handling, and top-bar logout.
+- Removed the previous development permission seeding path from the frontend auth store. The UI now depends on the token and `/api/auth/context` permissions.
+- Prefilled the local seeded BidOps account on the login page for development convenience: domain `bidops`, username `bidops_admin`, password `Pass1234!`.
+
+Verification:
+
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore` succeeded with 0 warnings and 0 errors.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation/chunk-size warnings.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-restore --verbosity minimal` succeeded: 58 passed.
+- Started WebApi with `--launch-profile bidops-local` at `http://localhost:5260` and Vite at `http://localhost:5173`.
+- Sequential proxy smoke test through `http://localhost:5173/api/user/login` succeeded for `bidops_admin`, `/api/auth/context` returned 20 permissions, and BidOps list APIs returned successfully.
+- Browser smoke test confirmed `/login` renders the seeded account, login redirects to `/bidops`, and `/bidops/crawl/sources` plus `/bidops/crawl/raw-notices` render without 500 errors.
+
+## 2026-06-12 BidOps Review Usability
+
+Completed:
+
+- Expanded `ReviewTaskDto` with project, buyer, region, key date, package/requirement/risk counts, and confidence summary fields.
+- Updated `GetReviewTaskDetailAsync` to return Raw notice text content from `IBidOpsFileStore` for the review detail page.
+- Added local file-store relative-path resolution and a BidOpsLocal fallback root so WebApi can read Raw text created by the local Worker.
+- Reworked the review task list to show business review columns instead of only task title and internal IDs.
+- Reworked the review detail page to show review summary, Raw evidence, full notice text, parsed notice fields, packages, requirements, risk flags, and the decision panel.
+- Changed frontend BidOps ID handling to string-safe route/API values to avoid JavaScript precision loss on Atlas snowflake IDs.
+- Added contextual BidOps status labels so review and Raw statuses render as names instead of bare numbers.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore` succeeded with 0 warnings and 0 errors after stopping the running WebApi process that locked DLLs.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation/chunk-size warnings.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-restore --verbosity minimal` succeeded: 58 passed.
+- Proxy API smoke test confirmed review list returns project/buyer/package/requirement summary fields, and review detail returns Raw text content longer than the 200-character preview.
+- Browser smoke test confirmed `/bidops/review/tasks` shows business columns and `/bidops/review/tasks/323460760699277314` shows full text, parsed result, requirements, readable statuses, and review actions without the previous empty detail state.
+
+## 2026-06-12 BidOps Chinese Display Labels
+
+Completed:
+
+- Added BidOps frontend display mappings for notice types, source types, package categories, requirement types, evidence types, risk levels, and common statuses.
+- Updated review list/detail, Raw notice list/detail, formal notices, packages, crawl sources/channels, manual import, status tags, risk tags, and requirement tables to prefer Chinese labels while keeping backend enum values unchanged.
+- Added Chinese defaults for common parser explanations shown in the review requirement table.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- Browser smoke test confirmed review detail displays Chinese notice type, status, requirement type, evidence type, and parser explanation, with no visible `AwardAnnouncement` or default English qualification explanation.
+
+## 2026-06-12 BidOps State Grid Attachments
+
+Completed:
+
+- Added State Grid ECP `doci-win` attachment discovery through the public WCM `index/getWinFile` endpoint.
+- Built public `downLoadWinFile` attachment URLs from `FILE_PATH` and `FILE_NAME`, and kept attachment download/text extraction in the existing Worker pipeline.
+- Added stable hashing for State Grid `downLoadWinFile` URLs so volatile encrypted `filePath` tokens do not create duplicate attachments across scans.
+- Updated Raw attachment ingestion to upsert by stable `FileHash` and refresh the latest public download URL when a known attachment is seen again.
+- Added `RawAttachmentDto`, `GET /api/bidops/raw-notices/{id}/attachments`, and `ReviewTaskDetailDto.Attachments`.
+- Added the shared frontend `RawAttachmentTable` and rendered public attachments in Raw notice detail and review detail pages.
+- Repaired local `atlas_bidops_runtime` data: widened the local attachment URL/name columns to match entity configuration, added the missing tenant-scoped attachment unique index, and backfilled 39 public SGCC attachments with Chinese file names.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-restore --filter "FullyQualifiedName~BidOpsModuleTests" --verbosity minimal` succeeded: 16 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-build --verbosity minimal` succeeded: 63 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation/chunk-size warnings.
+- Authenticated API smoke test confirmed `GET /api/bidops/raw-notices/323456792795418624/attachments` returns 1 attachment and review detail `323460627374936064` includes 1 attachment.
+- Browser smoke test confirmed Raw notice detail and review detail show the `公开附件` section, Chinese attachment name `10成交候选人公示-补充17FG05.pdf`, download/extract statuses, and an `打开附件` public link.
+
+## 2026-06-12 BidOps Review Approval Transaction Fix
+
+Completed:
+
+- Fixed review approval failing under MySQL retry-on-failure with `MySqlRetryingExecutionStrategy does not support user-initiated transactions`.
+- Added `IUnitOfWork.ExecuteInTransactionAsync` overloads so tenant business services can execute manual transactions inside EF Core's configured execution strategy without injecting DbContext directly.
+- Implemented the execution-strategy transaction wrapper in `TenantUnitOfWork`.
+- Updated `BidOpsReviewService.ApproveAsync` to run the formal Notice/Package/Requirement import transaction through the UnitOfWork execution strategy.
+- Updated `ServiceBase` transaction helpers to reuse the same UnitOfWork execution-strategy path.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-restore --filter "FullyQualifiedName~BidOpsModuleTests" --verbosity minimal` succeeded: 16 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-build --verbosity minimal` succeeded: 63 passed.
+- Local WebApi and Worker were restarted in `BidOpsLocal`.
+- Authenticated API smoke test approved review task `323460760699277314` successfully and returned formal notice `323637502403547136`; the review task status became `Approved`.
+
+## 2026-06-12 BidOps Attachment Text Viewer
+
+Completed:
+
+- Added `RawAttachmentTextDto` and `GET /api/bidops/raw-notices/{id}/attachments/{attachmentId}/text` so extracted attachment text can be read without exposing file-store keys.
+- Updated BidOps query services to load attachment extracted text from `IBidOpsFileStore` through `RawAttachment.TextContentStorageKey`, capped at 120,000 characters for UI response safety.
+- Added `rawNoticesApi.attachmentText` and a `查看文本` action in `RawAttachmentTable`; Raw notice detail and review detail pass the Raw notice ID so the shared attachment table can open the extracted text drawer.
+- Fixed `BidOpsLocal` file-store path resolution to prefer the repository root for relative paths and added `src/Atlas.Worker/var/bidops-storage` as a fallback so WebApi can read existing local attachment text produced by Worker.
+
+Verification:
+
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-restore --verbosity minimal` succeeded: 63 passed. A parallel build/test run emitted one transient DLL copy retry warning, then completed successfully.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation/chunk-size warnings.
+- Local WebApi and Worker were restarted in `BidOpsLocal`.
+- Authenticated API smoke test confirmed `GET /api/bidops/raw-notices/323456792795418624/attachments/323800000000000116/text` returns file name `10成交候选人公示-补充17FG05.pdf` and extracted text length `44640`.
+- Browser smoke test confirmed Raw notice detail shows `公开附件` with `查看文本`, and clicking it opens a drawer titled `10成交候选人公示-补充17FG05.pdf` with extracted text content.
+
+## 2026-06-12 BidOps PDF Text Extraction Fix
+
+Completed:
+
+- Replaced the Raw PDF byte/regex extractor with `PdfPig` page text extraction for PDF attachments.
+- Added `PdfPig` to central package management and the BidOps module.
+- Added a PDF extractor regression test that generates a PDF, extracts text through `BidOpsTextExtractor`, and verifies raw PDF object markers such as `endstream`/`endobj` are not returned.
+- Rebuilt local Worker with restored dependencies so PdfPig runtime assemblies are copied to the Worker output.
+- Re-extracted all 39 local downloaded PDF attachments in `atlas_bidops_runtime`; all returned to `TextExtractStatus = Succeeded` with populated `TextContentStorageKey`.
+
+Verification:
+
+- Direct extractor probe on `10成交候选人公示-补充17FG05.pdf` returned readable Chinese text length `1703`, beginning with `国网河南电力新乡供电公司 2026 年第三次服务授权批次竞争性谈判采购 成交候选人公示-补充`.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsTextExtractor" --verbosity minimal` succeeded: 2 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-build --verbosity minimal` succeeded: 64 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj` succeeded with 0 warnings and 0 errors.
+- `tools\check-architecture-governance.ps1` succeeded.
+- Authenticated API smoke test confirmed `GET /api/bidops/raw-notices/323456792795418624/attachments/323800000000000116/text` returns Chinese title/content, length `1703`, and no raw PDF `endstream`/`endobj` markers.
+
+## 2026-06-12 BidOps PDF Text Layout Preservation
+
+Completed:
+
+- Updated `BidOpsTextExtractor` so PDF text uses PdfPig's content-order extraction with PDF-specific whitespace normalization.
+- Preserved PDF page line breaks instead of applying the general `\s+` collapse that made all extracted PDF text appear pasted together in the attachment text drawer.
+- Kept fallback word extraction for pages where content-order extraction does not produce human-readable text.
+- Updated the PDF extractor regression test to assert that separate PDF text lines remain separated by a newline and are not collapsed into one sentence.
+- Re-extracted all 39 local downloaded PDF attachments in `atlas_bidops_runtime` so existing `.extracted.txt` files use the new readable line-preserving format.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsTextExtractor" --verbosity minimal` succeeded: 2 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-build --verbosity minimal` succeeded: 64 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj` succeeded with 0 warnings and 0 errors.
+- `tools\check-architecture-governance.ps1` succeeded.
+- Local DB check confirmed all 39 PDF attachments returned to `TextExtractStatus = Succeeded`.
+- Authenticated API smoke test confirmed `GET /api/bidops/raw-notices/323456792795418624/attachments/323800000000000116/text` returns `10成交候选人公示-补充17FG05.pdf` with readable Chinese text, 88 lines, 3 blank lines, and no raw PDF `endstream`/`endobj` markers.
+
+## 2026-06-12 BidOps Raw Notice Chinese Display Text
+
+Completed:
+
+- Added `BidOpsRawNoticeTextFormatter` to convert source-oriented Raw notice text into review-friendly Chinese display text at query time.
+- Mapped common State Grid fields such as `SourceUrl`, `Doctype`, `PublishOrgName`, `ListPublishTime`, `resultValue.notice.CONT`, `bidagtName`, and `bidOrgName` to Chinese labels.
+- Hidden internal source IDs and volatile file-token fields that are not useful for manual review, while keeping the original Raw text files unchanged in `IBidOpsFileStore`.
+- Stripped HTML tags from embedded public notice content before returning it to the UI.
+- Updated `RawNoticePreview` so announcement text renders as a document-style article instead of a monospace code block; attachment extracted text keeps the monospace variant for table-like PDF text.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsRawNoticeTextFormatter|FullyQualifiedName~BidOpsTextExtractor" --verbosity minimal` succeeded: 3 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-build --verbosity minimal` succeeded: 65 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj` succeeded with 0 warnings and 0 errors.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation/chunk-size warnings.
+- `tools\check-architecture-governance.ps1` succeeded.
+- Authenticated API smoke test confirmed review task `323460760699277314` returns Chinese Raw text labels, including `公告类型：中标/成交结果公告` and `公告内容：详见附件`, with no `resultValue`, `Doctype:`, `ProjectCode:`, or HTML tag leakage.
+- Browser smoke test confirmed the review detail `公告全文` region renders as an `ARTICLE` with system document font and `pre-wrap` line preservation, not as a monospace code block.
+
+## 2026-06-12 BidOps Package Detail APIs
+
+Completed:
+
+- Added `GET /api/bidops/packages/{id}` for package base information, linked notice summary, requirement counts, reject-risk counts, and package timestamps.
+- Added `GET /api/bidops/packages/{id}/timeline` as an MVP read model synthesized from existing notice/package/requirement timestamps.
+- Expanded `TenderPackageDto` and added `PackageTimelineItemDto`.
+- Updated the package detail frontend to load package detail, timeline, and requirements concurrently, replacing the previous backend-gap alerts.
+- Added Chinese display for the `New` package status.
+- Updated frontend API gap and API mapping docs so package detail/timeline are no longer listed as missing.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~PackagesController|FullyQualifiedName~BidOpsModuleTests" --verbosity minimal` succeeded: 19 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-build --verbosity minimal` succeeded: 66 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj` succeeded with 0 warnings and 0 errors.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation/chunk-size warnings.
+- `tools\check-architecture-governance.ps1` succeeded.
+- Authenticated API smoke test confirmed package `323637502609068032` returns package detail and a 4-event timeline: `公告发布`, `正式公告入库`, `包件创建`, `要求项生成`.
+- Browser smoke test confirmed `/bidops/packages/323637502609068032` no longer shows `后端接口待补充`, displays `包件基础信息`, `关联公告`, `包件时间线`, and `要求项`, and renders package status as `新建`.
+
+## 2026-06-12 Background Task Observability P0
+
+Completed:
+
+- Added shared background job operations DTOs, masked payload output, tenant-scoped list/detail/summary queries, manual retry, and safe cancel in `Atlas.BackgroundTasks`.
+- Added `/api/ops/background-jobs`, `/api/ops/background-jobs/summary`, `/api/ops/background-jobs/{id}`, retry, and cancel endpoints.
+- Added `/api/bidops/operations/dashboard`, `/api/bidops/operations/jobs`, `/api/bidops/operations/config-check`, `/api/bidops/operations/channels/health`, and BidOps retry/cancel endpoints.
+- Added frontend pages `/ops/jobs`, `/ops/jobs/:id`, `/bidops/operations`, `/bidops/operations/jobs`, and `/bidops/operations/channels`.
+- Added config warning checks for disabled workers, missing `bidops` queue, disabled recurring runner, missing ScheduledScan/Recovery tenant IDs, no enabled sources/channels, and NeedLogin sources.
+- Added documentation: `docs/background_tasks_observability.md`, `docs/bidops_operations_dashboard.md`, and `docs/log_query.md`.
+
+Verification:
+
+- `dotnet restore Atlas.sln` succeeded.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --verbosity minimal` succeeded with 0 warnings and 0 errors.
+- `dotnet build Atlas.sln --no-restore --verbosity minimal` succeeded; only existing test-project nullable/EF warnings were reported.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BackgroundTaskOperationsTests|FullyQualifiedName~RuntimeModeRegistrationTests|FullyQualifiedName~BidOpsModuleTests" --verbosity minimal` succeeded: 41 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-build --verbosity minimal` succeeded: 69 passed.
+- `dotnet test Atlas.sln --no-build --verbosity minimal` still fails in existing integration-test setup: `Atlas.Integration.Tests` has 36 failures from missing `ICurrentIdentity` in cache integration tests, missing `atlas_global.databasemasterservers`, and old MySQL key-length limits. Core, Services, and Infrastructure.Http tests passed in that run.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation/chunk-size warnings.
+- `powershell -ExecutionPolicy Bypass -File tools\check-architecture-governance.ps1` succeeded.
+- `docker compose config` succeeded.
+- Authenticated API smoke test as `bidops_admin` confirmed `GET /api/ops/background-jobs/summary`, `GET /api/ops/background-jobs`, `GET /api/bidops/operations/config-check`, `GET /api/bidops/operations/dashboard`, and `GET /api/bidops/operations/channels/health` all return data.
+- Browser smoke test confirmed `/bidops/operations`, `/bidops/operations/jobs`, `/bidops/operations/channels`, `/ops/jobs`, and a job detail page render without 500s, without `后端接口待补充`, and without console errors.
+
+## 2026-06-12 BidOps Product Module Blueprint
+
+Completed:
+
+- Added `docs/BIDOPS_PRODUCT_MODULE_BLUEPRINT.md` as the BidOps product/module blueprint.
+- Defined 13 first-level modules, their goals, routes, APIs, core objects, permissions, background tasks, current status, and Atlas integration boundaries.
+- Mapped existing Crawl, Review, Business, and Operations capabilities into the expanded module system while preserving current APIs and permissions.
+
+Verification:
+
+- `git diff --check -- docs/BIDOPS_PRODUCT_MODULE_BLUEPRINT.md docs/IMPLEMENTATION_LOG.md` succeeded.
+
+## 2026-06-12 BidOps Module Gaps
+
+Completed:
+
+- Added `docs/BIDOPS_MODULE_GAPS.md` to compare the 13-module blueprint with current backend entities, APIs, jobs, permissions, and frontend routes.
+- Classified each module as implemented MVP, partially implemented, or not implemented, with concrete API, permission, data model, frontend, and background-task gaps.
+- Documented recommended execution order and reiterated prohibited non-compliant capabilities.
+
+Verification:
+
+- `git diff --check -- docs/BIDOPS_MODULE_GAPS.md docs/IMPLEMENTATION_LOG.md` succeeded.
+
+## 2026-06-12 BidOps 13-Module Contract Detail
+
+Completed:
+
+- Expanded `docs/BIDOPS_PRODUCT_MODULE_BLUEPRINT.md` section 5 into a fixed implementation contract for all 13 modules.
+- Each module now explicitly lists its goal, routes, APIs, permissions, background tasks, and core objects, separating current implementation from planned capabilities.
+- Replaced shorthand API references with full route paths for planned dashboard, intelligence, processing, opportunity, supplier, matching, pursuit, response, outcome, compliance, operations, and settings APIs.
+
+Verification:
+
+- `git diff --check -- docs/BIDOPS_PRODUCT_MODULE_BLUEPRINT.md docs/IMPLEMENTATION_LOG.md` succeeded.
+
+## 2026-06-12 BidOps Source-Based Module Status
+
+Completed:
+
+- Updated `docs/BIDOPS_MODULE_GAPS.md` to mark all 13 modules as implemented, partially implemented, or not implemented based on the current `src/Atlas.Modules.BidOps` source tree.
+- Added source evidence for implemented and partially implemented modules, including controllers, entities, services, queries, documents, background jobs, and constants.
+- Added explicit source-based absence notes for modules that do not yet have directories, entities, controllers, services, or jobs.
+
+Verification:
+
+- `git diff --check -- docs/BIDOPS_MODULE_GAPS.md docs/IMPLEMENTATION_LOG.md` succeeded.
+
+## 2026-06-12 BidOps Non-Breaking Evolution Guardrail
+
+Completed:
+
+- Added a non-breaking evolution rule to `docs/BIDOPS_PRODUCT_MODULE_BLUEPRINT.md`.
+- Updated `docs/BIDOPS_MODULE_GAPS.md` to state that current controllers, API routes, permissions, frontend routes, and request/response semantics must remain compatible while the 13 modules are added.
+- Recorded the compatibility decision in `docs/DECISIONS.md`.
+
+Verification:
+
+- `git diff --check -- docs/BIDOPS_PRODUCT_MODULE_BLUEPRINT.md docs/BIDOPS_MODULE_GAPS.md docs/DECISIONS.md docs/IMPLEMENTATION_LOG.md` succeeded.
+
+## 2026-06-12 BidOps Frontend Module Placeholders
+
+Completed:
+
+- Added a shared `ComingSoonPage` for BidOps routes that are not implemented yet.
+- Reworked the Atlas Admin sidebar into the 13 BidOps module groups while keeping existing working routes and pages available.
+- Added placeholder routes for planned dashboard, intelligence, processing, opportunity, public organization, supplier, matching, pursuit, response, outcome, compliance, operations, and settings pages.
+- Updated the BidOps home page to show the 13 modules and route unimplemented modules to `ComingSoon`.
+- Updated `docs/BIDOPS_MODULE_GAPS.md` to record that frontend menu/route placeholders are complete.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- Browser smoke test confirmed `/bidops` shows all 13 modules, `/bidops/suppliers` renders `ComingSoon`, `/bidops/operations/logs` renders `ComingSoon`, `/bidops/crawl/sources` still renders the existing real page, and no console errors were reported.
+
+## 2026-06-12 BidOps Unimplemented API Guardrail
+
+Completed:
+
+- Strengthened `docs/BIDOPS_PRODUCT_MODULE_BLUEPRINT.md` backend placeholder rules so unimplemented APIs must not return fake successful responses.
+- Updated `docs/BIDOPS_MODULE_GAPS.md` to state that planned API gaps can remain unregistered or return `501 NotImplemented`, but must not return `200 OK` with empty/default data.
+- Recorded the API semantics decision in `docs/DECISIONS.md`.
+
+Verification:
+
+- Scanned current BidOps controllers, queries, and services for placeholder success patterns. No unimplemented backend placeholder success endpoint was found; existing empty-array returns are tied to implemented query paths.
+- `git diff --check -- docs/BIDOPS_PRODUCT_MODULE_BLUEPRINT.md docs/BIDOPS_MODULE_GAPS.md docs/DECISIONS.md docs/IMPLEMENTATION_LOG.md` succeeded.
+
+## 2026-06-12 BidOps P0 Implementation Task Split And RawNotice Pipeline
+
+Completed:
+
+- Added `docs/BIDOPS_IMPLEMENTATION_TASKS.md` to split the 13-module blueprint into executable batches from P0 through Phase G.
+- Added `bidops.ops.read` and `bidops.ops.manage` to the BidOps authorization catalog and frontend permission constants while keeping existing operations APIs compatible with old crawl permissions.
+- Added the real RawNotice pipeline read model backed by existing RawNotice, RawAttachment, staging, ReviewTask, Notice, TenderPackage, and RequirementItem data.
+- Added `GET /api/bidops/raw-notices/{id}/pipeline` and `GET /api/bidops/operations/raw-notices/{id}/pipeline`; missing RawNotice returns 404 instead of fake success data.
+- Added a RawNotice detail pipeline panel showing 公告采集、附件处理、结构化解析、人工审核、正式入库.
+- Updated module blueprint, gap analysis, implementation task status, and decisions for the completed P0 items.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --verbosity minimal` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-restore --filter "FullyQualifiedName~BidOpsModuleTests" --verbosity minimal` succeeded: 21 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-build --filter "FullyQualifiedName~BackgroundTaskOperationsTests|FullyQualifiedName~RuntimeModeRegistrationTests|FullyQualifiedName~BidOpsModuleTests" --verbosity minimal` succeeded: 42 passed.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation/chunk-size warnings.
+- `git diff --check` succeeded; Git reported an existing CRLF/LF warning for `Directory.Packages.props`.
+- `dotnet build Atlas.sln --no-restore --verbosity minimal` initially hit local file locks from running `Atlas.WebApi`/`Atlas.Worker`; after stopping those local dev processes it succeeded with 0 warnings and 0 errors.
+- Authenticated API smoke test as `bidops_admin` confirmed both `GET /api/bidops/raw-notices/{id}/pipeline` and `GET /api/bidops/operations/raw-notices/{id}/pipeline` return 5 pipeline steps for RawNotice `323666828616404992`.
+- Browser smoke test confirmed `/bidops/crawl/raw-notices/323666828616404992` renders `处理流水线`, `公告采集`, `正式入库`, and `公开附件`, with no console error logs.
+
+## 2026-06-12 BidOps Crawl Run Logs P0
+
+Completed:
+
+- Added `CrawlRunLog` as a BidOps authorization data resource.
+- Added `CrawlRunLogDto`, `CrawlRunLogSearchQuery`, repository-backed query methods, and `CrawlRunLogsController`.
+- Added real APIs: `GET /api/bidops/crawl-run-logs` and `GET /api/bidops/crawl-run-logs/{id}`. Missing logs return 404.
+- Replaced the `/bidops/intelligence/run-logs` ComingSoon route with a real run-log list page and added `/bidops/intelligence/run-logs/{id}` detail page.
+- Updated the product blueprint, gap analysis, and implementation task status for P0-04.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --verbosity minimal` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-build --filter "FullyQualifiedName~BidOpsModuleTests" --verbosity minimal` succeeded: 21 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- Authenticated API smoke test as `bidops_admin` confirmed `GET /api/bidops/crawl-run-logs` returned 389 total logs and `GET /api/bidops/crawl-run-logs/323667005276295168` returned operation `StateGridEcpCrawl`.
+- Browser smoke test confirmed `/bidops/intelligence/run-logs` renders a real list instead of `ComingSoon`, and `/bidops/intelligence/run-logs/323667005276295168` renders the log detail and full message with no console error logs.
+
+## 2026-06-12 BidOps Processing Failure Queue P0
+
+Completed:
+
+- Added `ProcessingFailureDto`, `ProcessingFailureSearchQuery`, repository-backed query method, and `ProcessingFailuresController`.
+- Added real API `GET /api/bidops/processing/failures`, currently backed by RawNotice records with `Status = Failed`.
+- Replaced `/bidops/processing/failed` ComingSoon route with a real failure queue page. Empty state means no failed RawNotice data exists for the tenant.
+- Updated product blueprint, gap analysis, and implementation task status for P0-05.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --verbosity minimal` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-build --filter "FullyQualifiedName~BidOpsModuleTests" --verbosity minimal` succeeded: 21 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- Authenticated API smoke test as `bidops_admin` confirmed `GET /api/bidops/processing/failures` returns a valid empty page when there are no failed RawNotice records.
+- Browser smoke test confirmed `/bidops/processing/failed` renders a real searchable failure queue with empty-state text and no `ComingSoon` marker or console error logs.
+
+## 2026-06-12 BidOps RawNotice Reparse P0
+
+Completed:
+
+- Added `POST /api/bidops/raw-notices/{id}/reparse` under the existing `bidops.review.approve` permission.
+- Added `ReparseRawNoticeRequest` and review-service support that reopens RawNotice, NoticeStaging, and ReviewTask state, then enqueues `bidops.document.attachment-process` for Worker execution.
+- Manual reparse now carries a force-run id so the following structured parse job uses a fresh deduplication key even when the RawNotice content hash is unchanged.
+- Approved or already imported RawNotice rows are rejected for MVP reparse to avoid mutating formal Notice/TenderPackage business data.
+- Added frontend reparse actions on RawNotice detail and the processing failure queue.
+- Hardened attachment processing so duplicate downloaded file content does not violate the RawAttachment unique index during recovery or reparse runs.
+- Updated blueprint, gap analysis, task split, and decisions for P0-06.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests` succeeded: 23 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- Authenticated API smoke test as `bidops_admin` confirmed reparse of RawNotice `323666828616404992` enqueued job `323699653726048256`, Worker completed it, and the RawNotice returned to `ReviewPending` with ReviewTask/NoticeStaging `Pending`.
+- Authenticated API smoke test confirmed an approved RawNotice `323459050413101056` returns HTTP 400 on reparse.
+- Browser smoke test confirmed `/bidops/processing/failed` renders the real failure queue with no console errors, and `/bidops/crawl/raw-notices/323666828616404992` renders `重解析`, `处理流水线`, `公开附件`, and the public `详情 URL` with no console errors.
+
+## 2026-06-12 BidOps Worker Heartbeat P0
+
+Completed:
+
+- Added Global `BackgroundWorkerHeartbeat` entity, EF configuration, DbSet, and migration `20260612060040_v0.2.3-background-worker-heartbeat`.
+- Added best-effort `BackgroundWorkerHeartbeatService` and shared `BackgroundWorkerHeartbeatState`; Worker records process identity, queues, enabled capabilities, current job, start time, and last heartbeat.
+- Wired `BackgroundJobWorker` to use the heartbeat worker id for claims and expose current running job state.
+- Added shared worker operations query service and real API `GET /api/ops/workers`.
+- Added frontend Worker pages at `/ops/workers` and `/bidops/operations/worker-heartbeats`; the BidOps page defaults to `queue=bidops` and warns when no online bidops Worker exists.
+- Updated blueprint, gap analysis, operations docs, and task split for P0-07.
+
+Verification:
+
+- `dotnet build src\Atlas.Data.Global.Migrations\Atlas.Data.Global.Migrations.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.BackgroundTasks\Atlas.BackgroundTasks.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --nologo --verbosity minimal` succeeded: 23 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet ef database update` against the existing local `atlas_global_bidops` database could not run because the local DB has historical tables but missing EF migration history, so EF tried to apply the initial migration and hit existing `DatabaseInstances`. For local smoke only, the new heartbeat table/indexes were created idempotently with the same schema; formal migration remains in `src/Atlas.Data.Global.Migrations`.
+- Authenticated API smoke test as `bidops_admin` confirmed `GET /api/ops/workers?queue=bidops&pageIndex=1&pageSize=20` returned one online Worker with queues `default`, `tenant`, `export`, and `bidops`.
+- Browser smoke test confirmed `/bidops/operations/worker-heartbeats` and `/ops/workers` render real Worker lists, not `ComingSoon`, and report no console errors.
+
+## 2026-06-12 BidOps Controlled Attachment File Access P0
+
+Completed:
+
+- Added `RawAttachmentFileResult` and `IBidOpsQueryService.OpenRawAttachmentFileAsync` to open original downloaded attachment binaries through `IBidOpsFileStore`.
+- Added authorized API `GET /api/bidops/raw-notices/{id}/attachments/{attachmentId}/file`; default response is inline preview with range support, and `?download=true` returns an attachment download.
+- Missing RawNotice, missing attachment, empty storage key, or missing local file returns 404 instead of fake success.
+- Updated `RawAttachmentTable` with `预览` and `下载` actions for local files. The actions fetch blobs through Axios so Authorization/Tenant/Store headers are preserved; the public source link remains labeled `来源`.
+- Updated blueprint, gap analysis, task split, and decisions for P0-08.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --nologo --verbosity minimal` succeeded: 23 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- Authenticated API smoke test as `bidops_admin` confirmed `GET /api/bidops/raw-notices/323666421458538496/attachments/323666421462732800/file` returns `200 OK`, `Content-Type: application/pdf`, `Content-Disposition: inline`, range support, and 105250 bytes.
+- Authenticated API smoke test confirmed `?download=true` returns `Content-Disposition: attachment` and the same 105250 bytes.
+- Browser smoke test confirmed Raw notice detail `323666421458538496` shows `预览`, `下载`, `来源`, and `查看文本` actions with no page console errors. Inspecting the opened blob/about preview tab was blocked by the Browser tool URL policy, so preview content was verified through the API file-stream smoke instead.
+
+## 2026-06-12 BidOps Opportunity MVP Phase B
+
+Completed:
+
+- Added tenant-owned opportunity entities and configuration: `Opportunity`, `OpportunityStageHistory`, and `OpportunityWatch`, with `bidops_` table names and tenant-scoped uniqueness for one active opportunity per package.
+- Added tenant migration `20260612064052_v0.2.4-bidops-opportunities`.
+- Added `IBidOpsOpportunityService`, `BidOpsOpportunityService`, and `OpportunitiesController` for list/detail/create/update/watch/assess/stage flows.
+- Added BidOps opportunity capability, permissions, data resource, and menu entry while keeping existing business read compatibility for list/detail APIs.
+- Added frontend opportunity API client, Chinese status/type labels, opportunity list page, detail page, watchlist page, and package-detail create-opportunity action.
+- Kept `/bidops/opportunities/calendar` as `ComingSoon`; no fake calendar API or success data was introduced.
+- Updated product blueprint, module gap analysis, task split, and decisions for Phase B.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --nologo --verbosity minimal` succeeded: 24 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- `dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -- ensure-bidops-opportunities ...` succeeded against the local BidOps databases. Formal `MigrationJob apply` was not run locally because the existing tenant DB lacks migration history and would try to replay historical migrations into existing tables.
+- Authenticated API smoke as `bidops_admin` confirmed opportunity list/detail/create/watch/assess/stage work, duplicate active opportunity creation returns HTTP 400, and missing data does not return fake success.
+- Browser smoke confirmed `/bidops/opportunities` and `/bidops/opportunities/{id}` render real pages with Chinese labels and no console errors.
+
+## 2026-06-12 BidOps Dashboard And Opportunity Maintenance Phase B
+
+Completed:
+
+- Added `GET /api/bidops/dashboard/summary` through `BidOpsDashboardController`.
+- Extended `BidOpsOperationsQueryService` with a real business summary based on tenant RawNotice, ReviewTask, Notice, TenderPackage, RequirementItem, and Opportunity data.
+- Added `bidops.dashboard.read` to the authorization catalog, frontend constants, and local seed data; runtime dashboard API keeps `bidops.business.read` compatibility for existing roles.
+- Replaced `/bidops/dashboard` `ComingSoon` with a real dashboard page showing today counts, pending review, active opportunities, deadline risk, opportunity funnel, value distribution, todos, and high-value opportunities.
+- Added `BidOpsOpportunityMaintenanceService`, `BidOpsOpportunityMaintenanceTask`, and four background job handlers: `bidops.opportunity.value-assessment`, `deadline-reminder`, `watch-reminder`, and `stale-state-scan`.
+- Updated BidOpsLocal Worker config so OpportunityMaintenance runs on startup and every 10 minutes for tenant `300001`.
+- Updated blueprint, gap analysis, runbook, task split, and decisions for B-04/B-05.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --nologo --verbosity minimal` succeeded after stopping the old local WebApi process that locked `Atlas.Modules.BidOps.dll`.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --nologo --verbosity minimal` succeeded: 25 passed.
+- `npm run typecheck` and `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- `tools\Atlas.LocalSetup ensure-bidops-opportunities` refreshed local permissions; authenticated context for `bidops_admin` showed `bidops.dashboard.read` and 27 permissions.
+- Authenticated API smoke confirmed `GET /api/bidops/dashboard/summary` returned real local counts: 1 active opportunity, 17 pending review tasks, 7 stage buckets, and 6 todos.
+- Browser smoke confirmed `/bidops/dashboard` renders real dashboard content, not `ComingSoon`, and had no page console errors.
+- Started BidOpsLocal Worker and confirmed all four opportunity maintenance jobs succeeded with real job results in `GET /api/ops/background-jobs/{id}`.
+
+## 2026-06-12 BidOps Supplier Capability MVP Phase C
+
+Completed:
+
+- Added tenant-owned supplier entities and configuration: `Supplier`, `SupplierContact`, `SupplierCapability`, and `SupplierEvidenceDocument`.
+- Added tenant migration `20260612084739_v0.2.5-bidops-suppliers`.
+- Added supplier capability, permissions, data resources, service registration, controller routes, and local setup seeding while preserving existing BidOps controllers and permissions.
+- Added real APIs for supplier list/detail/create/update, contact add, capability add, and evidence-document metadata add. Missing suppliers return 404; unimplemented child list/evidence-expiry APIs are not faked.
+- Added `BidOpsSupplierMaintenanceService`, `BidOpsSupplierMaintenanceTask`, and `SupplierEvidenceExpiryScanJobHandler` for `bidops.supplier.evidence-expiry-scan`.
+- Updated the frontend with supplier API clients, DTOs, Chinese status/type labels, `/bidops/suppliers`, and `/bidops/suppliers/:id`; supplier capability map, evidence-expiry list, and performance routes remain `ComingSoon`.
+- Updated implementation task split, product blueprint, module gaps, runbook, and decisions for Phase C.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj` succeeded.
+- `dotnet build src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj` succeeded.
+- `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj` succeeded.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests` succeeded: 26 passed.
+- `npm run typecheck` and `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- `tools\Atlas.LocalSetup ensure-bidops-suppliers` succeeded against the local BidOps databases after removing local-only long composite indexes that exceed older MySQL key limits.
+- Authenticated API smoke as `bidops_admin` created supplier `323746978456539136`, added contact, capability, and evidence metadata, and confirmed detail returns all three child collections with `ExpiringSoon` evidence status.
+- BidOpsLocal Worker processed `bidops.supplier.evidence-expiry-scan` successfully with real job results.
+- Browser smoke confirmed `/bidops/suppliers` and `/bidops/suppliers/323746978456539136` render real pages with Chinese labels and no console errors.
+
+## 2026-06-12 BidOps Matching And Go-No-Go MVP Phase D
+
+Completed:
+
+- Added tenant-owned matching entities and configuration: `SupplierMatchRun`, `SupplierMatchResult`, `MissingEvidenceCheck`, and `GoNoGoDecision`.
+- Added tenant migration `20260612091842_v0.2.6-bidops-matching`.
+- Added matching capability, permissions, data resources, service registration, controller routes, Worker handler, and LocalSetup seeding while preserving existing BidOps controllers and routes.
+- Added real APIs for starting package supplier matching, listing matching runs, reading run details/results, and recording/listing Go/No-Go decisions. Missing packages/runs return errors instead of fake success.
+- Implemented `bidops.matching.supplier-match-run` as a Worker job. The WebApi only enqueues and queries matching work.
+- Added frontend matching API clients, DTOs, Chinese status/type labels, `/bidops/matching/runs`, `/bidops/matching/runs/:id`, package-detail match action, and Go/No-Go decision display/entry.
+- Updated the frontend auth guard so authenticated sessions refresh `/api/auth/context` once per app startup, preventing stale cached permissions from hiding newly granted BidOps menus.
+- Updated implementation task split, product blueprint, module gaps, runbook, and decisions for Phase D.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj` succeeded.
+- `dotnet build src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj` succeeded.
+- `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests` succeeded: 27 passed.
+- `npm run typecheck` and `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --nologo --verbosity minimal /nodeReuse:false` succeeded after stopping the local WebApi process that locked `Atlas.Modules.BidOps.dll`.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --nologo --verbosity minimal /nodeReuse:false` succeeded after stopping the local Worker process that locked `Atlas.Modules.BidOps.dll`.
+- `tools\Atlas.LocalSetup ensure-bidops-matching` succeeded against the local BidOps databases.
+- Authenticated API smoke as `bidops_admin` confirmed `bidops.matching.read/run/decide` permissions, started matching for package `323637502609068032`, Worker completed run `323758574222315520` with status `Succeeded`, 3 results, and 3 missing-evidence checks.
+- Authenticated API smoke recorded decision `323758680367566848` with decision `Hold` for supplier `323746978456539136`, and package decisions returned the new record.
+- Browser smoke confirmed `/bidops/matching/runs` and `/bidops/matching/runs/323758574222315520` render real pages with matching menu entries, run data, decision data, Chinese labels, and no console errors.
+
+## 2026-06-12 BidOps Pursuit MVP Phase E
+
+Completed:
+
+- Added tenant-owned pursuit entities and configuration: `Pursuit`, `PursuitTask`, and `PursuitFollowRecord`.
+- Added tenant migration `20260612100420_v0.2.7-bidops-pursuits`.
+- Added pursuit capability, permissions, data resources, service registration, controller routes, and LocalSetup seeding while preserving existing BidOps controllers and routes.
+- Added real APIs for pursuit list/detail/create/update, status transitions, task list/create/update, and follow-record list/create. Missing pursuits return 404; calendar and response-matrix APIs remain unimplemented.
+- Enforced one active pursuit per package through `ActiveMarker` and tenant-scoped uniqueness. Creating from a Go/No-Go decision requires a `Go` decision.
+- Added frontend pursuit API clients, DTOs, Chinese stage/task/follow labels, `/bidops/pursuits`, `/bidops/pursuits/:id`, `/bidops/pursuits/my-tasks`, and package-detail create-pursuit action. `/bidops/pursuits/calendar` remains `ComingSoon`.
+- Updated implementation task split, product blueprint, module gaps, runbook, and decisions for Phase E.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --nologo --verbosity minimal` succeeded: 28 passed.
+- `npm run typecheck` and `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj /nodeReuse:false --nologo --verbosity minimal` succeeded after stopping local WebApi/Worker processes that held old output files.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj /nodeReuse:false --nologo --verbosity minimal` succeeded.
+- `tools\Atlas.LocalSetup ensure-bidops-pursuits --tenant atlas_bidops_runtime` succeeded against the local BidOps runtime database. An earlier run without `--tenant` initialized the default `atlas` database, which was not used by BidOpsLocal.
+- Authenticated API smoke as `bidops_admin` confirmed `bidops.pursuit.read/manage/task.manage/follow-record.manage`, created pursuit `323771539663228928`, task `323771540338511872`, follow record `323771540804079616`, updated task status to `InProgress`, and updated pursuit stage to `Preparing`.
+- Browser smoke confirmed `/bidops/pursuits`, `/bidops/pursuits/323771539663228928`, and `/bidops/pursuits/my-tasks` render real pages with pursuit menu entries, task/follow data, Chinese labels, and no console errors.
+
+## 2026-06-12 BidOps Package And Supplier Placeholder Cleanup
+
+Completed:
+
+- Added shared BidOps text-quality normalization for unreadable placeholders such as `?`, `？？`, replacement characters, and question-mark-plus-timestamp values.
+- Removed persisted `UNSPECIFIED` package/lot defaults from deterministic and external-AI parsing. Unknown package numbers now stay empty and are shown as `待补录` in the frontend.
+- Added deterministic extraction for Chinese package and lot labels in public text/HTML, including `包件号`, `包号`, `标包号`, `分包编号`, `标段号`, and `分标编号`.
+- Hardened supplier create/update/contact/capability/evidence inputs so required fields cannot be all unreadable placeholders, and optional placeholder fields normalize to empty.
+- Added frontend display guards for package numbers and supplier names across package, review, matching, pursuit, and supplier pages.
+- Added `tools/Atlas.LocalSetup repair-bidops-data-quality` and ran it against `atlas_bidops_runtime`; local historical `UNSPECIFIED` and question-mark supplier values now display as `待补录` / `待补录厂家`.
+- Normalized paged result numeric fields in `useTableQuery` so Element Plus pagination no longer receives backend BigInt string totals.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --nologo --verbosity minimal` succeeded: 30 passed.
+- `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --nologo --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `npm run typecheck` and `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- Browser smoke confirmed package and supplier pages no longer expose `UNSPECIFIED` or consecutive question-mark placeholders; supplier rows show `待补录厂家` for repaired historical data.
+
+## 2026-06-12 BidOps Supplier Analysis
+
+Completed:
+
+- Clarified the supplier data source: current厂家 records come from the BidOps supplier master library through manual/API creation or local setup data; public notice crawling does not automatically create supplier master records.
+- Added `GET /api/bidops/suppliers/analysis/summary` under existing `bidops.supplier.read` authorization. The read model aggregates real Supplier, capability, evidence, matching result, Go/No-Go decision, and pursuit data.
+- Added supplier analysis DTOs and service logic without creating fake success data. At that point outcome-announcement extraction was still planned; it has since been implemented as `OutcomeSupplierRecord` public result leads, while full `SupplierPerformance` remains planned.
+- Replaced the frontend supplier capability placeholder with `/bidops/suppliers/analysis`, keeping `/bidops/suppliers/capabilities` as a compatible alias.
+- Updated product blueprint, module gaps, implementation tasks, and decisions to mark current supplier analysis as implemented and outcome-based supplier performance as still planned.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --nologo --verbosity minimal` succeeded: 30 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `npm run typecheck` and `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- Browser smoke confirmed `/bidops/suppliers/analysis` renders the real厂家分析 page, displays supplier source and outcome-extraction status, does not show `ComingSoon`, and has no console errors.
+- Browser smoke confirmed legacy `/bidops/suppliers/capabilities` reaches the same analysis page.
+
+## 2026-06-12 BidOps Public Outcome Supplier Leads
+
+Completed:
+
+- Added tenant-owned `OutcomeSupplierRecord` for public中标/成交/候选公示厂家线索, including source announcement, notice/package snapshots, supplier name, optional supplier/package links, outcome type, rank, amount, evidence text, confidence, and source hash.
+- Added strict deterministic extraction for explicit supplier/candidate/winner fields and attached extracted text. Announcement intros, buyer/agency/publisher fields, supplier instructions, fee/payment/postage text, and generic company-name mentions are filtered out.
+- Added `bidops.outcome.supplier-extract` Worker handler. Structured parsing now triggers outcome extraction after parsing, and `POST /api/bidops/suppliers/outcome-records/backfill` can enqueue repeatable backfill batches.
+- Added real read APIs: `GET /api/bidops/suppliers/outcome-records`, `GET /api/bidops/suppliers/outcome-summary`, and `GET /api/bidops/packages/{id}/historical-suppliers`.
+- Extended `/api/bidops/suppliers/analysis/summary`, `/bidops/suppliers/analysis`, and package detail to surface public result supplier leads without auto-creating supplier master records or automatic contact workflows.
+- Added tenant migration `20260612131223_v0.2.8-bidops-outcome-suppliers` and LocalSetup `ensure-bidops-outcomes`.
+- Fixed outcome extraction persistence to call `SaveChangesAsync(raw.TenantId)` after using explicit tenant repository writes; otherwise background jobs could report extracted counts without committing rows.
+- Updated product blueprint, module gaps, implementation tasks, and decisions to mark public result supplier leads as implemented while keeping full `SupplierPerformance`, win-rate analytics, and result review planned.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --nologo` succeeded.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --nologo` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --nologo` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsOutcomeSupplierTextParser --nologo --verbosity minimal` succeeded: 5 passed.
+- Full BidOps route/service/parser test pass succeeded: `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --nologo --verbosity minimal` with 35 passed.
+- Authenticated API smoke as `bidops_admin` confirmed login, outcome summary/list, and repeatable backfill enqueue. Local full backfill over 54 outcome-like raw notices completed with `OutcomeRecordCount=0` after strict filtering, which is expected for the current local sample because it lacks explicit supplier-detail lines and previous template/buyer false positives were removed.
+- Browser smoke confirmed `/bidops/suppliers/analysis` renders the public result supplier lead metrics and empty state without fresh console errors, and `/bidops/packages/323637502609068032` renders the historical supplier lead section and package requirements without fresh console errors.

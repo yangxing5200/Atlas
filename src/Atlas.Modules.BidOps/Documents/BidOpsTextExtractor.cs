@@ -2,6 +2,10 @@ using System.IO.Compression;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using UglyToad.PdfPig;
+using UglyToad.PdfPig.Content;
+using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
+using UglyToad.PdfPig.DocumentLayoutAnalysis.WordExtractor;
 
 namespace Atlas.Modules.BidOps.Documents;
 
@@ -41,7 +45,7 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
         if (extension == "pdf" ||
             normalizedContentType.Contains("pdf", StringComparison.OrdinalIgnoreCase))
         {
-            return Trim(await ExtractPdfTextAsync(stream, cancellationToken));
+            return Trim(ExtractPdfText(stream));
         }
 
         return string.Empty;
@@ -84,73 +88,50 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
         return NormalizeWhitespace(WebUtility.HtmlDecode(xml));
     }
 
-    private static async Task<string> ExtractPdfTextAsync(
-        Stream stream,
-        CancellationToken ct)
+    private static string ExtractPdfText(Stream stream)
     {
         if (stream.CanSeek)
             stream.Position = 0;
 
-        using var buffer = new MemoryStream();
-        await stream.CopyToAsync(buffer, ct);
-        var bytes = buffer.ToArray();
-        var latin = Encoding.Latin1.GetString(bytes);
         var builder = new StringBuilder();
+        using var document = PdfDocument.Open(stream);
 
-        foreach (Match match in PdfLiteralStringRegex().Matches(latin))
+        foreach (var page in document.GetPages())
         {
-            var text = DecodePdfLiteral(match.Groups["text"].Value);
-            if (LooksLikeHumanText(text))
-                builder.AppendLine(text);
+            var pageText = ExtractPdfPageText(page);
+            if (!LooksLikeHumanText(pageText))
+            {
+                var words = page.GetWords(NearestNeighbourWordExtractor.Instance)
+                    .Select(x => x.Text)
+                    .Where(LooksLikeHumanText);
+                pageText = string.Join(" ", words);
+            }
+
+            if (!string.IsNullOrWhiteSpace(pageText))
+            {
+                if (builder.Length > 0)
+                    builder.AppendLine().AppendLine();
+
+                builder.Append(pageText);
+            }
 
             if (builder.Length >= MaxExtractedTextLength)
                 break;
         }
 
-        if (builder.Length == 0)
-        {
-            foreach (Match match in PdfUtf16HexRegex().Matches(latin))
-            {
-                var text = DecodePdfUtf16Hex(match.Groups["hex"].Value);
-                if (LooksLikeHumanText(text))
-                    builder.AppendLine(text);
-
-                if (builder.Length >= MaxExtractedTextLength)
-                    break;
-            }
-        }
-
-        return NormalizeWhitespace(builder.ToString());
+        return NormalizePdfWhitespace(builder.ToString());
     }
 
-    private static string DecodePdfLiteral(string value)
+    private static string ExtractPdfPageText(Page page)
     {
-        return value
-            .Replace("\\(", "(", StringComparison.Ordinal)
-            .Replace("\\)", ")", StringComparison.Ordinal)
-            .Replace("\\n", "\n", StringComparison.Ordinal)
-            .Replace("\\r", "\n", StringComparison.Ordinal)
-            .Replace("\\t", "\t", StringComparison.Ordinal)
-            .Replace("\\\\", "\\", StringComparison.Ordinal);
-    }
-
-    private static string DecodePdfUtf16Hex(string hex)
-    {
-        try
+        var options = new ContentOrderTextExtractor.Options
         {
-            if (hex.Length % 2 != 0)
-                return string.Empty;
+            SeparateParagraphsWithDoubleNewline = false,
+            ReplaceWhitespaceWithSpace = false,
+            NegativeGapAsWhitespace = true
+        };
 
-            var bytes = Convert.FromHexString(hex);
-            if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
-                return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
-
-            return Encoding.UTF8.GetString(bytes);
-        }
-        catch
-        {
-            return string.Empty;
-        }
+        return NormalizePdfWhitespace(ContentOrderTextExtractor.GetText(page, options));
     }
 
     private static bool LooksLikeHumanText(string value)
@@ -166,6 +147,20 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
     private static string NormalizeWhitespace(string value)
     {
         return WhitespaceRegex().Replace(value, " ").Trim();
+    }
+
+    private static string NormalizePdfWhitespace(string value)
+    {
+        var normalized = value
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Replace('\u00a0', ' ');
+
+        normalized = PdfHorizontalControlWhitespaceRegex().Replace(normalized, " ");
+        normalized = PdfSpacesBeforeLineBreakRegex().Replace(normalized, "\n");
+        normalized = PdfBlankLinesRegex().Replace(normalized, "\n\n");
+
+        return normalized.Trim();
     }
 
     private static string Trim(string value)
@@ -185,12 +180,15 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
     [GeneratedRegex("</w:p>", RegexOptions.IgnoreCase)]
     private static partial Regex ParagraphCloseRegex();
 
-    [GeneratedRegex("\\((?<text>(?:\\\\.|[^\\\\)]){2,})\\)")]
-    private static partial Regex PdfLiteralStringRegex();
-
-    [GeneratedRegex("<(?<hex>FEFF[0-9A-Fa-f]{4,})>")]
-    private static partial Regex PdfUtf16HexRegex();
-
     [GeneratedRegex("\\s+", RegexOptions.Singleline)]
     private static partial Regex WhitespaceRegex();
+
+    [GeneratedRegex("[\\t\\f\\v]+")]
+    private static partial Regex PdfHorizontalControlWhitespaceRegex();
+
+    [GeneratedRegex(" +\\n")]
+    private static partial Regex PdfSpacesBeforeLineBreakRegex();
+
+    [GeneratedRegex("\\n{3,}")]
+    private static partial Regex PdfBlankLinesRegex();
 }

@@ -1,6 +1,11 @@
 using Atlas.Modules.BidOps.Entities;
 using Atlas.Modules.BidOps.Entities.Crawling;
+using Atlas.Modules.BidOps.Entities.Matching;
+using Atlas.Modules.BidOps.Entities.Opportunities;
+using Atlas.Modules.BidOps.Entities.Outcomes;
+using Atlas.Modules.BidOps.Entities.Pursuits;
 using Atlas.Modules.BidOps.Entities.Staging;
+using Atlas.Modules.BidOps.Entities.Suppliers;
 using Atlas.Modules.BidOps.Entities.Tendering;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -258,5 +263,307 @@ public sealed class RequirementItemConfiguration : IEntityTypeConfiguration<Requ
         builder.Property(x => x.ManualRemark).HasMaxLength(1000);
         builder.HasIndex(x => new { x.TenantId, x.PackageId });
         builder.HasIndex(x => new { x.TenantId, x.RiskLevel });
+    }
+}
+
+public sealed class OpportunityConfiguration : IEntityTypeConfiguration<Opportunity>
+{
+    public void Configure(EntityTypeBuilder<Opportunity> builder)
+    {
+        builder.ToTable("bidops_opportunity");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.OpportunityNo).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Title).HasColumnType("varchar(500)").HasMaxLength(500).IsRequired();
+        builder.Property(x => x.Stage).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Status).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.ActiveMarker).HasColumnType("varchar(16)").HasMaxLength(16);
+        builder.Property(x => x.EstimatedAmount).HasPrecision(18, 2);
+        builder.Property(x => x.ValueScore).HasPrecision(6, 2);
+        builder.Property(x => x.ValueLevel).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Decision).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.AssessmentSummary).HasColumnType("varchar(2000)").HasMaxLength(2000);
+        builder.Property(x => x.Remark).HasColumnType("varchar(1000)").HasMaxLength(1000);
+        builder.HasIndex(x => new { x.TenantId, x.OpportunityNo }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.PackageId, x.ActiveMarker }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.NoticeId });
+        builder.HasIndex(x => new { x.TenantId, x.Stage, x.Status, x.CreatedAt });
+        builder.HasIndex(x => new { x.TenantId, x.NextActionAtUtc });
+    }
+}
+
+public sealed class OpportunityStageHistoryConfiguration : IEntityTypeConfiguration<OpportunityStageHistory>
+{
+    public void Configure(EntityTypeBuilder<OpportunityStageHistory> builder)
+    {
+        builder.ToTable("bidops_opportunity_stage_history");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.FromStage).HasColumnType("varchar(64)").HasMaxLength(64);
+        builder.Property(x => x.ToStage).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Reason).HasColumnType("varchar(1000)").HasMaxLength(1000);
+        builder.HasIndex(x => new { x.TenantId, x.OpportunityId, x.OccurredAtUtc });
+        builder.HasIndex(x => new { x.TenantId, x.ToStage, x.OccurredAtUtc });
+    }
+}
+
+public sealed class OpportunityWatchConfiguration : IEntityTypeConfiguration<OpportunityWatch>
+{
+    public void Configure(EntityTypeBuilder<OpportunityWatch> builder)
+    {
+        builder.ToTable("bidops_opportunity_watch");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.Remark).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.HasIndex(x => new { x.TenantId, x.OpportunityId, x.UserId }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.UserId, x.Enabled });
+    }
+}
+
+public sealed class SupplierConfiguration : IEntityTypeConfiguration<Supplier>
+{
+    public void Configure(EntityTypeBuilder<Supplier> builder)
+    {
+        builder.ToTable("bidops_supplier");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.SupplierNo).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Name).HasColumnType("varchar(300)").HasMaxLength(300).IsRequired();
+        builder.Property(x => x.UnifiedSocialCreditCode).HasColumnType("varchar(64)").HasMaxLength(64);
+        builder.Property(x => x.Region).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.Address).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.Property(x => x.ContactName).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.ContactPhone).HasColumnType("varchar(64)").HasMaxLength(64);
+        builder.Property(x => x.ContactEmail).HasColumnType("varchar(256)").HasMaxLength(256);
+        builder.Property(x => x.Status).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.QualityScore).HasPrecision(6, 2);
+        builder.Property(x => x.Remark).HasColumnType("varchar(1000)").HasMaxLength(1000);
+        builder.HasIndex(x => new { x.TenantId, x.SupplierNo }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.UnifiedSocialCreditCode });
+        builder.HasIndex(x => new { x.TenantId, x.Status, x.CreatedAt });
+    }
+}
+
+public sealed class SupplierContactConfiguration : IEntityTypeConfiguration<SupplierContact>
+{
+    public void Configure(EntityTypeBuilder<SupplierContact> builder)
+    {
+        builder.ToTable("bidops_supplier_contact");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.Name).HasColumnType("varchar(128)").HasMaxLength(128).IsRequired();
+        builder.Property(x => x.Role).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.Phone).HasColumnType("varchar(64)").HasMaxLength(64);
+        builder.Property(x => x.Email).HasColumnType("varchar(256)").HasMaxLength(256);
+        builder.Property(x => x.Remark).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.HasIndex(x => new { x.TenantId, x.SupplierId, x.IsPrimary });
+        builder.HasIndex(x => new { x.TenantId, x.SupplierId, x.Name });
+    }
+}
+
+public sealed class SupplierCapabilityConfiguration : IEntityTypeConfiguration<SupplierCapability>
+{
+    public void Configure(EntityTypeBuilder<SupplierCapability> builder)
+    {
+        builder.ToTable("bidops_supplier_capability");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.Category).HasColumnType("varchar(128)").HasMaxLength(128).IsRequired();
+        builder.Property(x => x.ProductLine).HasColumnType("varchar(200)").HasMaxLength(200);
+        builder.Property(x => x.CapabilityTags).HasColumnType("varchar(1000)").HasMaxLength(1000);
+        builder.Property(x => x.RegionScope).HasColumnType("varchar(300)").HasMaxLength(300);
+        builder.Property(x => x.QualificationLevel).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.Remark).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.HasIndex(x => new { x.TenantId, x.SupplierId, x.Category });
+    }
+}
+
+public sealed class SupplierEvidenceDocumentConfiguration : IEntityTypeConfiguration<SupplierEvidenceDocument>
+{
+    public void Configure(EntityTypeBuilder<SupplierEvidenceDocument> builder)
+    {
+        builder.ToTable("bidops_supplier_evidence_document");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.DocumentName).HasColumnType("varchar(300)").HasMaxLength(300).IsRequired();
+        builder.Property(x => x.DocumentType).HasColumnType("varchar(128)").HasMaxLength(128).IsRequired();
+        builder.Property(x => x.EvidenceNo).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.IssuedBy).HasColumnType("varchar(300)").HasMaxLength(300);
+        builder.Property(x => x.FileName).HasColumnType("varchar(300)").HasMaxLength(300);
+        builder.Property(x => x.FileUrl).HasColumnType("varchar(1000)").HasMaxLength(1000);
+        builder.Property(x => x.StorageProvider).HasColumnType("varchar(64)").HasMaxLength(64);
+        builder.Property(x => x.StorageKey).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.Property(x => x.Status).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Remark).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.HasIndex(x => new { x.TenantId, x.SupplierId, x.DocumentType });
+        builder.HasIndex(x => new { x.TenantId, x.Status, x.ValidTo });
+        builder.HasIndex(x => new { x.TenantId, x.ValidTo });
+    }
+}
+
+public sealed class OutcomeSupplierRecordConfiguration : IEntityTypeConfiguration<OutcomeSupplierRecord>
+{
+    public void Configure(EntityTypeBuilder<OutcomeSupplierRecord> builder)
+    {
+        builder.ToTable("bidops_outcome_supplier_record");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.SourceUrl).HasColumnType("varchar(1500)").HasMaxLength(1500);
+        builder.Property(x => x.NoticeTitle).HasColumnType("varchar(500)").HasMaxLength(500).IsRequired();
+        builder.Property(x => x.NoticeType).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.ProjectName).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.Property(x => x.ProjectCode).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.BuyerName).HasColumnType("varchar(300)").HasMaxLength(300);
+        builder.Property(x => x.Region).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.LotNo).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.LotName).HasColumnType("varchar(300)").HasMaxLength(300);
+        builder.Property(x => x.PackageNo).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.PackageName).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.Property(x => x.Category).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.SupplierName).HasColumnType("varchar(300)").HasMaxLength(300).IsRequired();
+        builder.Property(x => x.SupplierNameNormalized).HasColumnType("varchar(191)").HasMaxLength(191).IsRequired();
+        builder.Property(x => x.OutcomeType).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.AwardAmount).HasPrecision(18, 2);
+        builder.Property(x => x.Currency).HasColumnType("varchar(16)").HasMaxLength(16);
+        builder.Property(x => x.EvidenceText).HasColumnType("varchar(2000)").HasMaxLength(2000);
+        builder.Property(x => x.ExtractionConfidence).HasPrecision(5, 4);
+        builder.Property(x => x.SourceHash).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.HasIndex(x => new { x.TenantId, x.CreatedAt })
+            .HasDatabaseName("IX_bidops_outcome_record_Tenant_CreatedAt");
+        builder.HasIndex(x => new { x.TenantId, x.SourceHash })
+            .HasDatabaseName("IX_bidops_outcome_record_Tenant_SourceHash")
+            .IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.RawNoticeId })
+            .HasDatabaseName("IX_bidops_outcome_record_Tenant_RawNotice");
+        builder.HasIndex(x => new { x.TenantId, x.TenderPackageId })
+            .HasDatabaseName("IX_bidops_outcome_record_Tenant_Package");
+        builder.HasIndex(x => new { x.TenantId, x.SupplierId })
+            .HasDatabaseName("IX_bidops_outcome_record_Tenant_Supplier");
+        builder.HasIndex(x => new { x.TenantId, x.SupplierNameNormalized })
+            .HasDatabaseName("IX_bidops_outcome_record_Tenant_SupplierNorm");
+        builder.HasIndex(x => new { x.TenantId, x.ProjectCode })
+            .HasDatabaseName("IX_bidops_outcome_record_Tenant_ProjectCode");
+        builder.HasIndex(x => new { x.TenantId, x.PackageNo })
+            .HasDatabaseName("IX_bidops_outcome_record_Tenant_PackageNo");
+        builder.HasIndex(x => new { x.TenantId, x.Category, x.PublishTime })
+            .HasDatabaseName("IX_bidops_outcome_record_Tenant_Category_Pub");
+        builder.HasIndex(x => new { x.TenantId, x.OutcomeType, x.PublishTime })
+            .HasDatabaseName("IX_bidops_outcome_record_Tenant_Outcome_Pub");
+    }
+}
+
+public sealed class SupplierMatchRunConfiguration : IEntityTypeConfiguration<SupplierMatchRun>
+{
+    public void Configure(EntityTypeBuilder<SupplierMatchRun> builder)
+    {
+        builder.ToTable("bidops_supplier_match_run");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.RunNo).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Status).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.RequestedByUserName).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.CriteriaSummary).HasColumnType("varchar(2000)").HasMaxLength(2000);
+        builder.Property(x => x.ErrorMessage).HasColumnType("varchar(2000)").HasMaxLength(2000);
+        builder.HasIndex(x => new { x.TenantId, x.RunNo }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.PackageId, x.CreatedAt });
+        builder.HasIndex(x => new { x.TenantId, x.Status, x.CreatedAt });
+        builder.HasIndex(x => new { x.TenantId, x.BackgroundJobId });
+    }
+}
+
+public sealed class SupplierMatchResultConfiguration : IEntityTypeConfiguration<SupplierMatchResult>
+{
+    public void Configure(EntityTypeBuilder<SupplierMatchResult> builder)
+    {
+        builder.ToTable("bidops_supplier_match_result");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.SupplierNameSnapshot).HasColumnType("varchar(300)").HasMaxLength(300).IsRequired();
+        builder.Property(x => x.Score).HasPrecision(6, 2);
+        builder.Property(x => x.MatchLevel).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Recommendation).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.RiskFlags).HasColumnType("varchar(1000)").HasMaxLength(1000);
+        builder.Property(x => x.Explanation).HasColumnType("varchar(2000)").HasMaxLength(2000);
+        builder.HasIndex(x => new { x.TenantId, x.RunId, x.Rank });
+        builder.HasIndex(x => new { x.TenantId, x.PackageId, x.SupplierId });
+        builder.HasIndex(x => new { x.TenantId, x.SupplierId, x.CreatedAt });
+    }
+}
+
+public sealed class MissingEvidenceCheckConfiguration : IEntityTypeConfiguration<MissingEvidenceCheck>
+{
+    public void Configure(EntityTypeBuilder<MissingEvidenceCheck> builder)
+    {
+        builder.ToTable("bidops_missing_evidence_check");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.RequiredEvidenceType).HasColumnType("varchar(128)").HasMaxLength(128).IsRequired();
+        builder.Property(x => x.RequirementText).HasColumnType("varchar(1000)").HasMaxLength(1000);
+        builder.Property(x => x.Status).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Explanation).HasColumnType("varchar(1000)").HasMaxLength(1000);
+        builder.HasIndex(x => new { x.TenantId, x.RunId, x.SupplierId });
+        builder.HasIndex(x => new { x.TenantId, x.ResultId });
+        builder.HasIndex(x => new { x.TenantId, x.Status, x.CreatedAt });
+    }
+}
+
+public sealed class GoNoGoDecisionConfiguration : IEntityTypeConfiguration<GoNoGoDecision>
+{
+    public void Configure(EntityTypeBuilder<GoNoGoDecision> builder)
+    {
+        builder.ToTable("bidops_go_no_go_decision");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.Decision).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Reason).HasColumnType("varchar(2000)").HasMaxLength(2000);
+        builder.Property(x => x.RiskSummary).HasColumnType("varchar(2000)").HasMaxLength(2000);
+        builder.Property(x => x.DecidedByUserName).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.HasIndex(x => new { x.TenantId, x.PackageId, x.DecidedAtUtc });
+        builder.HasIndex(x => new { x.TenantId, x.MatchRunId });
+        builder.HasIndex(x => new { x.TenantId, x.SupplierId });
+    }
+}
+
+public sealed class PursuitConfiguration : IEntityTypeConfiguration<Pursuit>
+{
+    public void Configure(EntityTypeBuilder<Pursuit> builder)
+    {
+        builder.ToTable("bidops_pursuit");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.PursuitNo).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Title).HasColumnType("varchar(500)").HasMaxLength(500).IsRequired();
+        builder.Property(x => x.SupplierNameSnapshot).HasColumnType("varchar(300)").HasMaxLength(300);
+        builder.Property(x => x.Stage).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Status).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.ActiveMarker).HasColumnType("varchar(16)").HasMaxLength(16);
+        builder.Property(x => x.EstimatedAmount).HasPrecision(18, 2);
+        builder.Property(x => x.RiskLevel).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Remark).HasColumnType("varchar(1000)").HasMaxLength(1000);
+        builder.HasIndex(x => new { x.TenantId, x.PursuitNo }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.PackageId, x.ActiveMarker }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.NoticeId });
+        builder.HasIndex(x => new { x.TenantId, x.OpportunityId });
+        builder.HasIndex(x => new { x.TenantId, x.Stage, x.Status, x.CreatedAt });
+        builder.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.Status });
+        builder.HasIndex(x => new { x.TenantId, x.BidDeadlineAtUtc });
+    }
+}
+
+public sealed class PursuitTaskConfiguration : IEntityTypeConfiguration<PursuitTask>
+{
+    public void Configure(EntityTypeBuilder<PursuitTask> builder)
+    {
+        builder.ToTable("bidops_pursuit_task");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.Title).HasColumnType("varchar(300)").HasMaxLength(300).IsRequired();
+        builder.Property(x => x.TaskType).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Status).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Description).HasColumnType("varchar(2000)").HasMaxLength(2000);
+        builder.Property(x => x.ResultNote).HasColumnType("varchar(2000)").HasMaxLength(2000);
+        builder.HasIndex(x => new { x.TenantId, x.PursuitId, x.Status });
+        builder.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.Status, x.DueAtUtc });
+        builder.HasIndex(x => new { x.TenantId, x.DueAtUtc });
+    }
+}
+
+public sealed class PursuitFollowRecordConfiguration : IEntityTypeConfiguration<PursuitFollowRecord>
+{
+    public void Configure(EntityTypeBuilder<PursuitFollowRecord> builder)
+    {
+        builder.ToTable("bidops_pursuit_follow_record");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.FollowType).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Content).HasColumnType("varchar(2000)").HasMaxLength(2000).IsRequired();
+        builder.Property(x => x.CreatedByUserName).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.HasIndex(x => new { x.TenantId, x.PursuitId, x.CreatedAt });
+        builder.HasIndex(x => new { x.TenantId, x.NextActionAtUtc });
     }
 }

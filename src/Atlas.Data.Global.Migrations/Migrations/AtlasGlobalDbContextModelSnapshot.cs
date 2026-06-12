@@ -153,160 +153,93 @@ namespace Atlas.Data.Global.Migrations.Migrations
                     b.ToTable("BackgroundJobs", (string)null);
                 });
 
-            modelBuilder.Entity("Atlas.Core.Entities.Global.ExportJob", b =>
+            modelBuilder.Entity("Atlas.Core.Entities.Global.BackgroundWorkerHeartbeat", b =>
                 {
                     b.Property<long>("Id")
                         .HasColumnType("bigint");
 
-                    b.Property<long?>("BackgroundJobId")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("CompletedAtUtc")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<string>("ContentType")
-                        .HasMaxLength(200)
-                        .HasColumnType("varchar(200)");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ContentType"), "utf8mb4");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime(6)");
 
-                    b.Property<DateTime>("ExpiresAtUtc")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<long?>("FileSizeBytes")
+                    b.Property<long?>("CurrentJobId")
                         .HasColumnType("bigint");
 
-                    b.Property<string>("FileName")
-                        .HasMaxLength(300)
-                        .HasColumnType("varchar(300)");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("FileName"), "utf8mb4");
-
-                    b.Property<string>("Format")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(50)");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Format"), "utf8mb4");
-
-                    b.Property<string>("LastError")
-                        .HasColumnType("text");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LastError"), "utf8mb4");
-
-                    b.Property<string>("PermissionCode")
-                        .IsRequired()
+                    b.Property<string>("CurrentJobType")
                         .HasMaxLength(200)
                         .HasColumnType("varchar(200)");
 
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PermissionCode"), "utf8mb4");
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("CurrentJobType"), "utf8mb4");
 
-                    b.Property<int>("Progress")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int")
-                        .HasDefaultValue(0);
-
-                    b.Property<long>("ProcessedRows")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint")
-                        .HasDefaultValue(0L);
-
-                    b.Property<string>("QueryHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("varchar(64)");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("QueryHash"), "utf8mb4");
-
-                    b.Property<string>("QueryJson")
-                        .IsRequired()
-                        .HasColumnType("longtext");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("QueryJson"), "utf8mb4");
-
-                    b.Property<DateTime>("RequestedAtUtc")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<string>("ResourceCode")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("varchar(200)");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ResourceCode"), "utf8mb4");
-
-                    b.Property<string>("Sha256")
-                        .HasMaxLength(64)
-                        .HasColumnType("varchar(64)");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Sha256"), "utf8mb4");
-
-                    b.Property<DateTime?>("StartedAtUtc")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<int>("Status")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int")
-                        .HasDefaultValue(0);
-
-                    b.Property<long?>("StoreId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("StorageKey")
-                        .HasMaxLength(500)
-                        .HasColumnType("varchar(500)");
-
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("StorageKey"), "utf8mb4");
-
-                    b.Property<string>("StorageProvider")
+                    b.Property<string>("CurrentQueue")
                         .HasMaxLength(100)
                         .HasColumnType("varchar(100)");
 
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("StorageProvider"), "utf8mb4");
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("CurrentQueue"), "utf8mb4");
 
-                    b.Property<long>("TenantId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("TotalRows")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("ExportTaskType")
+                    b.Property<string>("HostName")
                         .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("varchar(200)");
+                        .HasMaxLength(256)
+                        .HasColumnType("varchar(256)");
 
-                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ExportTaskType"), "utf8mb4");
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("HostName"), "utf8mb4");
+
+                    b.Property<DateTime>("LastSeenAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<bool>("OneTimeJobWorkerEnabled")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<int>("ProcessId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("QueuesJson")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("QueuesJson"), "utf8mb4");
+
+                    b.Property<bool>("RecurringTaskRunnerEnabled")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("RuntimeMode")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("RuntimeMode"), "utf8mb4");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("datetime(6)");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime(6)");
 
-                    b.Property<long>("UserId")
-                        .HasColumnType("bigint");
+                    b.Property<string>("WorkerId")
+                        .IsRequired()
+                        .HasMaxLength(191)
+                        .HasColumnType("varchar(191)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("WorkerId"), "utf8mb4");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("BackgroundJobId")
+                    b.HasIndex("CurrentJobId")
+                        .HasDatabaseName("IX_BackgroundWorkerHeartbeats_CurrentJobId");
+
+                    b.HasIndex("LastSeenAtUtc")
+                        .HasDatabaseName("IX_BackgroundWorkerHeartbeats_LastSeenAtUtc");
+
+                    b.HasIndex("ProcessId");
+
+                    b.HasIndex("WorkerId")
                         .IsUnique()
-                        .HasDatabaseName("UX_ExportJobs_BackgroundJobId");
+                        .HasDatabaseName("UX_BackgroundWorkerHeartbeats_WorkerId");
 
-                    b.HasIndex("ExpiresAtUtc")
-                        .HasDatabaseName("IX_ExportJobs_ExpiresAtUtc");
+                    b.HasIndex("RuntimeMode", "LastSeenAtUtc")
+                        .HasDatabaseName("IX_BackgroundWorkerHeartbeats_Runtime_LastSeen");
 
-                    b.HasIndex("ExportTaskType")
-                        .HasDatabaseName("IX_ExportJobs_ExportTaskType");
-
-                    b.HasIndex("ResourceCode")
-                        .HasDatabaseName("IX_ExportJobs_ResourceCode");
-
-                    b.HasIndex("TenantId", "Status")
-                        .HasDatabaseName("IX_ExportJobs_TenantId_Status");
-
-                    b.HasIndex("TenantId", "UserId", "RequestedAtUtc")
-                        .HasDatabaseName("IX_ExportJobs_TenantId_UserId_RequestedAtUtc");
-
-                    b.ToTable("ExportJobs", (string)null);
+                    b.ToTable("BackgroundWorkerHeartbeats", (string)null);
                 });
 
             modelBuilder.Entity("Atlas.Core.Entities.Global.Capability", b =>
@@ -643,6 +576,170 @@ namespace Atlas.Data.Global.Migrations.Migrations
                         .HasDatabaseName("UX_DatabaseServerConfigs_ServerCode_NetworkEnvCode_DbType");
 
                     b.ToTable("DatabaseServerConfigs", (string)null);
+                });
+
+            modelBuilder.Entity("Atlas.Core.Entities.Global.ExportJob", b =>
+                {
+                    b.Property<long>("Id")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("BackgroundJobId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("ContentType")
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ContentType"), "utf8mb4");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("ExportTaskType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ExportTaskType"), "utf8mb4");
+
+                    b.Property<string>("FileName")
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(300)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("FileName"), "utf8mb4");
+
+                    b.Property<long?>("FileSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Format")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Format"), "utf8mb4");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LastError"), "utf8mb4");
+
+                    b.Property<string>("PermissionCode")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PermissionCode"), "utf8mb4");
+
+                    b.Property<long>("ProcessedRows")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L);
+
+                    b.Property<int>("Progress")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
+                    b.Property<string>("QueryHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("QueryHash"), "utf8mb4");
+
+                    b.Property<string>("QueryJson")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("QueryJson"), "utf8mb4");
+
+                    b.Property<DateTime>("RequestedAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("ResourceCode")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ResourceCode"), "utf8mb4");
+
+                    b.Property<string>("Sha256")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Sha256"), "utf8mb4");
+
+                    b.Property<DateTime?>("StartedAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int>("Status")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
+                    b.Property<string>("StorageKey")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("StorageKey"), "utf8mb4");
+
+                    b.Property<string>("StorageProvider")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("StorageProvider"), "utf8mb4");
+
+                    b.Property<long?>("StoreId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("TotalRows")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BackgroundJobId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ExportJobs_BackgroundJobId");
+
+                    b.HasIndex("ExpiresAtUtc")
+                        .HasDatabaseName("IX_ExportJobs_ExpiresAtUtc");
+
+                    b.HasIndex("ExportTaskType")
+                        .HasDatabaseName("IX_ExportJobs_ExportTaskType");
+
+                    b.HasIndex("ResourceCode")
+                        .HasDatabaseName("IX_ExportJobs_ResourceCode");
+
+                    b.HasIndex("StoreId");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("TenantId", "Status")
+                        .HasDatabaseName("IX_ExportJobs_TenantId_Status");
+
+                    b.HasIndex("TenantId", "UserId", "RequestedAtUtc")
+                        .HasDatabaseName("IX_ExportJobs_TenantId_UserId_RequestedAtUtc");
+
+                    b.ToTable("ExportJobs", (string)null);
                 });
 
             modelBuilder.Entity("Atlas.Core.Entities.Global.FeaturePackage", b =>
