@@ -1,5 +1,6 @@
 import { http } from '@/api/http'
 import type {
+  BackfillRawNoticeAttachmentsRequest,
   EnqueueJobDto,
   ImportPublicUrlRequest,
   PagedResult,
@@ -44,6 +45,10 @@ export const rawNoticesApi = {
 
   importUrl(data: ImportPublicUrlRequest) {
     return http.post<EnqueueJobDto>(`${base}/import-url`, data)
+  },
+
+  backfillAttachments(data: BackfillRawNoticeAttachmentsRequest) {
+    return http.post<EnqueueJobDto>(`${base}/backfill-attachments`, data)
   },
 
   reparse(id: BidOpsId, data?: ReparseRawNoticeRequest) {

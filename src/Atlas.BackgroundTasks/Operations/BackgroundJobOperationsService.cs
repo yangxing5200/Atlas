@@ -405,6 +405,8 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
         var maskedPayload = _masker.MaskJson(job.Payload);
         var lastError = _masker.MaskText(job.LastError, 1_000);
         var result = _masker.MaskText(job.Result, 1_000);
+        var waitMilliseconds = CalculateWaitMilliseconds(job, now);
+        var runMilliseconds = CalculateRunMilliseconds(job, now);
 
         return new BackgroundJobListItemDto
         {
@@ -431,8 +433,10 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             ResultPreview = Truncate(result, 300),
             PayloadPreview = Truncate(maskedPayload, 500),
             IsStaleRunning = IsStaleRunning(job, now),
-            WaitSeconds = CalculateWaitSeconds(job, now),
-            RunSeconds = CalculateRunSeconds(job, now)
+            WaitMilliseconds = waitMilliseconds,
+            RunMilliseconds = runMilliseconds,
+            WaitSeconds = ToWholeSeconds(waitMilliseconds),
+            RunSeconds = ToWholeSeconds(runMilliseconds)
         };
     }
 
@@ -464,6 +468,8 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             ResultPreview = item.ResultPreview,
             PayloadPreview = item.PayloadPreview,
             IsStaleRunning = item.IsStaleRunning,
+            WaitMilliseconds = item.WaitMilliseconds,
+            RunMilliseconds = item.RunMilliseconds,
             WaitSeconds = item.WaitSeconds,
             RunSeconds = item.RunSeconds,
             Payload = _masker.MaskJson(job.Payload),
@@ -484,22 +490,30 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
                job.LockedAtUtc.Value < GetStaleThresholdUtc(now);
     }
 
-    private static long? CalculateWaitSeconds(BackgroundJob job, DateTime now)
+    private static long? CalculateWaitMilliseconds(BackgroundJob job, DateTime now)
     {
         if (job.Status != BackgroundJobStatus.Pending)
             return null;
 
         var startedAt = job.AvailableAtUtc > job.CreatedAt ? job.AvailableAtUtc : job.CreatedAt;
-        return Math.Max(0, (long)(now - startedAt).TotalSeconds);
+        return Math.Max(0, (long)Math.Ceiling((now - startedAt).TotalMilliseconds));
     }
 
-    private static long? CalculateRunSeconds(BackgroundJob job, DateTime now)
+    private static long? CalculateRunMilliseconds(BackgroundJob job, DateTime now)
     {
         if (!job.StartedAtUtc.HasValue)
             return null;
 
         var endedAt = job.CompletedAtUtc ?? now;
-        return Math.Max(0, (long)(endedAt - job.StartedAtUtc.Value).TotalSeconds);
+        return Math.Max(0, (long)Math.Ceiling((endedAt - job.StartedAtUtc.Value).TotalMilliseconds));
+    }
+
+    private static long? ToWholeSeconds(long? milliseconds)
+    {
+        if (!milliseconds.HasValue)
+            return null;
+
+        return milliseconds.Value / 1000;
     }
 
     private static int CountStatus(

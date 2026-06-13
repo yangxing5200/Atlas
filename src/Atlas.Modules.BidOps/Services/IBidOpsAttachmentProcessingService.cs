@@ -11,5 +11,6 @@ public interface IBidOpsAttachmentProcessingService
 {
     Task<BidOpsAttachmentProcessingResult> ProcessRawNoticeAttachmentsAsync(
         long rawNoticeId,
+        bool forceTextExtraction = false,
         CancellationToken ct = default);
 }

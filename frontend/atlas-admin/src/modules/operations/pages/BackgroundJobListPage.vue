@@ -17,7 +17,7 @@ import type {
   BackgroundJobStatus,
   BackgroundJobSummaryDto,
 } from '../types'
-import { formatSeconds, jobStatusOptions } from '../utils/display'
+import { formatDuration, jobStatusOptions } from '../utils/display'
 
 interface JobTableQuery {
   keyword: string
@@ -222,10 +222,10 @@ onMounted(reload)
         <template #default="{ row }">{{ row.attemptCount }} / {{ row.maxAttempts }}</template>
       </el-table-column>
       <el-table-column label="等待" width="90">
-        <template #default="{ row }">{{ formatSeconds(row.waitSeconds) }}</template>
+        <template #default="{ row }">{{ formatDuration(row.waitMilliseconds, row.waitSeconds) }}</template>
       </el-table-column>
       <el-table-column label="运行" width="90">
-        <template #default="{ row }">{{ formatSeconds(row.runSeconds) }}</template>
+        <template #default="{ row }">{{ formatDuration(row.runMilliseconds, row.runSeconds) }}</template>
       </el-table-column>
       <el-table-column label="创建时间" width="170">
         <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>

@@ -1,6 +1,7 @@
 import type { BidOpsId, PagedResult } from '@/modules/bidops/types'
 
 export type BackgroundJobStatus = number | string
+export type BackgroundJobDurationValue = number | string
 
 export interface BackgroundJobSearchQuery {
   keyword?: string
@@ -45,8 +46,10 @@ export interface BackgroundJobListItemDto {
   resultPreview: string
   payloadPreview: string
   isStaleRunning: boolean
-  waitSeconds?: number | null
-  runSeconds?: number | null
+  waitMilliseconds?: BackgroundJobDurationValue | null
+  runMilliseconds?: BackgroundJobDurationValue | null
+  waitSeconds?: BackgroundJobDurationValue | null
+  runSeconds?: BackgroundJobDurationValue | null
 }
 
 export interface BackgroundJobDetailDto extends BackgroundJobListItemDto {

@@ -47,6 +47,8 @@ public class BackgroundJobListItemDto
     public string ResultPreview { get; set; } = string.Empty;
     public string PayloadPreview { get; set; } = string.Empty;
     public bool IsStaleRunning { get; set; }
+    public long? WaitMilliseconds { get; set; }
+    public long? RunMilliseconds { get; set; }
     public long? WaitSeconds { get; set; }
     public long? RunSeconds { get; set; }
 }

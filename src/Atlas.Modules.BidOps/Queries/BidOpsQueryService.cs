@@ -677,6 +677,9 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             "pdf" => "application/pdf",
             "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "doc" => "application/msword",
+            "xlsx" or "xlsm" or "xltx" or "xltm" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xls" => "application/vnd.ms-excel",
+            "zip" => "application/zip",
             "html" or "htm" => "text/html; charset=utf-8",
             "txt" => "text/plain; charset=utf-8",
             _ => "application/octet-stream"

@@ -99,7 +99,7 @@ const menuTree: MenuItem[] = [
         index: '/bidops/intelligence/manual-import',
         title: '手动导入',
         icon: Operation,
-        permissionsAny: [BIDOPS_PERMISSIONS.CRAWL_READ],
+        permissionsAny: [BIDOPS_PERMISSIONS.CRAWL_IMPORT],
       },
       {
         index: '/bidops/intelligence/run-logs',

@@ -12,6 +12,27 @@ namespace Atlas.Modules.BidOps.Services;
 
 public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
 {
+    private const int NoticeTypeMaxLength = 64;
+    private const int ProjectNameMaxLength = 500;
+    private const int ProjectCodeMaxLength = 128;
+    private const int OrganizationNameMaxLength = 300;
+    private const int RegionMaxLength = 128;
+    private const int StorageKeyMaxLength = 1000;
+    private const int LotNoMaxLength = 128;
+    private const int LotNameMaxLength = 300;
+    private const int PackageNoMaxLength = 128;
+    private const int PackageNameMaxLength = 500;
+    private const int CategoryMaxLength = 128;
+    private const int UnitMaxLength = 64;
+    private const int DeliveryPlaceMaxLength = 300;
+    private const int DeliveryPeriodMaxLength = 200;
+    private const int RequirementTypeMaxLength = 128;
+    private const int RequirementOriginalTextMaxLength = 256;
+    private const int RequiredEvidenceTypeMaxLength = 128;
+    private const int RiskLevelMaxLength = 64;
+    private const int AiExplanationMaxLength = 1000;
+    private const int ReviewTaskTitleMaxLength = 500;
+
     private readonly IRepository<RawNotice> _rawNotices;
     private readonly IRepository<RawAttachment> _rawAttachments;
     private readonly IRepository<NoticeStaging> _noticeStaging;
@@ -76,12 +97,12 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
         {
             Id = _idGenerator.NextId(),
             RawNoticeId = raw.Id,
-            NoticeType = extract.NoticeType,
-            ProjectName = extract.ProjectName,
-            ProjectCode = extract.ProjectCode,
-            BuyerName = extract.BuyerName,
-            AgencyName = extract.AgencyName,
-            Region = extract.Region,
+            NoticeType = Truncate(extract.NoticeType, NoticeTypeMaxLength),
+            ProjectName = Truncate(extract.ProjectName, ProjectNameMaxLength),
+            ProjectCode = Truncate(extract.ProjectCode, ProjectCodeMaxLength),
+            BuyerName = Truncate(extract.BuyerName, OrganizationNameMaxLength),
+            AgencyName = Truncate(extract.AgencyName, OrganizationNameMaxLength),
+            Region = Truncate(extract.Region, RegionMaxLength),
             BudgetAmount = extract.BudgetAmount,
             PublishTime = extract.PublishTime ?? raw.PublishTime,
             SignupDeadline = extract.SignupDeadline,
@@ -89,7 +110,7 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
             OpenBidTime = extract.OpenBidTime,
             AiConfidence = extract.Confidence,
             ReviewStatus = ReviewStatus.Pending,
-            RawAiOutputStorageKey = rawAiOutput.StorageKey
+            RawAiOutputStorageKey = Truncate(rawAiOutput.StorageKey, StorageKeyMaxLength)
         };
 
         await _noticeStaging.AddAsync(noticeStaging, ct);
@@ -100,17 +121,17 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
             {
                 Id = _idGenerator.NextId(),
                 NoticeStagingId = noticeStaging.Id,
-                LotNo = package.LotNo,
-                LotName = package.LotName,
-                PackageNo = package.PackageNo,
-                PackageName = package.PackageName,
-                Category = package.Category,
+                LotNo = Truncate(package.LotNo, LotNoMaxLength),
+                LotName = Truncate(package.LotName, LotNameMaxLength),
+                PackageNo = Truncate(package.PackageNo, PackageNoMaxLength),
+                PackageName = Truncate(package.PackageName, PackageNameMaxLength),
+                Category = Truncate(package.Category, CategoryMaxLength),
                 Quantity = package.Quantity,
-                Unit = package.Unit,
+                Unit = Truncate(package.Unit, UnitMaxLength),
                 BudgetAmount = package.BudgetAmount,
                 MaxPrice = package.MaxPrice,
-                DeliveryPlace = package.DeliveryPlace,
-                DeliveryPeriod = package.DeliveryPeriod,
+                DeliveryPlace = Truncate(package.DeliveryPlace, DeliveryPlaceMaxLength),
+                DeliveryPeriod = Truncate(package.DeliveryPeriod, DeliveryPeriodMaxLength),
                 AiConfidence = package.Confidence,
                 ReviewStatus = ReviewStatus.Pending
             };
@@ -119,21 +140,7 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
 
             foreach (var requirement in package.Requirements)
             {
-                await _requirementStaging.AddAsync(new RequirementStaging
-                {
-                    Id = _idGenerator.NextId(),
-                    PackageStagingId = packageStaging.Id,
-                    RequirementType = requirement.RequirementType,
-                    OriginalText = requirement.OriginalText,
-                    SourcePage = requirement.SourcePage,
-                    IsMandatory = requirement.IsMandatory,
-                    IsRejectRisk = requirement.IsRejectRisk,
-                    RequiredEvidenceType = requirement.RequiredEvidenceType,
-                    RiskLevel = requirement.RiskLevel,
-                    AiExplanation = requirement.AiExplanation,
-                    AiConfidence = requirement.Confidence,
-                    ReviewStatus = ReviewStatus.Pending
-                }, ct);
+                await _requirementStaging.AddAsync(CreateRequirementStaging(packageStaging.Id, requirement), ct);
             }
         }
 
@@ -143,7 +150,7 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
             BizType = "NoticeStaging",
             BizId = noticeStaging.Id,
             RawNoticeId = raw.Id,
-            TaskTitle = $"审核标讯：{noticeStaging.ProjectName}",
+            TaskTitle = BuildReviewTaskTitle(noticeStaging.ProjectName),
             Priority = 0,
             Status = ReviewTaskStatus.Pending
         };
@@ -166,12 +173,12 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
         var extract = await _ai.ExtractAsync(raw.Title, text, ct);
         var rawAiOutput = await SaveAiOutputAsync(extract, ct);
 
-        noticeStaging.NoticeType = extract.NoticeType;
-        noticeStaging.ProjectName = extract.ProjectName;
-        noticeStaging.ProjectCode = extract.ProjectCode;
-        noticeStaging.BuyerName = extract.BuyerName;
-        noticeStaging.AgencyName = extract.AgencyName;
-        noticeStaging.Region = extract.Region;
+        noticeStaging.NoticeType = Truncate(extract.NoticeType, NoticeTypeMaxLength);
+        noticeStaging.ProjectName = Truncate(extract.ProjectName, ProjectNameMaxLength);
+        noticeStaging.ProjectCode = Truncate(extract.ProjectCode, ProjectCodeMaxLength);
+        noticeStaging.BuyerName = Truncate(extract.BuyerName, OrganizationNameMaxLength);
+        noticeStaging.AgencyName = Truncate(extract.AgencyName, OrganizationNameMaxLength);
+        noticeStaging.Region = Truncate(extract.Region, RegionMaxLength);
         noticeStaging.BudgetAmount = extract.BudgetAmount;
         noticeStaging.PublishTime = extract.PublishTime ?? raw.PublishTime;
         noticeStaging.SignupDeadline = extract.SignupDeadline;
@@ -181,7 +188,7 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
         noticeStaging.ReviewStatus = ReviewStatus.Pending;
         noticeStaging.ReviewerId = null;
         noticeStaging.ReviewedAt = null;
-        noticeStaging.RawAiOutputStorageKey = rawAiOutput.StorageKey;
+        noticeStaging.RawAiOutputStorageKey = Truncate(rawAiOutput.StorageKey, StorageKeyMaxLength);
 
         var packageQuery = await _packageStaging.QueryTrackingAsync(ct);
         var packages = await packageQuery.Where(x => x.NoticeStagingId == noticeStaging.Id).ToListAsync(ct);
@@ -210,7 +217,7 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
             reviewTask.Id = _idGenerator.NextId();
 
         reviewTask.RawNoticeId = raw.Id;
-        reviewTask.TaskTitle = $"审核标讯：{noticeStaging.ProjectName}";
+        reviewTask.TaskTitle = BuildReviewTaskTitle(noticeStaging.ProjectName);
         reviewTask.Priority = 0;
         reviewTask.Status = ReviewTaskStatus.Pending;
         reviewTask.Decision = string.Empty;
@@ -238,17 +245,17 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
             {
                 Id = _idGenerator.NextId(),
                 NoticeStagingId = noticeStagingId,
-                LotNo = package.LotNo,
-                LotName = package.LotName,
-                PackageNo = package.PackageNo,
-                PackageName = package.PackageName,
-                Category = package.Category,
+                LotNo = Truncate(package.LotNo, LotNoMaxLength),
+                LotName = Truncate(package.LotName, LotNameMaxLength),
+                PackageNo = Truncate(package.PackageNo, PackageNoMaxLength),
+                PackageName = Truncate(package.PackageName, PackageNameMaxLength),
+                Category = Truncate(package.Category, CategoryMaxLength),
                 Quantity = package.Quantity,
-                Unit = package.Unit,
+                Unit = Truncate(package.Unit, UnitMaxLength),
                 BudgetAmount = package.BudgetAmount,
                 MaxPrice = package.MaxPrice,
-                DeliveryPlace = package.DeliveryPlace,
-                DeliveryPeriod = package.DeliveryPeriod,
+                DeliveryPlace = Truncate(package.DeliveryPlace, DeliveryPlaceMaxLength),
+                DeliveryPeriod = Truncate(package.DeliveryPeriod, DeliveryPeriodMaxLength),
                 AiConfidence = package.Confidence,
                 ReviewStatus = ReviewStatus.Pending
             };
@@ -257,21 +264,7 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
 
             foreach (var requirement in package.Requirements)
             {
-                await _requirementStaging.AddAsync(new RequirementStaging
-                {
-                    Id = _idGenerator.NextId(),
-                    PackageStagingId = packageStaging.Id,
-                    RequirementType = requirement.RequirementType,
-                    OriginalText = requirement.OriginalText,
-                    SourcePage = requirement.SourcePage,
-                    IsMandatory = requirement.IsMandatory,
-                    IsRejectRisk = requirement.IsRejectRisk,
-                    RequiredEvidenceType = requirement.RequiredEvidenceType,
-                    RiskLevel = requirement.RiskLevel,
-                    AiExplanation = requirement.AiExplanation,
-                    AiConfidence = requirement.Confidence,
-                    ReviewStatus = ReviewStatus.Pending
-                }, ct);
+                await _requirementStaging.AddAsync(CreateRequirementStaging(packageStaging.Id, requirement), ct);
             }
         }
     }
@@ -321,5 +314,40 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
         });
         await using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
         return await _fileStore.SaveAsync(stream, "structured-ai-output.json", "application/json", ct);
+    }
+
+    private RequirementStaging CreateRequirementStaging(
+        long packageStagingId,
+        BidOpsRequirementExtract requirement)
+    {
+        return new RequirementStaging
+        {
+            Id = _idGenerator.NextId(),
+            PackageStagingId = packageStagingId,
+            RequirementType = Truncate(requirement.RequirementType, RequirementTypeMaxLength),
+            OriginalText = Truncate(requirement.OriginalText, RequirementOriginalTextMaxLength),
+            SourcePage = requirement.SourcePage,
+            IsMandatory = requirement.IsMandatory,
+            IsRejectRisk = requirement.IsRejectRisk,
+            RequiredEvidenceType = Truncate(requirement.RequiredEvidenceType, RequiredEvidenceTypeMaxLength),
+            RiskLevel = Truncate(requirement.RiskLevel, RiskLevelMaxLength),
+            AiExplanation = Truncate(requirement.AiExplanation, AiExplanationMaxLength),
+            AiConfidence = requirement.Confidence,
+            ReviewStatus = ReviewStatus.Pending
+        };
+    }
+
+    private static string BuildReviewTaskTitle(string projectName)
+    {
+        return Truncate($"审核标讯：{projectName}", ReviewTaskTitleMaxLength);
+    }
+
+    private static string Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var trimmed = value.Trim();
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
 }

@@ -35,6 +35,36 @@ public static partial class StateGridEcpWcmParser
         return true;
     }
 
+    public static bool TryParsePortalDetailUrl(
+        string? detailUrl,
+        out string doctype,
+        out long noticeId,
+        out string menuId)
+    {
+        doctype = string.Empty;
+        noticeId = 0;
+        menuId = string.Empty;
+        if (string.IsNullOrWhiteSpace(detailUrl))
+            return false;
+
+        var match = PortalDetailRegex().Match(detailUrl.Trim());
+        if (!match.Success)
+            return false;
+
+        doctype = match.Groups["doctype"].Value.Trim();
+        if (string.IsNullOrWhiteSpace(doctype) ||
+            !long.TryParse(match.Groups["noticeId"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out noticeId) ||
+            noticeId <= 0)
+        {
+            return false;
+        }
+
+        menuId = match.Groups["menuId"].Success
+            ? match.Groups["menuId"].Value.Trim()
+            : string.Empty;
+        return true;
+    }
+
     public static IReadOnlyList<StateGridEcpApiNotice> ParseNoticeList(
         string json,
         string portalBaseUrl,
@@ -138,12 +168,16 @@ public static partial class StateGridEcpWcmParser
         AppendJsonText(resultValue, "resultValue", builder, 0);
 
         var text = Trim(builder.ToString(), MaxTextLength);
+        var attachments = DiscoverAttachments(resultValue, notice.DetailUrl)
+            .ToList();
+        TryAddBidNoticeDownloadAttachment(resultValue, notice, title, attachments);
+
         return new StateGridNoticeDocument(
             Trim(title, 500),
             text,
             BuildSyntheticHtml(title, text),
             publishTime,
-            DiscoverAttachments(resultValue, notice.DetailUrl));
+            attachments);
     }
 
     public static StateGridNoticeDocument CreateFallbackDocument(StateGridEcpApiNotice notice)
@@ -162,12 +196,15 @@ public static partial class StateGridEcpWcmParser
             AppendLine(builder, $"PublishTime: {notice.PublishTime:yyyy-MM-dd}");
 
         var text = Trim(builder.ToString(), MaxTextLength);
+        var attachments = new List<StateGridAttachmentDocument>();
+        TryAddBidNoticeDownloadAttachment(notice, notice.Title, attachments);
+
         return new StateGridNoticeDocument(
             notice.Title,
             text,
             BuildSyntheticHtml(notice.Title, text),
             notice.PublishTime,
-            Array.Empty<StateGridAttachmentDocument>());
+            attachments);
     }
 
     public static string GetDetailApiPath(string doctype)
@@ -408,6 +445,52 @@ public static partial class StateGridEcpWcmParser
             fileSize);
     }
 
+    private static void TryAddBidNoticeDownloadAttachment(
+        JsonElement resultValue,
+        StateGridEcpApiNotice notice,
+        string title,
+        List<StateGridAttachmentDocument> results)
+    {
+        if (!string.Equals(notice.Doctype.Trim(), "doci-bid", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var fileFlag = GetString(resultValue, "fileFlag");
+        if (string.Equals(fileFlag, "0", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(fileFlag, "false", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        if (!string.Equals(fileFlag, "1", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(fileFlag, "true", StringComparison.OrdinalIgnoreCase) &&
+            results.Count > 0)
+        {
+            return;
+        }
+
+        TryAddBidNoticeDownloadAttachment(notice, title, results);
+    }
+
+    private static void TryAddBidNoticeDownloadAttachment(
+        StateGridEcpApiNotice notice,
+        string title,
+        List<StateGridAttachmentDocument> results)
+    {
+        if (!string.Equals(notice.Doctype.Trim(), "doci-bid", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        if (!Uri.TryCreate(notice.DetailUrl, UriKind.Absolute, out var baseUri))
+            baseUri = new Uri("https://ecp.sgcc.com.cn/ecp2.0/portal/");
+
+        AddAttachment(
+            baseUri,
+            results,
+            results.Select(x => x.FileUrl).ToHashSet(StringComparer.OrdinalIgnoreCase),
+            string.IsNullOrWhiteSpace(title)
+                ? $"state-grid-bid-notice-{notice.NoticeId}.zip"
+                : $"{title.Trim()}-公告文件.zip",
+            BuildBidNoticeDownloadUrl(baseUri, notice.NoticeId),
+            null);
+    }
+
     private static void TryAddAttachmentFromObject(
         JsonElement element,
         Uri baseUri,
@@ -463,6 +546,16 @@ public static partial class StateGridEcpWcmParser
             Query = string.IsNullOrWhiteSpace(fileName)
                 ? $"filePath={Uri.EscapeDataString(filePath.Trim())}"
                 : $"filePath={Uri.EscapeDataString(filePath.Trim())}&fileName={Uri.EscapeDataString(fileName.Trim())}"
+        };
+        return builder.Uri.ToString();
+    }
+
+    private static string BuildBidNoticeDownloadUrl(Uri baseUri, long noticeId)
+    {
+        var builder = new UriBuilder(baseUri.Scheme, baseUri.Host)
+        {
+            Path = "/ecp2.0/ecpwcmcore/index/downLoadBid",
+            Query = $"noticeId={noticeId.ToString(CultureInfo.InvariantCulture)}"
         };
         return builder.Uri.ToString();
     }
@@ -660,6 +753,9 @@ public static partial class StateGridEcpWcmParser
 
     [GeneratedRegex("(?<!\\d)\\d{16}(?!\\d)")]
     private static partial Regex MenuIdRegex();
+
+    [GeneratedRegex(@"(?:^|[#/])doc/(?<doctype>[a-z0-9-]+)/(?<noticeId>\d+)(?:_(?<menuId>\d+))?", RegexOptions.IgnoreCase)]
+    private static partial Regex PortalDetailRegex();
 
     [GeneratedRegex("\\.(pdf|doc|docx|xls|xlsx|zip|rar|txt|html?)(\\?|#|$)", RegexOptions.IgnoreCase)]
     private static partial Regex AttachmentExtensionRegex();

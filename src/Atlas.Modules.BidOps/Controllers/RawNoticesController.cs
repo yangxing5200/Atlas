@@ -119,6 +119,17 @@ public sealed class RawNoticesController : ControllerBase
         return Accepted(await _crawl.EnqueueManualUrlImportAsync(request, ct));
     }
 
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.CrawlImport)]
+    [HttpPost("backfill-attachments")]
+    public async Task<ActionResult<EnqueueJobDto>> BackfillAttachmentsAsync(
+        [FromBody] BackfillRawNoticeAttachmentsRequest? request,
+        CancellationToken ct)
+    {
+        return Accepted(await _crawl.EnqueueRawAttachmentBackfillAsync(
+            request ?? new BackfillRawNoticeAttachmentsRequest(),
+            ct));
+    }
+
     private static string BuildInlineContentDisposition(string fileName)
     {
         if (string.IsNullOrWhiteSpace(fileName))

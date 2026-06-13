@@ -1,5 +1,64 @@
 # Implementation Log
 
+## 2026-06-13 BidOps Outcome Supplier Award Amount Extraction
+
+Completed:
+
+- Extended `BidOpsOutcomeSupplierTextParser` so public result supplier leads can extract award amounts from explicit labels such as `成交金额`, `中标价`, `投标报价`, `应答报价`, `评审价`, and `金额`.
+- Added result-table amount inference for explicit supplier tables whose headers contain amount/price columns and units such as `万元` or `元`.
+- Amounts are normalized to CNY yuan in `OutcomeSupplierRecord.AwardAmount`; for example `40.05 万元` is stored as `400500.00`.
+- Percentage, discount-rate, fee-rate, and score cells such as `97.50%` and trailing `88.00` scores are ignored and are not treated as award amounts.
+- Extended fragment cleanup to discard generic institution/company suffix tails such as `研究院有限公司` while preserving real full names such as `山东黄河勘测设计研究院有限公司`.
+- Re-ran local outcome supplier backfill for the BidOps tenant. The local public outcome lead set now has `recordCount=1108`, `supplierCount=558`, and 38 records with non-empty `AwardAmount`.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsOutcomeSupplierTextParser --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 10 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 52 passed. A transient copy retry warning occurred because another test process briefly held `Atlas.Services.Tests.dll`; the retry succeeded.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- Authenticated API smoke as `bidops_admin` enqueued 85 `bidops.outcome.supplier-extract` jobs through `POST /api/bidops/suppliers/outcome-records/backfill?maxItems=500`.
+- Background job summary for tenant `300001` and `bidops.outcome.supplier-extract` reported `pending=0`, `running=0`, `failed=0`, `dead=0`, and `succeeded=813`.
+- Post-backfill API samples included `常州天辰电力科技有限公司` with `awardAmount=400500.00` from evidence `40.05 万元`, and exact pagination check returned `0` records for `研究院有限公司`.
+
+## 2026-06-13 BidOps Outcome Supplier Fragment Cleanup
+
+Completed:
+
+- Hardened `BidOpsOutcomeSupplierTextParser` so PDF/Word table fragments like `有限公司`, `技有限公司`, `工程有限公司`, `务有限公司`, `术有限公司`, `程有限公司`, `股份有限公司`, and `科技有限公司` are not accepted as supplier names.
+- Added a formal-company-suffix guard that requires enough organization-name content before suffixes such as `有限公司`, `股份有限公司`, `有限责任公司`, `工程设计有限公司`, and `分公司`.
+- Added a guard for unbalanced parentheses so fractured names such as `周口龙润电力（集团` are discarded instead of surfacing in supplier analysis.
+- Re-ran local outcome supplier backfill for the BidOps tenant. The local public outcome lead set changed from `recordCount=1623`, `supplierCount=616` to `recordCount=1110`, `supplierCount=559` after removing fragment records.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsOutcomeSupplierTextParser --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 8 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 50 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- Authenticated API smoke as `bidops_admin` enqueued 85 `bidops.outcome.supplier-extract` jobs through `POST /api/bidops/suppliers/outcome-records/backfill?maxItems=500`.
+- Post-backfill exact pagination checks returned `0` records for the fragment supplier names `有限公司`, `技有限公司`, `工程有限公司`, `务有限公司`, `术有限公司`, `程有限公司`, `股份有限公司`, `科技有限公司`, and `周口龙润电力（集团`.
+- Background job summary for tenant `300001` and `bidops.outcome.supplier-extract` reported `pending=0`, `running=0`, `failed=0`, `dead=0`, and `succeeded=643`.
+
+## 2026-06-13 BidOps ZIP And Excel Attachment Extraction
+
+Completed:
+
+- Extended `BidOpsTextExtractor` so Worker attachment processing extracts `.xlsx/.xlsm/.xltx/.xltm` worksheet text through OpenXML worksheet/shared-string XML.
+- Added safe in-memory `.zip` recursion for supported inner files, including Excel workbooks and text/HTML/PDF/DOCX attachments, with archive depth, entry count, and entry size limits.
+- Added a conservative readable-text fallback for legacy binary `.doc/.xls` files without adding a new conversion service or framework/package upgrade.
+- Updated attachment MIME-type inference for Excel and ZIP in both Worker processing and authorized attachment file responses.
+- Added regression tests proving XLSX sheet rows and ZIP-contained XLSX/TXT content are included in extracted attachment text.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsTextExtractor" --nologo --verbosity minimal` succeeded: 4 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --nologo --verbosity minimal` succeeded: 37 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal` succeeded with 0 warnings and 0 errors.
+- `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal` succeeded with 0 warnings and 0 errors.
+- `dotnet test Atlas.sln --no-build --nologo --verbosity minimal` was run. Non-integration projects passed, including `Atlas.Services.Tests` with 86 passed; existing integration tests still failed outside BidOps because cache integration setup cannot resolve `ICurrentIdentity`, `atlas_global` is missing locally, and the local MySQL instance still hits the known 767-byte key-length limit.
+- `git diff --check` succeeded.
+
 ## 2026-06-11 BidOps MVP Loop
 
 Integrated BidOps as an Atlas business module and completed the MVP loop:
@@ -849,3 +908,172 @@ Verification:
 - Full BidOps route/service/parser test pass succeeded: `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --nologo --verbosity minimal` with 35 passed.
 - Authenticated API smoke as `bidops_admin` confirmed login, outcome summary/list, and repeatable backfill enqueue. Local full backfill over 54 outcome-like raw notices completed with `OutcomeRecordCount=0` after strict filtering, which is expected for the current local sample because it lacks explicit supplier-detail lines and previous template/buyer false positives were removed.
 - Browser smoke confirmed `/bidops/suppliers/analysis` renders the public result supplier lead metrics and empty state without fresh console errors, and `/bidops/packages/323637502609068032` renders the historical supplier lead section and package requirements without fresh console errors.
+
+## 2026-06-13 BidOps ZIP/Excel Attachments And State Grid Manual Detail Import
+
+Completed:
+
+- Added Worker text extraction for ZIP archives and OpenXML Excel workbooks so tender package details in nested `.docx`/`.xlsx` files become searchable extracted attachment text.
+- Added conservative readable-text fallback for legacy `.doc` and `.xls` files without introducing a local Office conversion dependency.
+- Updated State Grid WCM detail parsing to add `downLoadBid?noticeId=...` as a ZIP attachment when a `doci-bid` detail response exposes `fileFlag = 1`.
+- Hardened State Grid `doci-bid` attachment discovery so missing/unknown `fileFlag` values still keep the public `downLoadBid?noticeId=...` ZIP candidate when no explicit attachment list was discovered, while explicit `fileFlag = 0/false` still suppresses the candidate.
+- Added the same `doci-bid` ZIP candidate to fallback State Grid detail documents so transient detail API parsing failures do not silently drop public procurement announcement ZIP attachments.
+- Updated manual URL import jobs to detect public State Grid portal detail URLs and fetch the public WCM detail/attachment metadata in Atlas.Worker before falling back to the old manual URL-only import path.
+- Added tests for XLSX worksheet text extraction, recursive ZIP extraction, State Grid bid ZIP attachment discovery, and State Grid portal detail URL parsing.
+- Updated the runbook and decisions for ZIP/Excel extraction and State Grid manual detail imports.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsTextExtractor"` succeeded: 4 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests` succeeded earlier in this phase: 37 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~StateGridEcpWcmParser|FullyQualifiedName~BidOpsTextExtractor" --no-restore --nologo --verbosity minimal` succeeded after the manual-import change: 11 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~StateGridEcpWcmParser|FullyQualifiedName~BidOpsTextExtractor" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded after hardening missing-fileFlag attachment discovery: 15 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded after the attachment discovery hardening and parser/frontend preview changes: 47 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded after stopping old local processes that locked copied DLLs.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded after stopping old local processes that locked copied DLLs.
+- Local BidOps smoke started WebApi on `http://127.0.0.1:5260`, Worker `Atlas.Worker.exe`, and the existing Vite frontend on `http://localhost:5173`.
+- Authenticated API smoke enqueued `bidops.raw.manual-url-import` job `323954000376500224` for `https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-bid/2606128544990232_2018032900295987`; Worker created RawNotice `323954027123576832`.
+- The State Grid detail response added one ZIP attachment, `北京电力交易中心有限公司2026年第一次服务公开谈判采购-公告文件.zip`, downloaded `52,078` bytes from `downLoadBid?noticeId=2606128544990232`, and extracted `11,582` characters of text.
+- Authenticated API smoke for `https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-bid/2606128525313769_2018032900295987` re-imported existing RawNotice `323791819534110720`; the parser registered `国网新源集团有限公司2026年临一批服务公开谈判采购-公告文件.zip`, downloaded `82,025` bytes from `downLoadBid?noticeId=2606128525313769`, and extracted attachment text successfully.
+- Extracted attachment text includes the procurement scope table headers `分标编号`, `分标名称`, `包号`, `包名称`, `采购范围`, `服务期 /框架协议有效期`, and `实施地点`.
+- The downstream structured parse completed with `packageCount=1`, `requirementCount=23`, and review task `323954072279453717` pending human review; no formal business import occurred.
+- `dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -- bidops-status ...` confirmed `RawNotices=112`, `RawAttachments=74`, `NoticeStaging=112`, and `ReviewTasks=112` after the smoke run.
+- `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal` succeeded earlier after ZIP/Excel extraction.
+- `dotnet test Atlas.sln --no-build` still has existing non-BidOps local integration failures: cache integration missing `ICurrentIdentity`, missing local `atlas_global`, and old MySQL 767-byte key length limits.
+
+## 2026-06-13 BidOps State Grid Attachment Table Recognition
+
+Completed:
+
+- Read `CODEX_BIDOPS_SGCC_ECP_ATTACHMENT_TABLE_EXTRACTION_SPEC.md` and implemented the P0/P1-compatible table recognition path without changing formal business schemas.
+- Updated DOCX extraction to parse `word/document.xml` as WordprocessingML, preserve paragraphs, and render Word tables as Markdown tables with the nearest preceding heading.
+- Added deterministic `BidOpsEcpProcurementTableParser` for State Grid ECP procurement attachment Markdown tables.
+- `项目概况与采购范围` tables now produce multiple `BidOpsPackageExtract` candidates with lot code/name, package number/name, service period, and implementation place.
+- `响应供应商须满足如下专用资格要求` tables now match rows back to packages and produce `Performance`, `Qualification`, `Personnel`, and `JointVenture` requirement candidates while skipping `/` / empty cells.
+- The generic deterministic parser now prefers the SGCC table parser when standard table headers are present and otherwise falls back to the existing single-package text heuristic.
+- Added tests for DOCX table Markdown output, 44-package/54-requirement SGCC table parsing, and table-header aliases such as `项目内容`, `服务期限`, and `服务地点`.
+- Hardened SGCC qualification table handling for merged Word headers: DOCX extraction now fills blank child-header cells from parent header rows, and the Markdown parser can infer `分标` / `包号` / `包名称` when a previously extracted qualification table has those first three header cells blank.
+- Manual reparse now forces attachment text extraction when carrying a force-run id so parser improvements can refresh already downloaded attachments before structured parsing.
+- Updated the frontend raw/attachment text preview to render Markdown headings and tables as structured HTML instead of showing extracted table Markdown as plain text. The renderer stays intentionally small and safe: it supports headings, paragraphs, and tables without `v-html` or a new dependency.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsTextExtractor|FullyQualifiedName~BidOpsDeterministicNoticeParser|FullyQualifiedName~BidOpsEcpProcurementTableParser" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 14 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 44 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only the existing non-fatal Rollup annotation and chunk-size warnings.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded. An earlier parallel run failed only because a just-finished testhost temporarily locked `obj\Debug\net8.0\Atlas.Modules.BidOps.dll`; rerun passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- Local BidOps smoke re-ran `POST /api/bidops/raw-notices/323954027123576832/reparse` for the public SGCC URL `https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-bid/2606128544990232_2018032900295987`.
+- Pipeline verification returned `packageCount=44`, `requirementCount=54`, one downloaded/extracted ZIP attachment, and a pending human review task; no formal business import occurred.
+- Review detail verification returned requirement distribution `Performance=44`, `JointVenture=7`, and `Qualification=3`.
+- During local smoke, Worker had to be started with `BidOpsLocal` environment; the default Worker appsettings attempted RabbitMQ on `localhost:5672`, leaving database jobs pending.
+
+## 2026-06-13 BidOps Manual Procurement Announcement Import Page
+
+Completed:
+
+- Replaced the frontend `手动导入` ComingSoon route with a real `/bidops/intelligence/manual-import` page.
+- The page defaults to a single procurement announcement URL input and keeps source/channel/title/text as folded advanced fields for exceptional fallback imports.
+- Submitting the form calls the existing enqueue-only `POST /api/bidops/raw-notices/import-url` API; WebApi still does not crawl synchronously.
+- The page polls `GET /api/ops/background-jobs/{id}` for the manual import job, extracts `rawNoticeId=...` from the Worker result, then loads the RawNotice and `GET /api/bidops/raw-notices/{id}/pipeline`.
+- The result panel shows job status, Raw status, announcement metadata, attachment/download/text-extraction counts, structured parse counts, and direct actions to Raw detail or the generated review task.
+- Updated the Raw notice list action so `手动导入` opens the full import page instead of a small internal-ID dialog.
+- Tightened the frontend route/menu permission to `bidops.crawl.import`, matching the backend import endpoint.
+- Added a controller route assertion for `POST /api/bidops/raw-notices/import-url`.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only the existing Rollup annotation and chunk-size warnings.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 47 passed.
+- `git diff --check` succeeded.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps` returned no matches.
+- Browser smoke logged in as local `bidops_admin`, opened `http://localhost:5173/bidops/intelligence/manual-import`, submitted `https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-bid/2606128525313769_2018032900295987`, and confirmed the page displayed the existing manual import job, RawNotice title `国网新源集团有限公司2026年临一批服务公开谈判采购`, one downloaded/extracted ZIP attachment, and a pending review pipeline without console errors.
+
+## 2026-06-13 BidOps Historical Attachment Backfill And Timezone Display
+
+Completed:
+
+- Added Worker job type `bidops.raw.attachment-backfill` and `RawAttachmentBackfillJobHandler`.
+- Added `POST /api/bidops/raw-notices/backfill-attachments` to enqueue historical attachment repair without synchronous crawling in WebApi.
+- The backfill scans historical public SGCC `doci-bid` 招标/采购公告 Raw notices, re-imports public detail metadata through the StateGridEcp crawler, records missing ZIP attachments, and enqueues attachment download/text extraction plus forced structured reparse.
+- Approved, ignored, and already-formal Raw notices are skipped so the job does not silently mutate approved business data.
+- Structured parsing now trims staging text fields to the actual tenant table limits, including the original migration's `varchar(256)` `RequirementStaging.OriginalText`, while keeping full extracted attachment text in `IBidOpsFileStore`.
+- Added a Raw notice list action `补齐历史附件` that starts the backfill job with a conservative batch size.
+- Hardened frontend datetime formatting so backend UTC timestamps, including `采集时间`, render in the browser's current timezone even when an ISO datetime arrives without an explicit zone suffix.
+- Updated runbook and decisions for the historical backfill endpoint and timezone display behavior.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 47 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps` returned no matches.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- Local backfill job `323976155956908032` processed 20 historical public SGCC `doci-bid` Raw notices with `candidates=20;refreshed=20;attachmentJobs=20;skipped=0;failed=0`. Its 20 attachment jobs succeeded. The first structured parse attempt exposed the local historical `RequirementStaging.OriginalText` `varchar(256)` limit; after truncation hardening, the 20 retry parse jobs succeeded while the old dead jobs remain as audit history.
+- Local backfill job `323979300363702272` processed the next 20 missing historical attachments with `candidates=20;refreshed=20;attachmentJobs=20;skipped=0;failed=0`. Its 20 attachment jobs and 20 structured parse jobs succeeded.
+- A final missing-only backfill job `323979869820162048` returned `candidates=0;refreshed=0;attachmentJobs=0;skipped=0;failed=0`.
+- Local status after historical backfill: `RawNotices=123`, `RawAttachments=127`, `NoticeStaging=123`, `ReviewTasks=123`.
+- Database spot-check for the current backfill scope found 53 eligible SGCC `doci-bid` 招标/采购 Raw notices, `MissingAttachments=0`, `FailedAttachmentOrExtraction=0`, and `WithDownloadedAndExtractedAttachment=53`.
+- Browser smoke on `http://localhost:5173/bidops/crawl/raw-notices` confirmed the `补齐历史附件` action is visible, list `采集时间` renders the API UTC value in local `Asia/Shanghai` time, and a `doci-bid` detail page shows a ZIP attachment with `下载成功` and `提取成功`; no console errors were recorded.
+
+## 2026-06-13 Background Job Runtime Duration Precision
+
+Completed:
+
+- Added `WaitMilliseconds` and `RunMilliseconds` to background job operation DTOs while keeping existing `WaitSeconds` and `RunSeconds` for compatibility.
+- Changed background job operation mapping to calculate wait/run durations in milliseconds first, then derive whole-second compatibility values.
+- Updated the frontend background job list and detail pages to display millisecond precision for sub-second jobs, so successfully completed short jobs no longer show as `0s`.
+- Added a service test covering a completed 450ms background job.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BackgroundTaskOperationsTests --nologo --verbosity minimal /nodeReuse:false` succeeded: 3 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BackgroundTaskOperationsTests|BidOpsModuleTests" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 50 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded, and the local WebApi was restarted on `http://localhost:5260`.
+- Authenticated API smoke confirmed succeeded jobs now return non-zero `runMilliseconds` values such as `34`, `27`, `21`, `10`, and `115` while the legacy `runSeconds` compatibility value can remain `0` for sub-second jobs.
+- Browser smoke on `http://localhost:5173/ops/jobs?status=Succeeded` confirmed the `运行` column displays `34ms`, `27ms`, `21ms`, `10ms`, `115ms`, and `776ms` instead of `0s`.
+- `npm run typecheck` and `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only the existing non-fatal Rollup annotation and chunk-size warnings.
+- `git diff --check` succeeded.
+
+## 2026-06-13 Public Outcome Supplier Table Extraction
+
+Completed:
+
+- Confirmed public result supplier lead extraction is already wired through `OutcomeSupplierRecord` and Worker job type `bidops.outcome.supplier-extract`; it does not auto-create `Supplier` master records.
+- Found local backfill still produced `outcomeSupplierRecords=0` because result PDF text often exposes award data as tables such as `分标编号 包号 成交人`, while the parser only handled same-line labels like `成交供应商：...`.
+- Enhanced `BidOpsOutcomeSupplierTextParser` to keep explicit outcome-table context, parse package/lot rows, and extract supplier names from awarded/candidate result tables.
+- Expanded supplier-name suffix recognition for public result rows to include institutional winners such as `测绘院` and `大学`, while still stopping table parsing at buyer/agency/contact/date boundary lines.
+- Added PDF table cleanup so service/package-name fragments before the supplier are removed, fractured short internal company-name fragments are discarded, and buyer/agency names are not captured as suppliers.
+- Re-ran local public outcome supplier backfill after the parser fix. Outcome leads changed from `0` to `1623`, with `616` distinct public outcome suppliers and `1` weak link to an existing supplier master record. The known bad `临颍公司` fragment no longer appears in the 漯河 sample.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsOutcomeSupplierTextParser --nologo --verbosity minimal` succeeded: 7 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --no-restore --nologo --verbosity minimal` succeeded: 49 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal` succeeded.
+
+## 2026-06-13 Public Outcome Supplier Award Amount Display
+
+Completed:
+
+- Added `hasAwardAmount` and `sortBy` filters to public outcome supplier lead queries so callers can request only records with positive parsed award amounts.
+- Added amount-based sorting for `OutcomeSupplierRecord` search, with default publish-time sorting kept for existing callers.
+- Changed the supplier analysis page's right-side public-result lead table from recent leads to `带金额结果线索`, requesting `hasAwardAmount=true` and `sortBy=AwardAmountDesc`.
+- Changed the public outcome supplier summary ordering so suppliers with positive cumulative award amount appear before count-only suppliers, then sort by cumulative amount and lead counts.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 52 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only the existing non-fatal Rollup annotation and chunk-size warnings.
+- Authenticated API smoke for `GET /api/bidops/suppliers/outcome-records?hasAwardAmount=true&sortBy=AwardAmountDesc&pageIndex=1&pageSize=5` returned `total=64` and `nullAmountOnPage=0`; sample rows included `国锋建筑设计有限公司` at `1536447.00` yuan and `山西蓝血科技有限公司` at `1462800.00` yuan.
+- Browser smoke on `http://localhost:5173/bidops/suppliers/analysis` confirmed the page displays `带金额结果线索`, the amount column, and formatted values such as `¥13,637,000.00` and `¥1,536,447.00`.

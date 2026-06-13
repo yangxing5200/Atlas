@@ -8,7 +8,7 @@ import PageContainer from '@/shared/components/PageContainer.vue'
 import { formatDateTime } from '@/shared/utils/date'
 import JobStatusTag from '../components/JobStatusTag.vue'
 import type { BackgroundJobDetailDto } from '../types'
-import { formatSeconds } from '../utils/display'
+import { formatDuration } from '../utils/display'
 
 const route = useRoute()
 const router = useRouter()
@@ -75,7 +75,7 @@ onMounted(loadData)
         </div>
         <div>
           <span>运行时长</span>
-          <strong>{{ formatSeconds(job.runSeconds) }}</strong>
+          <strong>{{ formatDuration(job.runMilliseconds, job.runSeconds) }}</strong>
         </div>
       </section>
 

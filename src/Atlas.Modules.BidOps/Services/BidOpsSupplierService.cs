@@ -320,6 +320,11 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
             builder = builder.Where(x => x.Category.Contains(category));
         }
 
+        if (query.HasAwardAmount == true)
+            builder = builder.Where(x => x.AwardAmount.HasValue && x.AwardAmount.Value > 0);
+        else if (query.HasAwardAmount == false)
+            builder = builder.Where(x => !x.AwardAmount.HasValue || x.AwardAmount.Value <= 0);
+
         if (!string.IsNullOrWhiteSpace(query.Keyword))
         {
             var keyword = query.Keyword.Trim();
@@ -334,8 +339,7 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
         }
 
         var total = await builder.CountAsync(ct);
-        var records = await builder
-            .OrderByDescending(x => x.PublishTime ?? x.CreatedAt)
+        var records = await ApplyOutcomeRecordSort(builder, query.SortBy)
             .Skip((pageIndex - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(ct);
@@ -345,6 +349,18 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
             records.Select(MapOutcomeRecord).ToList(),
             pageIndex,
             pageSize);
+    }
+
+    private static IQueryBuilder<OutcomeSupplierRecord> ApplyOutcomeRecordSort(
+        IQueryBuilder<OutcomeSupplierRecord> query,
+        string? sortBy)
+    {
+        return sortBy?.Trim() switch
+        {
+            "AwardAmountDesc" => query.OrderByDescending(x => x.AwardAmount ?? 0m),
+            "AwardAmountAsc" => query.OrderBy(x => x.AwardAmount ?? 0m),
+            _ => query.OrderByDescending(x => x.PublishTime ?? x.CreatedAt)
+        };
     }
 
     public async Task<SupplierOutcomeSummaryDto> GetOutcomeSummaryAsync(CancellationToken ct = default)
@@ -885,9 +901,10 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
                     LastPublishTime = x.Max(item => item.PublishTime ?? item.CreatedAt)
                 };
             })
-            .OrderByDescending(x => x.AwardedCount)
-            .ThenByDescending(x => x.OutcomeCount)
+            .OrderByDescending(x => (x.TotalAwardAmount ?? 0m) > 0m)
             .ThenByDescending(x => x.TotalAwardAmount ?? 0m)
+            .ThenByDescending(x => x.AwardedCount)
+            .ThenByDescending(x => x.OutcomeCount)
             .ThenBy(x => x.SupplierName)
             .Take(50)
             .ToList();

@@ -69,6 +69,7 @@ public static class BidOpsBackgroundJobQueues
 public static class BidOpsBackgroundJobTypes
 {
     public const string ManualUrlImport = "bidops.raw.manual-url-import";
+    public const string RawAttachmentBackfill = "bidops.raw.attachment-backfill";
     public const string MockCrawl = "bidops.crawl.mock-scan";
     public const string StateGridEcpCrawl = "bidops.crawl.state-grid-ecp-scan";
     public const string AttachmentProcess = "bidops.document.attachment-process";

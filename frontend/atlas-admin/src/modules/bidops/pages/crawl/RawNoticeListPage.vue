@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ElMessage } from 'element-plus'
-import { Upload, View } from '@element-plus/icons-vue'
+import { RefreshRight, Upload, View } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { rawNoticesApi } from '@/api/bidops/rawNotices.api'
 import DataTable from '@/shared/components/DataTable.vue'
@@ -11,11 +11,9 @@ import { useTableQuery } from '@/shared/composables/useTableQuery'
 import { formatDateTime } from '@/shared/utils/date'
 import { BIDOPS_PERMISSIONS } from '../../constants'
 import BidOpsStatusTag from '../../components/BidOpsStatusTag.vue'
-import ManualUrlImportDialog from '../../components/ManualUrlImportDialog.vue'
 import PermissionButton from '../../components/PermissionButton.vue'
-import type { ImportPublicUrlRequest, RawNoticeDto, RawNoticeStatus } from '../../types'
+import type { RawNoticeDto, RawNoticeStatus } from '../../types'
 import { formatNoticeType, rawNoticeStatusOptions } from '../../utils/display'
-import { ref } from 'vue'
 
 interface RawNoticeListQuery {
   keyword: string
@@ -25,34 +23,43 @@ interface RawNoticeListQuery {
 }
 
 const router = useRouter()
-const importOpen = ref(false)
-const importRequest = useRequest()
+const backfillRequest = useRequest()
 
 const table = useTableQuery<RawNoticeDto, RawNoticeListQuery>(
   (params) => rawNoticesApi.search({ ...params, status: params.status || undefined }),
   { keyword: '', status: '', pageIndex: 1, pageSize: 20 },
 )
 
-async function submitImport(data: ImportPublicUrlRequest) {
-  if (!data.detailUrl.trim()) {
-    ElMessage.warning('请输入公开公告 URL')
+async function backfillHistoricalAttachments() {
+  try {
+    await ElMessageBox.confirm(
+      '将重新检查历史国家电网招标/采购公告的公开 ZIP 附件，并由 Worker 下载、抽取文本、重新生成待审核解析结果。',
+      '补齐历史附件',
+      { type: 'warning', confirmButtonText: '开始补齐', cancelButtonText: '取消' },
+    )
+  } catch {
     return
   }
 
-  await importRequest.run(async () => {
-    const job = await rawNoticesApi.importUrl(data)
-    ElMessage.success(`已入队：JobId=${job.jobId} JobType=${job.jobType} Queue=${job.queue} AlreadyExists=${job.alreadyExists}`)
-    importOpen.value = false
-    await table.loadData()
-  })
+  const job = await backfillRequest.run(() =>
+    rawNoticesApi.backfillAttachments({
+      maxItems: 100,
+      includeAlreadyProcessed: true,
+      forceReparse: true,
+    }),
+  )
+  ElMessage.success(`已提交历史附件补齐任务：${job.jobId}`)
 }
 </script>
 
 <template>
   <PageContainer title="原始公告" description="查看 Raw 层公告和手动导入公开 URL 的处理状态。">
     <template #actions>
-      <PermissionButton type="primary" :icon="Upload" :permission="BIDOPS_PERMISSIONS.CRAWL_IMPORT" @click="importOpen = true">
+      <PermissionButton type="primary" :icon="Upload" :permission="BIDOPS_PERMISSIONS.CRAWL_IMPORT" @click="router.push('/bidops/intelligence/manual-import')">
         手动导入
+      </PermissionButton>
+      <PermissionButton :icon="RefreshRight" :permission="BIDOPS_PERMISSIONS.CRAWL_IMPORT" :loading="backfillRequest.loading" @click="backfillHistoricalAttachments">
+        补齐历史附件
       </PermissionButton>
     </template>
 
@@ -101,8 +108,6 @@ async function submitImport(data: ImportPublicUrlRequest) {
       @current-change="table.loadData"
       @size-change="table.loadData"
     />
-
-    <ManualUrlImportDialog v-model="importOpen" :submitting="importRequest.loading" @submit="submitImport" />
   </PageContainer>
 </template>
 

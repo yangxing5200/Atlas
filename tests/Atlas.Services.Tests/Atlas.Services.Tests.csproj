@@ -11,6 +11,7 @@
 
     <ItemGroup>
         <PackageReference Include="coverlet.collector" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
         <PackageReference Include="Microsoft.Extensions.Configuration" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" />
@@ -22,6 +23,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\src\Atlas.Data.Abstractions\Atlas.Data.Abstractions.csproj" />
+        <ProjectReference Include="..\..\src\Atlas.Data.Global.Migrations\Atlas.Data.Global.Migrations.csproj" />
         <ProjectReference Include="..\..\src\Atlas.Extensions.DependencyInjection\Atlas.Extensions.DependencyInjection.csproj" />
         <ProjectReference Include="..\..\src\Atlas.Infrastructure.Common\Atlas.Infrastructure.Common.csproj" />
         <ProjectReference Include="..\..\src\Atlas.Messaging.Abstractions\Atlas.Messaging.Abstractions.csproj" />

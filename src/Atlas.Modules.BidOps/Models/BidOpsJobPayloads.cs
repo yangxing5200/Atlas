@@ -19,6 +19,16 @@ public sealed record ManualUrlImportJobPayload(
     string? TextContent)
     : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
 
+public sealed record RawAttachmentBackfillJobPayload(
+    long TenantId,
+    long? StoreId,
+    long UserId,
+    string UserName,
+    int MaxItems,
+    bool IncludeAlreadyProcessed,
+    bool ForceReparse)
+    : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
+
 public sealed record MockCrawlJobPayload(
     long TenantId,
     long? StoreId,

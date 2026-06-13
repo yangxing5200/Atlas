@@ -92,13 +92,12 @@ export const bidOpsRoutes: RouteRecordRaw[] = [
     component: () => import('./pages/crawl/RawNoticeDetailPage.vue'),
     meta: { title: '原始公告详情', permissionsAny: [BIDOPS_PERMISSIONS.CRAWL_READ] },
   },
-  comingSoonRoute({
+  {
     path: '/bidops/intelligence/manual-import',
-    name: 'BidOpsManualImportPlaceholder',
-    title: '手动导入',
-    moduleName: '情报采集中心',
-    permissionsAny: [BIDOPS_PERMISSIONS.CRAWL_READ],
-  }),
+    name: 'BidOpsManualImport',
+    component: () => import('./pages/crawl/ManualImportPage.vue'),
+    meta: { title: '手动导入', permissionsAny: [BIDOPS_PERMISSIONS.CRAWL_IMPORT] },
+  },
   {
     path: '/bidops/intelligence/run-logs',
     alias: ['/bidops/crawl/run-logs'],

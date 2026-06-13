@@ -17,4 +17,8 @@ public interface IBidOpsCrawlService
     Task<EnqueueJobDto> EnqueueMockScanAsync(long channelId, CancellationToken ct = default);
 
     Task<EnqueueJobDto> EnqueueManualUrlImportAsync(ImportPublicUrlRequest request, CancellationToken ct = default);
+
+    Task<EnqueueJobDto> EnqueueRawAttachmentBackfillAsync(
+        BackfillRawNoticeAttachmentsRequest request,
+        CancellationToken ct = default);
 }
