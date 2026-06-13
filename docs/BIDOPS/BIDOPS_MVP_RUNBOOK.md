@@ -212,6 +212,7 @@ All endpoints use Atlas permission policies.
 - `GET /api/bidops/raw-notices/{id}/attachments/{attachmentId}/file`
 - `POST /api/bidops/raw-notices/{id}/reparse`
 - `POST /api/bidops/raw-notices/import-url`
+- `POST /api/bidops/raw-notices/backfill-attachments`
 - `GET /api/bidops/crawl-run-logs`
 - `GET /api/bidops/crawl-run-logs/{id}`
 - `GET /api/bidops/review-tasks`
@@ -284,6 +285,68 @@ Example manual import body:
 
 The request enqueues a background job and returns `202 Accepted`; parsing and
 review task creation happen in Worker.
+
+Frontend manual import is available at:
+
+```text
+http://localhost:5173/bidops/intelligence/manual-import
+```
+
+The page accepts a public procurement announcement URL, submits the same
+enqueue-only API, polls the background job result, and shows the generated
+RawNotice pipeline when Worker returns `rawNoticeId=...`. Source/channel/title
+and fallback text fields are kept under advanced options; normal State Grid ECP
+manual imports only need the announcement URL.
+
+Historical State Grid ECP `doci-bid` Raw notices that were crawled before ZIP
+attachment discovery was fixed can be backfilled through a Worker job:
+
+```http
+POST /api/bidops/raw-notices/backfill-attachments
+Content-Type: application/json
+
+{
+  "maxItems": 100,
+  "includeAlreadyProcessed": true,
+  "forceReparse": true
+}
+```
+
+The job re-checks eligible public SGCC招标/采购公告 detail URLs, records missing
+`downLoadBid?noticeId=...` ZIP attachment metadata, enqueues attachment download
+and text extraction, then forces a structured staging reparse. It skips Raw
+notices that are approved, ignored, or already imported into formal Notice rows
+so historical backfill does not silently mutate approved business data.
+
+The frontend entry is on the Raw notice list:
+
+```text
+http://localhost:5173/bidops/crawl/raw-notices
+```
+
+Use the `补齐历史附件` action after WebApi and Worker have both loaded the latest
+`Atlas.Modules.BidOps.dll`.
+
+## Attachment Text Extraction
+
+Attachment download and text extraction run only in Atlas.Worker. Binary files
+and extracted long text stay in `IBidOpsFileStore`; MySQL stores only metadata,
+hashes, storage keys, and status fields.
+
+Supported MVP extraction inputs:
+
+- TXT, CSV, HTML
+- PDF with a text layer
+- DOCX
+- XLSX/XLSM/XLTX/XLTM worksheet text
+- ZIP archives containing supported files, processed recursively with depth,
+  entry count, and entry size limits
+- Legacy DOC/XLS through a conservative readable-text fallback
+
+Extracted attachment text is appended to the Raw notice text before deterministic
+or optional AI structured parsing. The parser still writes only Staging rows;
+human review is required before formal Notice/Package/Requirement records are
+created.
 
 ## State Grid ECP Public Adapter
 
@@ -362,6 +425,34 @@ StateGridEcpCrawlJobHandler
 -> bidops_notice_staging / bidops_package_staging / bidops_requirement_staging
 -> bidops_review_task
 ```
+
+Manual import of a public State Grid ECP detail URL uses the same Worker-side
+adapter when the URL matches `#/doc/{doctype}/{noticeId}_{menuId}`. For example:
+
+```http
+POST /api/bidops/raw-notices/import-url
+Content-Type: application/json
+
+{
+  "sourceId": 330001,
+  "channelId": 330102,
+  "detailUrl": "https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-bid/2606128544990232_2018032900295987",
+  "noticeType": "TenderAnnouncement"
+}
+```
+
+For `doci-bid` detail responses where `fileFlag = 1`, the Worker records the
+public announcement package as a ZIP attachment through
+`/ecp2.0/ecpwcmcore/index/downLoadBid?noticeId=...`. The ZIP then follows the
+normal attachment download, text extraction, structured staging, and human
+review flow.
+
+When ZIP entries contain DOCX procurement公告附件, the extractor preserves Word
+tables as Markdown tables in the attachment extracted text. Standard State Grid
+ECP tables are recognized before the generic text heuristic:
+
+- `项目概况与采购范围` -> package candidates.
+- `响应供应商须满足如下专用资格要求` -> qualification, performance, personnel, and joint-venture requirement candidates matched back to packages.
 
 Important: after changing adapter code, restart WebApi and Worker so the running
 processes load the new `Atlas.Modules.BidOps.dll`.
@@ -454,8 +545,18 @@ Start Worker against the isolated Global DB:
 
 ```powershell
 $env:DOTNET_ENVIRONMENT='BidOpsLocal'
+$env:ASPNETCORE_ENVIRONMENT='BidOpsLocal'
 $env:ConnectionStrings__AtlasGlobal='Server=localhost;Port=3306;Database=atlas_global_bidops;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;'
 dotnet run --no-build --project src\Atlas.Worker\Atlas.Worker.csproj
+```
+
+For focused one-off parser smoke tests, recurring recovery and maintenance tasks can be disabled for the local Worker process while leaving one-time jobs enabled:
+
+```powershell
+$env:BackgroundTasks__Recurring__Enabled='false'
+$env:BidOps__Recovery__Enabled='false'
+$env:BidOps__OpportunityMaintenance__Enabled='false'
+$env:BidOps__SupplierMaintenance__Enabled='false'
 ```
 
 `BidOpsLocal` enables recurring scan/recovery, opportunity maintenance, and
@@ -503,7 +604,8 @@ dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -
 - HTML snapshots, attachment binaries, and extracted long text go through `IBidOpsFileStore`.
 - MVP implementation is `LocalBidOpsFileStore`.
 - Default local storage root is `storage/bidops` under the host base directory unless `BidOps:FileStore:LocalRootPath` is configured.
-- Attachment extraction MVP supports TXT/HTML/DOCX and basic non-OCR PDF text. Scanned PDF OCR is intentionally left as a later pluggable extractor.
+- Attachment extraction MVP supports TXT/HTML/DOCX, ZIP archives, OpenXML Excel workbooks, conservative legacy DOC/XLS readable-text fallback, and basic non-OCR PDF text. Scanned PDF OCR and high-fidelity legacy Office conversion are intentionally left as later pluggable extractors.
+- DOCX extraction preserves Word tables as Markdown in attachment extracted text. Standard State Grid ECP `采购公告附件` tables are parsed deterministically into staging packages and requirements, including merged qualification headers such as `响应供应商专用资格要求` over `资质要求` / `业绩要求` / `人员要求`.
 
 ## Compliance Guardrails
 

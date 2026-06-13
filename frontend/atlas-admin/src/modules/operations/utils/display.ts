@@ -1,4 +1,4 @@
-import type { BackgroundJobStatus } from '../types'
+import type { BackgroundJobDurationValue, BackgroundJobStatus } from '../types'
 
 const statusLabels: Record<string, string> = {
   '0': '待执行',
@@ -50,15 +50,43 @@ export function jobStatusTagType(value?: BackgroundJobStatus | null, statusName?
   return 'info'
 }
 
-export function formatSeconds(value?: number | null) {
-  if (value === null || value === undefined) return '-'
-  if (value < 60) return `${value}s`
-  const minutes = Math.floor(value / 60)
-  const seconds = value % 60
+export function formatSeconds(value?: BackgroundJobDurationValue | null) {
+  const secondsValue = normalizeDurationNumber(value)
+  if (secondsValue === null) return '-'
+  if (secondsValue < 60) return `${secondsValue}s`
+  const minutes = Math.floor(secondsValue / 60)
+  const seconds = secondsValue % 60
   if (minutes < 60) return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`
   const hours = Math.floor(minutes / 60)
   const restMinutes = minutes % 60
   return restMinutes ? `${hours}h ${restMinutes}m` : `${hours}h`
+}
+
+export function formatDuration(
+  milliseconds?: BackgroundJobDurationValue | null,
+  fallbackSeconds?: BackgroundJobDurationValue | null,
+) {
+  const millisecondsValue = normalizeDurationNumber(milliseconds)
+  if (millisecondsValue !== null) {
+    if (millisecondsValue < 1000) return `${millisecondsValue}ms`
+
+    const totalSeconds = Math.floor(millisecondsValue / 1000)
+    const remainderMilliseconds = millisecondsValue % 1000
+    if (totalSeconds < 60) {
+      return remainderMilliseconds ? `${totalSeconds}.${String(remainderMilliseconds).padStart(3, '0')}s` : `${totalSeconds}s`
+    }
+
+    return formatSeconds(totalSeconds)
+  }
+
+  return formatSeconds(fallbackSeconds)
+}
+
+function normalizeDurationNumber(value?: BackgroundJobDurationValue | null) {
+  if (value === null || value === undefined || value === '') return null
+
+  const numeric = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(numeric) ? Math.max(0, Math.floor(numeric)) : null
 }
 
 export function severityType(severity?: string) {

@@ -93,6 +93,15 @@ public sealed class ImportPublicUrlRequest
     public string? TextContent { get; set; }
 }
 
+public sealed class BackfillRawNoticeAttachmentsRequest
+{
+    public int MaxItems { get; set; } = 100;
+
+    public bool IncludeAlreadyProcessed { get; set; } = true;
+
+    public bool ForceReparse { get; set; } = true;
+}
+
 public sealed class ReviewDecisionRequest
 {
     public string? Remark { get; set; }
@@ -162,6 +171,8 @@ public sealed class OutcomeSupplierSearchQuery : BidOpsPagedQuery
     public string? SupplierName { get; set; }
     public string? PackageNo { get; set; }
     public string? Category { get; set; }
+    public bool? HasAwardAmount { get; set; }
+    public string? SortBy { get; set; }
 }
 
 public sealed class SupplierMatchRunSearchQuery : BidOpsPagedQuery

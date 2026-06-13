@@ -39,7 +39,10 @@ public sealed class AttachmentProcessJobHandler : IBackgroundJobHandler
         var payload = context.GetPayload<AttachmentProcessJobPayload>();
         using var identity = BidOpsJobIdentity.Begin(_identityAccessor, payload);
 
-        var result = await _attachments.ProcessRawNoticeAttachmentsAsync(payload.RawNoticeId, ct);
+        var result = await _attachments.ProcessRawNoticeAttachmentsAsync(
+            payload.RawNoticeId,
+            forceTextExtraction: !string.IsNullOrWhiteSpace(payload.ForceParseRunId),
+            ct);
         var raw = await _rawNotices.GetByIdAsync(payload.RawNoticeId, ct);
         var contentHash = raw?.ContentHash ?? "unknown";
         var parseDeduplicationKey = string.IsNullOrWhiteSpace(payload.ForceParseRunId)

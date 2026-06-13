@@ -260,6 +260,40 @@ public sealed class BidOpsCrawlService : IBidOpsCrawlService
         return new EnqueueJobDto(result.JobId, result.JobType, result.Queue, result.AlreadyExists);
     }
 
+    public async Task<EnqueueJobDto> EnqueueRawAttachmentBackfillAsync(
+        BackfillRawNoticeAttachmentsRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var tenant = RequireTenant();
+        var userId = RequireUser();
+        var maxItems = Math.Clamp(request.MaxItems <= 0 ? 100 : request.MaxItems, 1, 500);
+
+        var result = await _jobs.EnqueueAsync(
+            new EnqueueBackgroundJobRequest<RawAttachmentBackfillJobPayload>
+            {
+                JobType = BidOpsBackgroundJobTypes.RawAttachmentBackfill,
+                Queue = BidOpsBackgroundJobQueues.BidOps,
+                JobName = "BidOps historical raw attachment backfill",
+                TenantId = tenant,
+                StoreId = _identity.StoreId,
+                DeduplicationKey = $"bidops:raw-attachment-backfill:{tenant}:{DateTime.UtcNow:yyyyMMddHHmmss}",
+                MaxAttempts = 1,
+                Payload = new RawAttachmentBackfillJobPayload(
+                    tenant,
+                    _identity.StoreId,
+                    userId,
+                    _identity.UserName,
+                    maxItems,
+                    request.IncludeAlreadyProcessed,
+                    request.ForceReparse)
+            },
+            ct);
+
+        return new EnqueueJobDto(result.JobId, result.JobType, result.Queue, result.AlreadyExists);
+    }
+
     private long RequireTenant()
     {
         return _identity.TenantId

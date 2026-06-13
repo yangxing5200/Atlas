@@ -74,7 +74,7 @@ async function loadData() {
   try {
     const [analysis, outcomes] = await Promise.all([
       suppliersApi.analysisSummary(),
-      suppliersApi.outcomeRecords({ pageIndex: 1, pageSize: 20 }),
+      suppliersApi.outcomeRecords({ pageIndex: 1, pageSize: 20, hasAwardAmount: true, sortBy: 'AwardAmountDesc' }),
     ])
     summary.value = analysis
     recentOutcomeRecords.value = outcomes.items
@@ -169,7 +169,7 @@ onMounted(loadData)
         <div class="analysis-panel">
           <div class="section-heading">
             <h2>公开结果厂家</h2>
-            <span>按中标、候选次数排序</span>
+            <span>按累计金额和次数排序</span>
           </div>
           <DataTable :data="outcomeSupplierRows" :loading="loading" empty-text="暂无公开结果厂家线索">
             <el-table-column label="厂家" min-width="220" show-overflow-tooltip>
@@ -205,10 +205,10 @@ onMounted(loadData)
 
         <div class="analysis-panel">
           <div class="section-heading">
-            <h2>最近结果线索</h2>
-            <span>来自中标/候选公示</span>
+            <h2>带金额结果线索</h2>
+            <span>按金额排序</span>
           </div>
-          <DataTable :data="recentOutcomeRecords" :loading="loading" empty-text="暂无结果线索">
+          <DataTable :data="recentOutcomeRecords" :loading="loading" empty-text="暂无带金额结果线索">
             <el-table-column label="厂家" min-width="210" show-overflow-tooltip>
               <template #default="{ row }">{{ formatSupplierName(row.supplierName) }}</template>
             </el-table-column>

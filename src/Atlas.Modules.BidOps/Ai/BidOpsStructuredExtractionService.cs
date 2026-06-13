@@ -447,6 +447,24 @@ public static partial class BidOpsDeterministicNoticeParser
         var budget = FirstAmount(values, text, "BUDGET_AMOUNT", "BUDGET", "MAX_PRICE", "CONTROL_PRICE", "ESTIMATE_AMOUNT");
         var category = DetectCategory(text, values.First("PUR_TYPE_NAME", "CATEGORY"));
         var region = DetectRegion(title, buyerName, values.First("REGION", "PROVINCE", "PublishOrgName"));
+        var ecpTablePackages = BidOpsEcpProcurementTableParser.ExtractPackages(text, category);
+        if (ecpTablePackages.Count > 0)
+        {
+            return new BidOpsNoticeExtract(
+                NoticeType: noticeType,
+                ProjectName: Trim(projectName, 500),
+                ProjectCode: Trim(projectCode, 128),
+                BuyerName: Trim(buyerName, 300),
+                AgencyName: Trim(agencyName, 300),
+                Region: Trim(region, 128),
+                BudgetAmount: budget,
+                PublishTime: publishTime,
+                SignupDeadline: signupDeadline,
+                BidDeadline: bidDeadline,
+                OpenBidTime: openBidTime,
+                Confidence: HasCoreFields(projectCode, buyerName, agencyName) ? 0.92m : 0.86m,
+                Packages: ecpTablePackages);
+        }
 
         var lotNo = FirstNonEmpty(
             values.First("LOT_NO", "BID_SECTION_NO", "SECTION_NO", "LOTNO", "BIDSECTIONNO", "SECTIONNO", "分标编号", "分标号", "标段编号", "标段号"),

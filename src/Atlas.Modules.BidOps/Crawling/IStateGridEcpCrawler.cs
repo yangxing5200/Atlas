@@ -13,4 +13,12 @@ public interface IStateGridEcpCrawler
         long channelId,
         long? backgroundJobId,
         CancellationToken ct = default);
+
+    Task<long?> ImportPublicDetailAsync(
+        string detailUrl,
+        long? sourceId,
+        long? channelId,
+        string? noticeType,
+        long? backgroundJobId,
+        CancellationToken ct = default);
 }

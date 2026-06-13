@@ -227,4 +227,52 @@
 - Public中标/成交/候选公示里的厂家信息 is stored as `OutcomeSupplierRecord`, not as automatic `Supplier` master data. The record preserves source announcement, evidence text, notice/package snapshots, outcome type, rank, amount, and a weak link to an existing supplier when the normalized name already matches.
 - WebApi only exposes reads and enqueues `bidops.outcome.supplier-extract`; extraction runs in Worker and is idempotent per RawNotice by deleting and rebuilding that RawNotice's outcome leads.
 - The extractor intentionally prefers precision over recall. It only accepts explicit supplier/candidate/winner fields or equivalent table keys, and skips announcement intros, buyer/agency/publisher fields, supplier instructions, fee/payment/postage text, and generic company-name mentions.
+- Public result tables with explicit supplier columns such as `成交人`/`中标人` and package/lot context are treated as valid outcome leads, including institutional winners such as universities and institutes. Buyer, agency, contact, and date lines remain table boundaries and are not supplier leads.
+- When PDF table extraction fractures rows, supplier cleanup keeps only a standalone final organization name. Rows that only expose package/service fragments, short generic company fragments, or buyer-side `供电公司` names are discarded to protect lead quality.
+- Fragment names consisting only of formal organization suffixes or short suffix tails, such as `有限公司`, `技有限公司`, `工程有限公司`, `务有限公司`, `股份有限公司`, `科技有限公司`, and `研究院有限公司`, are discarded even if this may miss rare very short legal names. Unbalanced parenthesis fragments such as `周口龙润电力（集团` are also discarded.
+- Award amounts are stored on `OutcomeSupplierRecord.AwardAmount` as CNY yuan when the public result text has explicit amount labels or an explicit result-table amount/price column with a recognized unit. Percentages, discount rates, fee rates, and score cells are intentionally ignored to avoid treating `97.50%` or `88.00` points as money.
 - Outcome leads are used for analysis and manual package-to-supplier research. The system must not auto-create contacts, auto-contact suppliers, infer private relationships, or generate collusion/bribery-oriented recommendations.
+
+## 2026-06-13 BidOps ZIP And Excel Attachment Extraction
+
+- Tender attachments can carry material requirements inside ZIP files and Excel workbooks, so Worker text extraction now treats `.zip`, `.xlsx`, `.xlsm`, `.xltx`, and `.xltm` as first-class public attachment inputs.
+- ZIP processing stays in memory, does not extract files to disk, skips unsupported entries, caps archive depth/entry count/entry size, and recursively processes supported inner documents before structured parsing.
+- Excel OpenXML workbooks are parsed through their worksheet/shared-string XML so package tables, quantities, budget rows, qualification notes, and other sheet details become part of the Raw attachment extracted text.
+- Legacy binary `.doc` and `.xls` files use a conservative readable-text fallback instead of a heavy conversion dependency. High-fidelity legacy Office conversion remains a later pluggable capability.
+- AI/deterministic parsing still reads only extracted text and writes Staging rows. Excel/ZIP content does not bypass human review or write directly to formal BidOps business tables.
+
+## 2026-06-13 BidOps State Grid Manual Detail Import
+
+- Manual URL import detects public State Grid ECP portal detail routes such as `#/doc/doci-bid/{noticeId}_{menuId}` and delegates fetching to the Worker-side StateGridEcp crawler instead of storing only the pasted URL.
+- `doci-bid` details with `fileFlag = 1/true` are modeled as a public `downLoadBid?noticeId=...` ZIP attachment so announcement ZIP files enter the normal attachment download, text extraction, staging, and human-review pipeline.
+- `fileFlag = 0/false` is treated as an explicit no-attachment signal. If `fileFlag` is missing or unknown, the parser adds the `downLoadBid?noticeId=...` candidate only when no explicit attachment list was discovered, which recovers public SGCC ZIP公告附件 without duplicating known PDF/list attachments.
+- Fallback State Grid detail documents also keep the `doci-bid` `downLoadBid?noticeId=...` candidate. Existing RawNotice reparse jobs process already-recorded attachment rows and do not rediscover missing attachment metadata; historical zero-attachment `doci-bid` rows need re-import/re-crawl or a dedicated backfill.
+- The generic WebApi import endpoint remains enqueue-only. It does not fetch State Grid pages synchronously, and non-State-Grid URLs still use the existing conservative manual import fallback.
+- Manual State Grid imports reuse source/channel enabled flags, no-login enforcement, allowed SGCC host checks, rate limiting, attachment metadata storage, and file-store rules.
+- The frontend manual import page follows the same boundary: it submits only a public URL and optional metadata, then polls the background job and RawNotice pipeline. It does not add browser-side scraping, cookies, login-state capture, or synchronous crawling.
+
+## 2026-06-13 BidOps State Grid Attachment Table Recognition
+
+- DOCX extraction now preserves Word table row/column structure as Markdown tables in the existing extracted text artifact. This keeps the current storage and review flow intact while giving deterministic and AI parsers a table-shaped input.
+- Standard State Grid ECP procurement attachment tables are parsed by rules before generic text heuristics: `项目概况与采购范围` produces package candidates, and `响应供应商专用资格要求` produces qualification, performance, personnel, and joint-venture requirements matched back to packages.
+- State Grid qualification tables often use merged Word headers. The extractor merges selected child header rows with preceding parent header rows, and the parser also fills blank `分标` / `包号` / `包名称` columns for qualification-table Markdown that was produced before the extractor fix.
+- MVP does not add new formal table-source columns. Table source row information is included in requirement explanations and the full Markdown table remains in the attachment extracted text for reviewer traceability.
+- A structured sidecar JSON and orphan requirement review surface remain planned follow-ups; this step avoids schema churn while improving package/requirement recall for standard SGCC ZIP+DOCX公告附件.
+- Manual reparse force-runs attachment text extraction before structured parsing so deterministic parser changes can be applied to already downloaded attachments without mutating formal approved data.
+- Frontend extracted-text preview uses a narrow in-component Markdown subset renderer for headings, paragraphs, and tables instead of adding a full Markdown dependency. It avoids `v-html`, keeps arbitrary text escaped by Vue, and focuses on making extracted procurement tables reviewable.
+
+## 2026-06-13 BidOps Historical Attachment Backfill
+
+- Historical attachment repair is a Worker job (`bidops.raw.attachment-backfill`) started by WebApi, not synchronous crawling in the API request.
+- The backfill is intentionally scoped to public State Grid ECP portal `doci-bid` detail URLs for 招标/采购公告. It does not add browser-side scraping, cookies, login-state capture, CAPTCHA handling, or anti-bot bypass.
+- Backfill reuses the existing StateGridEcp crawler so source/channel pause flags, no-login checks, allowed SGCC host validation, and rate limiting still apply.
+- Approved, ignored, and already-formal Raw notices are skipped in MVP. Missing ZIP attachments and parser improvements refresh Raw/Staging review data only where human review is still pending or can be regenerated safely.
+- Requirement staging `OriginalText` is capped to the original tenant migration's `varchar(256)` storage shape for compatibility with existing local/historical tenant databases. Full attachment text remains in `IBidOpsFileStore`, so the cap only affects the review summary snippet persisted in MySQL.
+- The frontend date formatter treats backend ISO datetimes with `Z` as UTC and renders them in the browser's current timezone. ISO datetime strings without an explicit zone are normalized as UTC before display so `采集时间` does not appear shifted by server/local parsing ambiguity.
+
+## 2026-06-13 BidOps Outcome Supplier Amount Presentation
+
+- Outcome supplier record search keeps its existing default publish-time ordering for compatibility, but now supports `hasAwardAmount` and `sortBy=AwardAmountDesc/AwardAmountAsc` so UI surfaces can explicitly ask for amount-bearing leads.
+- The supplier analysis page defaults its lead table to `hasAwardAmount=true` and amount-descending sorting because users open this view to inspect public outcome clues with monetary value, not just the newest extracted rows.
+- Public outcome supplier summary now prioritizes suppliers with positive cumulative parsed award amount, then cumulative amount, then lead counts. Count-only suppliers are still visible after amount-bearing suppliers rather than hidden.
+- Parsed award amounts remain evidence-backed public-result clues. They are not treated as reviewed BidOutcome business facts and do not automatically update supplier master data, contacts, or pursuit decisions.

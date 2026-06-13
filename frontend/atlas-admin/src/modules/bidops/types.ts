@@ -384,6 +384,8 @@ export interface OutcomeSupplierSearchQuery extends BidOpsPagedQuery {
   supplierName?: string
   packageNo?: string
   category?: string
+  hasAwardAmount?: boolean
+  sortBy?: 'AwardAmountDesc' | 'AwardAmountAsc'
 }
 
 export interface SupplierMatchRunSearchQuery extends BidOpsPagedQuery {
@@ -859,6 +861,12 @@ export interface ImportPublicUrlRequest {
   title?: string | null
   noticeType?: string | null
   textContent?: string | null
+}
+
+export interface BackfillRawNoticeAttachmentsRequest {
+  maxItems?: number
+  includeAlreadyProcessed?: boolean
+  forceReparse?: boolean
 }
 
 export interface ReparseRawNoticeRequest {

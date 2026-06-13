@@ -46,6 +46,7 @@ public sealed class BidOpsAttachmentProcessingService : IBidOpsAttachmentProcess
 
     public async Task<BidOpsAttachmentProcessingResult> ProcessRawNoticeAttachmentsAsync(
         long rawNoticeId,
+        bool forceTextExtraction = false,
         CancellationToken ct = default)
     {
         var raw = await _rawNotices.GetByIdAsync(rawNoticeId, ct)
@@ -71,7 +72,7 @@ public sealed class BidOpsAttachmentProcessingService : IBidOpsAttachmentProcess
                 }
 
                 if (attachment.DownloadStatus == DownloadStatus.Succeeded &&
-                    attachment.TextExtractStatus != TextExtractStatus.Succeeded &&
+                    (forceTextExtraction || attachment.TextExtractStatus != TextExtractStatus.Succeeded) &&
                     !string.IsNullOrWhiteSpace(attachment.StorageKey))
                 {
                     if (await ExtractTextAsync(attachment, ct))
@@ -229,6 +230,9 @@ public sealed class BidOpsAttachmentProcessingService : IBidOpsAttachmentProcess
             "pdf" => "application/pdf",
             "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "doc" => "application/msword",
+            "xlsx" or "xlsm" or "xltx" or "xltm" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xls" => "application/vnd.ms-excel",
+            "zip" => "application/zip",
             "html" or "htm" => "text/html",
             "txt" => "text/plain",
             _ => "application/octet-stream"
@@ -248,8 +252,14 @@ public sealed class BidOpsAttachmentProcessingService : IBidOpsAttachmentProcess
             return "pdf";
         if (contentType.Contains("wordprocessingml", StringComparison.OrdinalIgnoreCase))
             return "docx";
+        if (contentType.Contains("spreadsheetml", StringComparison.OrdinalIgnoreCase))
+            return "xlsx";
         if (contentType.Contains("msword", StringComparison.OrdinalIgnoreCase))
             return "doc";
+        if (contentType.Contains("vnd.ms-excel", StringComparison.OrdinalIgnoreCase))
+            return "xls";
+        if (contentType.Contains("zip", StringComparison.OrdinalIgnoreCase))
+            return "zip";
         if (contentType.Contains("html", StringComparison.OrdinalIgnoreCase))
             return "html";
         if (contentType.Contains("text", StringComparison.OrdinalIgnoreCase))

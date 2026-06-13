@@ -84,6 +84,75 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         }
     }
 
+    public async Task<long?> ImportPublicDetailAsync(
+        string detailUrl,
+        long? sourceId,
+        long? channelId,
+        string? noticeType,
+        long? backgroundJobId,
+        CancellationToken ct = default)
+    {
+        if (!StateGridEcpWcmParser.TryParsePortalDetailUrl(detailUrl, out var doctype, out var noticeId, out var menuId))
+            return null;
+
+        if (!Uri.TryCreate(detailUrl.Trim(), UriKind.Absolute, out var detailUri) ||
+            !detailUri.Host.EndsWith("sgcc.com.cn", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var (source, channel) = await ResolvePublicDetailTargetAsync(sourceId, channelId, detailUri, menuId, ct);
+        if (channel == null)
+        {
+            EnsureSourceCanRun(source);
+        }
+        else
+        {
+            EnsureCanRun(source, channel);
+        }
+
+        EnsureAllowedStateGridUri(source, detailUri);
+        await DelayForRateLimitAsync(source, ct);
+
+        var notice = new StateGridEcpApiNotice(
+            string.Empty,
+            detailUri.ToString(),
+            doctype,
+            menuId,
+            noticeId,
+            null,
+            null,
+            string.Empty,
+            string.Empty);
+
+        var document = await FetchApiDetailDocumentAsync(source, channel, notice, backgroundJobId, ct);
+        var rawId = await _ingestion.IngestPublicNoticeAsync(
+            new RawIngestionCommand(
+                source.Id,
+                channel?.Id,
+                detailUri.ToString(),
+                document.Title,
+                string.IsNullOrWhiteSpace(noticeType) ? channel?.NoticeType ?? "TenderAnnouncement" : noticeType.Trim(),
+                document.Text,
+                document.Html,
+                document.PublishTime,
+                MapAttachments(document.Attachments)),
+            backgroundJobId,
+            OperationName,
+            ct);
+
+        await AddLogAsync(
+            source.Id,
+            channel?.Id,
+            backgroundJobId,
+            "Succeeded",
+            $"State Grid public detail import completed. doctype={doctype}, noticeId={noticeId}, attachments={document.Attachments.Count}.",
+            ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+
+        return rawId;
+    }
+
     private async Task<StateGridEcpCrawlResult> CrawlWcmApiChannelAsync(
         CrawlSource source,
         CrawlChannel channel,
@@ -259,6 +328,65 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         return source;
     }
 
+    private async Task<(CrawlSource Source, CrawlChannel? Channel)> ResolvePublicDetailTargetAsync(
+        long? sourceId,
+        long? channelId,
+        Uri detailUri,
+        string menuId,
+        CancellationToken ct)
+    {
+        if (channelId.HasValue)
+        {
+            var channelQuery = await _channels.QueryTrackingAsync(ct);
+            var channel = await channelQuery.Where(x => x.Id == channelId.Value).FirstOrDefaultAsync(ct);
+            if (channel == null)
+                throw new AtlasException($"BidOps crawl channel does not exist: {channelId.Value}");
+
+            if (sourceId.HasValue && channel.SourceId != sourceId.Value)
+                throw new AtlasException("State Grid manual import sourceId does not match channel source.");
+
+            return (await GetSourceAsync(channel.SourceId, ct), channel);
+        }
+
+        var source = sourceId.HasValue
+            ? await GetSourceAsync(sourceId.Value, ct)
+            : await FindStateGridSourceAsync(detailUri, ct)
+                ?? throw new AtlasException("No enabled State Grid ECP crawl source is configured for this tenant.");
+        var matchedChannel = await FindStateGridChannelAsync(source.Id, menuId, ct);
+        return (source, matchedChannel);
+    }
+
+    private async Task<CrawlSource?> FindStateGridSourceAsync(Uri detailUri, CancellationToken ct)
+    {
+        var sourceQuery = await _sources.QueryTrackingAsync(ct);
+        var sources = await sourceQuery
+            .Where(x => x.Enabled && !x.NeedLogin && x.SourceType == BidOpsCrawlSourceTypes.StateGridEcp)
+            .ToListAsync(ct);
+
+        return sources
+            .Where(x => IsAllowedStateGridUri(x, detailUri))
+            .OrderBy(x => string.Equals(x.Code, BidOpsSystemValues.StateGridEcpSourceCode, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(x => x.Priority)
+            .FirstOrDefault();
+    }
+
+    private async Task<CrawlChannel?> FindStateGridChannelAsync(long sourceId, string menuId, CancellationToken ct)
+    {
+        var channelQuery = await _channels.QueryTrackingAsync(ct);
+        var channels = await channelQuery
+            .Where(x => x.SourceId == sourceId && x.Enabled)
+            .ToListAsync(ct);
+
+        return channels
+            .OrderBy(x =>
+                !string.IsNullOrWhiteSpace(menuId) &&
+                x.ListUrl.Contains(menuId, StringComparison.OrdinalIgnoreCase)
+                    ? 0
+                    : 1)
+            .ThenBy(x => x.LastScanTime.HasValue ? 1 : 0)
+            .FirstOrDefault();
+    }
+
     private async Task<string> FetchStringAsync(Uri uri, CrawlSource source, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
@@ -300,7 +428,7 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
 
     private async Task<StateGridNoticeDocument> FetchApiDetailDocumentAsync(
         CrawlSource source,
-        CrawlChannel channel,
+        CrawlChannel? channel,
         StateGridEcpApiNotice notice,
         long? backgroundJobId,
         CancellationToken ct)
@@ -324,7 +452,7 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         {
             await AddLogAsync(
                 source.Id,
-                channel.Id,
+                channel?.Id,
                 backgroundJobId,
                 "DetailFallback",
                 $"State Grid detail API failed for notice {notice.NoticeId}; using list metadata. {ex.Message}",
@@ -335,7 +463,7 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
 
     private async Task<IReadOnlyList<StateGridAttachmentDocument>> FetchApiAttachmentDocumentsAsync(
         CrawlSource source,
-        CrawlChannel channel,
+        CrawlChannel? channel,
         StateGridEcpApiNotice notice,
         long? backgroundJobId,
         CancellationToken ct)
@@ -354,7 +482,7 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         {
             await AddLogAsync(
                 source.Id,
-                channel.Id,
+                channel?.Id,
                 backgroundJobId,
                 "AttachmentListFailed",
                 $"State Grid attachment API failed for notice {notice.NoticeId}: {ex.Message}",
@@ -419,11 +547,16 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
 
     private static void EnsureCanRun(CrawlSource source, CrawlChannel channel)
     {
-        if (!source.Enabled)
-            throw new AtlasException($"BidOps crawl source is paused: {source.Code}");
+        EnsureSourceCanRun(source);
 
         if (!channel.Enabled)
             throw new AtlasException($"BidOps crawl channel is paused: {channel.Code}");
+    }
+
+    private static void EnsureSourceCanRun(CrawlSource source)
+    {
+        if (!source.Enabled)
+            throw new AtlasException($"BidOps crawl source is paused: {source.Code}");
 
         if (source.NeedLogin)
             throw new AtlasException("State Grid crawler supports public pages only; login-required sources are not allowed.");

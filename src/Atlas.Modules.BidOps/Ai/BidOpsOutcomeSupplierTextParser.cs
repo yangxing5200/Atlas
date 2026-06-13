@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 using Atlas.Modules.BidOps.Entities.Outcomes;
 
@@ -36,7 +37,7 @@ public sealed class BidOpsOutcomeSupplierExtract
 public static class BidOpsOutcomeSupplierTextParser
 {
     private static readonly Regex CompanyRegex = new(
-        @"(?<name>[\u4e00-\u9fa5A-Za-z0-9（）()·\-\s]{2,90}?(?:有限责任公司|股份有限公司|集团有限公司|有限公司|分公司|集团|公司|工厂|厂|研究院|设计院|研究所|事务所|中心))",
+        @"(?<name>[\u4e00-\u9fa5A-Za-z0-9（）()·\-\s]{2,90}(?:有限责任公司|股份有限公司|集团有限公司|有限公司|分公司|集团|公司|工厂|厂|勘测设计研究院|工程设计有限公司|研究院|设计院|测绘院|勘测院|勘察院|规划院|科学院|检验院|检测院|计量院|研究所|事务所|大学|学院|学校|医院|中心))",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex PackageCodeRegex = new(
@@ -47,13 +48,25 @@ public static class BidOpsOutcomeSupplierTextParser
         @"(?<![\u4e00-\u9fa5A-Za-z0-9])(?<value>包\s*[A-Za-z0-9一二三四五六七八九十]+|第\s*[A-Za-z0-9一二三四五六七八九十]+\s*包)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    private static readonly Regex LeadingLotCodeRegex = new(
+        @"^\s*(?<value>[A-Za-z0-9]{2,}(?:[-_/][A-Za-z0-9]{2,})+)\s+",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex LeadingOutcomeTableSupplierPrefixRegex = new(
+        @"^\s*(?:[A-Za-z0-9]{2,}(?:[-_/][A-Za-z0-9]{2,})*\s+)?(?:包\s*[A-Za-z0-9一二三四五六七八九十]+|第\s*[A-Za-z0-9一二三四五六七八九十]+\s*包)\s+",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private static readonly Regex LotCodeRegex = new(
         @"(?:标段号|标段编号|标号|LOT_NO)\s*[:：=]?\s*(?<value>[A-Za-z0-9一二三四五六七八九十\-_/（）()#号第]+)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static readonly Regex AmountRegex = new(
-        @"(?:中标金额|成交金额|投标报价|报价金额|报价|金额|WIN_BID_AMOUNT|BID_AMOUNT)\s*[:：=]?\s*(?<amount>[0-9]+(?:\.[0-9]+)?)\s*(?<unit>万元|万|元)?",
+        @"(?:中标金额|成交金额|中标价|成交价|投标报价|应答报价|评审价|评标价|报价金额|报价|金额|WIN_BID_AMOUNT|BID_AMOUNT)\s*[:：=]?\s*(?<amount>[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)(?![0-9.,])\s*(?<unit>万元|万|元)?(?!\s*[%％])",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static readonly Regex NumericAmountCandidateRegex = new(
+        @"(?<![A-Za-z0-9])(?<amount>[0-9]{1,12}(?:,[0-9]{3})*(?:\.[0-9]+)?)(?![0-9.,])(?:\s*(?<unit>万元|万|元))?",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex RankDigitRegex = new(
         @"第?\s*(?<rank>\d{1,2})\s*(?:名|中标候选人|成交候选人|候选人)",
@@ -108,6 +121,35 @@ public static class BidOpsOutcomeSupplierTextParser
         "AGENCY"
     ];
 
+    private static readonly string[] FormalOrganizationSuffixes =
+    [
+        "有限责任公司",
+        "股份有限公司",
+        "集团有限公司",
+        "工程设计有限公司",
+        "有限公司",
+        "分公司"
+    ];
+
+    private static readonly string[] GenericOrganizationPrefixFragments =
+    [
+        "工程",
+        "技术",
+        "科技",
+        "服务",
+        "咨询",
+        "电气",
+        "研究院",
+        "设计院",
+        "规划院",
+        "勘测院",
+        "勘察院",
+        "检测院",
+        "检验院",
+        "科学院",
+        "计量院"
+    ];
+
     public static IReadOnlyList<BidOpsOutcomeSupplierExtract> Extract(
         string? title,
         string? noticeType,
@@ -122,6 +164,7 @@ public static class BidOpsOutcomeSupplierTextParser
         var projectName = ExtractFirst(ProjectNameRegex, source);
         var projectCode = ExtractFirst(ProjectCodeRegex, source);
         var defaultOutcome = DetermineOutcomeType($"{title}\n{noticeType}");
+        var outcomeTableContext = OutcomeTableContext.None;
 
         foreach (var rawLine in SplitCandidateLines(source))
         {
@@ -130,8 +173,58 @@ public static class BidOpsOutcomeSupplierTextParser
                 continue;
 
             var linePackage = ExtractPackageContext(line);
+            if (outcomeTableContext.Active)
+                linePackage = linePackage.Merge(ExtractOutcomeTableRowPackageContext(line));
+
             if (!linePackage.IsEmpty)
                 current = current.Merge(linePackage);
+
+            if (LooksLikeOutcomeSupplierTableHeader(line))
+            {
+                outcomeTableContext = BuildOutcomeTableContext(line);
+                continue;
+            }
+
+            if (outcomeTableContext.Active && LooksLikeOutcomeSupplierTableBoundary(line))
+            {
+                outcomeTableContext = OutcomeTableContext.None;
+            }
+
+            if (outcomeTableContext.Active)
+            {
+                var tableSupplierNames = ExtractSupplierNames(line);
+                if (tableSupplierNames.Count > 0 &&
+                    (!linePackage.IsEmpty ||
+                     !string.IsNullOrWhiteSpace(current.PackageNo) ||
+                     !string.IsNullOrWhiteSpace(current.LotNo)))
+                {
+                    var tableOutcomeType = DetermineOutcomeType(line);
+                    if (tableOutcomeType == string.Empty)
+                        tableOutcomeType = defaultOutcome;
+
+                    foreach (var supplierName in tableSupplierNames)
+                    {
+                        results.Add(new BidOpsOutcomeSupplierExtract
+                        {
+                            SupplierName = supplierName,
+                            OutcomeType = tableOutcomeType,
+                            Rank = ExtractRank(line),
+                            AwardAmount = ExtractAmount(line, supplierName, outcomeTableContext),
+                            ProjectName = projectName,
+                            ProjectCode = projectCode,
+                            LotNo = current.LotNo,
+                            LotName = current.LotName,
+                            PackageNo = current.PackageNo,
+                            PackageName = current.PackageName,
+                            Category = current.Category,
+                            EvidenceText = Truncate(line, 1000),
+                            Confidence = 0.84m
+                        });
+                    }
+
+                    continue;
+                }
+            }
 
             if (!HasSupplierContext(line))
                 continue;
@@ -157,7 +250,7 @@ public static class BidOpsOutcomeSupplierTextParser
                     SupplierName = supplierName,
                     OutcomeType = outcomeType,
                     Rank = ExtractRank(line),
-                    AwardAmount = ExtractAmount(line),
+                    AwardAmount = ExtractAmount(line, supplierName, OutcomeTableContext.None),
                     ProjectName = projectName,
                     ProjectCode = projectCode,
                     LotNo = current.LotNo,
@@ -323,9 +416,107 @@ public static class BidOpsOutcomeSupplierTextParser
             "代理费");
     }
 
+    private static bool LooksLikeOutcomeSupplierTableHeader(string line)
+    {
+        if (ContainsBlockingNonSupplierHint(line.ToUpperInvariant()))
+            return false;
+
+        if (CompanyRegex.IsMatch(line))
+            return false;
+
+        var normalized = NormalizeHeaderText(line);
+        var hasSupplierColumn = ContainsAny(
+            normalized,
+            "成交人",
+            "中标人",
+            "成交供应商",
+            "中标供应商",
+            "成交候选人",
+            "中标候选人",
+            "供应商名称",
+            "投标人名称");
+        if (!hasSupplierColumn)
+            return false;
+
+        return ContainsAny(
+            normalized,
+            "包号",
+            "包件号",
+            "分包号",
+            "标包号",
+            "分标编号",
+            "标段编号",
+            "分标",
+            "标段",
+            "项目名称",
+            "项目编号");
+    }
+
+    private static bool LooksLikeOutcomeSupplierTableBoundary(string line)
+    {
+        if (HasKeyHint(line))
+            return false;
+
+        var normalized = NormalizeHeaderText(line);
+        return normalized.StartsWith("采购人", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith("招标人", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith("代理机构", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith("招标代理", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith("采购代理", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith("联系人", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith("联系电话", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith("联系地址", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith("公示期", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith("公告日期", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith("发布日期", StringComparison.OrdinalIgnoreCase) ||
+               Regex.IsMatch(normalized, @"^20\d{2}年\d{1,2}月\d{1,2}日$", RegexOptions.CultureInvariant);
+    }
+
+    private static OutcomeTableContext BuildOutcomeTableContext(string line)
+    {
+        return new OutcomeTableContext(
+            Active: true,
+            HasAmountColumn: LooksLikeAmountHeader(line),
+            AmountUnit: DetermineAmountUnitHint(line));
+    }
+
+    private static bool LooksLikeAmountHeader(string line)
+    {
+        var normalized = NormalizeHeaderText(line);
+        return ContainsAny(
+            normalized,
+            "中标金额",
+            "成交金额",
+            "中标价",
+            "成交价",
+            "投标报价",
+            "应答报价",
+            "评审价",
+            "评标价",
+            "报价金额",
+            "金额",
+            "报价",
+            "价格",
+            "winbidamount",
+            "bidamount");
+    }
+
+    private static AmountUnitHint DetermineAmountUnitHint(string line)
+    {
+        var normalized = NormalizeHeaderText(line);
+        if (ContainsAny(normalized, "万元", "人民币万元"))
+            return AmountUnitHint.TenThousandYuan;
+
+        if (ContainsAny(normalized, "元", "人民币元"))
+            return AmountUnitHint.Yuan;
+
+        return AmountUnitHint.Unknown;
+    }
+
     private static List<string> ExtractSupplierNames(string line)
     {
         return CompanyRegex.Matches(line)
+            .Where(x => !ContinuesInsideWord(line, x.Index + x.Length))
             .Select(x => CleanSupplierName(x.Groups["name"].Value))
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Where(x => !LooksLikeNonSupplierName(x))
@@ -336,17 +527,76 @@ public static class BidOpsOutcomeSupplierTextParser
     private static string CleanSupplierName(string value)
     {
         var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+        cleaned = LeadingOutcomeTableSupplierPrefixRegex.Replace(cleaned, string.Empty);
         cleaned = NamePrefixRegex.Replace(cleaned, string.Empty);
+        cleaned = LeadingOutcomeTableSupplierPrefixRegex.Replace(cleaned, string.Empty);
+        cleaned = TrimLeadingTableDescription(cleaned);
         cleaned = cleaned.Trim(' ', ':', '：', '=', '-', '、', ',', '，', '.', '。', '；', ';');
         if (cleaned.Length > 300)
             cleaned = cleaned[..300];
         return cleaned;
     }
 
+    private static string TrimLeadingTableDescription(string value)
+    {
+        var tokens = value
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => x.Trim(' ', ':', '：', '=', '-', '、', ',', '，', '.', '。', '；', ';'))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToList();
+        if (tokens.Count <= 1)
+            return value;
+
+        for (var i = tokens.Count - 1; i >= 0; i--)
+        {
+            if (LooksLikeStandaloneSupplierName(tokens[i]))
+                return tokens[i];
+        }
+
+        return string.Empty;
+    }
+
+    private static bool LooksLikeStandaloneSupplierName(string value)
+    {
+        var match = CompanyRegex.Match(value);
+        return match.Success &&
+               match.Index == 0 &&
+               match.Length == value.Length &&
+               !LooksLikeNonSupplierName(value);
+    }
+
+    private static bool ContinuesInsideWord(string source, int endIndex)
+    {
+        if (endIndex < 0 || endIndex >= source.Length)
+            return false;
+
+        var next = source[endIndex];
+        return char.IsLetterOrDigit(next) || (next >= '\u4e00' && next <= '\u9fff');
+    }
+
     private static bool LooksLikeNonSupplierName(string name)
     {
         if (name.Length < 4)
             return true;
+
+        if (char.IsDigit(name[0]))
+            return true;
+
+        if (HasUnbalancedParentheses(name))
+            return true;
+
+        if (LooksLikeTruncatedOrganizationSuffix(name))
+            return true;
+
+        if (name.Contains("供电公司", StringComparison.Ordinal))
+            return true;
+
+        if (name.EndsWith("公司", StringComparison.Ordinal) &&
+            name.Length <= 8 &&
+            !ContainsAny(name, "有限公司", "股份", "集团", "分公司"))
+        {
+            return true;
+        }
 
         return ContainsAny(
             name,
@@ -355,6 +605,33 @@ public static class BidOpsOutcomeSupplierTextParser
             "招标有限公司招标",
             "电力公司物资部",
             "有限公司招标");
+    }
+
+    private static bool LooksLikeTruncatedOrganizationSuffix(string name)
+    {
+        var compact = new string(name
+            .Where(x => !char.IsWhiteSpace(x) && !"()（）[]【】{}<>《》,，.。;；:：-_—–/\\|".Contains(x))
+            .ToArray());
+        if (compact.Length == 0)
+            return true;
+
+        foreach (var suffix in FormalOrganizationSuffixes)
+        {
+            if (!compact.EndsWith(suffix, StringComparison.Ordinal))
+                continue;
+
+            var prefix = compact[..^suffix.Length];
+            return prefix.Length < 3 ||
+                   GenericOrganizationPrefixFragments.Contains(prefix, StringComparer.Ordinal);
+        }
+
+        return false;
+    }
+
+    private static bool HasUnbalancedParentheses(string name)
+    {
+        return name.Count(x => x == '(') != name.Count(x => x == ')') ||
+               name.Count(x => x == '（') != name.Count(x => x == '）');
     }
 
     private static PackageContext ExtractPackageContext(string line)
@@ -374,6 +651,20 @@ public static class BidOpsOutcomeSupplierTextParser
             Truncate(BidOpsTextQuality.CleanExtractedValue(packageNo), 128),
             Truncate(BidOpsTextQuality.CleanExtractedValue(packageName), 500),
             Truncate(BidOpsTextQuality.CleanExtractedValue(category), 128));
+    }
+
+    private static PackageContext ExtractOutcomeTableRowPackageContext(string line)
+    {
+        var lotNo = ExtractFirst(LeadingLotCodeRegex, line);
+        if (string.IsNullOrWhiteSpace(lotNo))
+            return new PackageContext();
+
+        return new PackageContext(
+            Truncate(BidOpsTextQuality.CleanExtractedValue(lotNo), 128),
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty);
     }
 
     private static string ExtractNamedValue(string line, params string[] names)
@@ -427,17 +718,88 @@ public static class BidOpsOutcomeSupplierTextParser
             : null;
     }
 
-    private static decimal? ExtractAmount(string line)
+    private static decimal? ExtractAmount(
+        string line,
+        string? supplierName,
+        OutcomeTableContext tableContext)
     {
         var match = AmountRegex.Match(line);
         if (!match.Success)
+            return ExtractTableAmount(line, supplierName, tableContext);
+
+        return ParseAmount(match.Groups["amount"].Value, match.Groups["unit"].Value, AmountUnitHint.Yuan);
+    }
+
+    private static decimal? ExtractTableAmount(
+        string line,
+        string? supplierName,
+        OutcomeTableContext tableContext)
+    {
+        if (!tableContext.Active || !tableContext.HasAmountColumn)
             return null;
 
-        if (!decimal.TryParse(match.Groups["amount"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var amount))
+        var source = line;
+        if (!string.IsNullOrWhiteSpace(supplierName))
+        {
+            var supplierIndex = line.IndexOf(supplierName, StringComparison.Ordinal);
+            if (supplierIndex >= 0)
+                source = line[(supplierIndex + supplierName.Length)..];
+        }
+
+        decimal? firstContextAmount = null;
+        var firstNumericWasRateOrScore = false;
+        var seenNumericCandidate = false;
+        foreach (Match candidate in NumericAmountCandidateRegex.Matches(source))
+        {
+            if (LooksLikePercentOrScore(source, candidate.Index, candidate.Length))
+            {
+                if (!seenNumericCandidate)
+                    firstNumericWasRateOrScore = true;
+
+                seenNumericCandidate = true;
+                continue;
+            }
+
+            seenNumericCandidate = true;
+
+            var unit = candidate.Groups["unit"].Value;
+            if (!string.IsNullOrWhiteSpace(unit))
+                return ParseAmount(candidate.Groups["amount"].Value, unit, tableContext.AmountUnit);
+
+            if (tableContext.AmountUnit == AmountUnitHint.Unknown)
+                continue;
+
+            firstContextAmount ??= ParseAmount(candidate.Groups["amount"].Value, string.Empty, tableContext.AmountUnit);
+        }
+
+        return firstNumericWasRateOrScore ? null : firstContextAmount;
+    }
+
+    private static bool LooksLikePercentOrScore(string source, int index, int length)
+    {
+        var nextIndex = index + length;
+        while (nextIndex < source.Length && char.IsWhiteSpace(source[nextIndex]))
+        {
+            nextIndex++;
+        }
+
+        if (nextIndex >= source.Length)
+            return false;
+
+        return source[nextIndex] is '%' or '％' or '分';
+    }
+
+    private static decimal? ParseAmount(
+        string amountText,
+        string unit,
+        AmountUnitHint fallbackUnit)
+    {
+        if (!decimal.TryParse(amountText.Replace(",", string.Empty, StringComparison.Ordinal), NumberStyles.Number, CultureInfo.InvariantCulture, out var amount))
             return null;
 
-        var unit = match.Groups["unit"].Value;
         if (unit is "万元" or "万")
+            amount *= 10000m;
+        else if (string.IsNullOrWhiteSpace(unit) && fallbackUnit == AmountUnitHint.TenThousandYuan)
             amount *= 10000m;
 
         return Math.Round(amount, 2);
@@ -458,6 +820,23 @@ public static class BidOpsOutcomeSupplierTextParser
             .Where(x => !char.IsWhiteSpace(x) && !":：,，;；".Contains(x))
             .ToArray())
             .ToUpperInvariant();
+    }
+
+    private static string NormalizeHeaderText(string value)
+    {
+        var builder = new StringBuilder(value.Length);
+        foreach (var ch in value)
+        {
+            if (char.IsWhiteSpace(ch) ||
+                ch is '/' or '／' or '|' or ':' or '：' or '-' or '_' or '（' or '）' or '(' or ')' or ',' or '，')
+            {
+                continue;
+            }
+
+            builder.Append(char.ToLowerInvariant(ch));
+        }
+
+        return builder.ToString();
     }
 
     private static string Truncate(string? value, int maxLength)
@@ -494,5 +873,20 @@ public static class BidOpsOutcomeSupplierTextParser
         {
             return string.IsNullOrWhiteSpace(value) ? fallback : value;
         }
+    }
+
+    private enum AmountUnitHint
+    {
+        Unknown,
+        Yuan,
+        TenThousandYuan
+    }
+
+    private sealed record OutcomeTableContext(
+        bool Active,
+        bool HasAmountColumn,
+        AmountUnitHint AmountUnit)
+    {
+        public static OutcomeTableContext None { get; } = new(false, false, AmountUnitHint.Unknown);
     }
 }
