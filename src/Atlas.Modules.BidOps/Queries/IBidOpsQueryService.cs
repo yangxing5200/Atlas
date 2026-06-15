@@ -31,7 +31,7 @@ public interface IBidOpsQueryService
 
     Task<ReviewTaskDetailDto?> GetReviewTaskDetailAsync(long id, CancellationToken ct = default);
 
-    Task<PagedResult<NoticeDto>> SearchNoticesAsync(BidOpsPagedQuery query, CancellationToken ct = default);
+    Task<PagedResult<NoticeDto>> SearchNoticesAsync(NoticeSearchQuery query, CancellationToken ct = default);
 
     Task<PagedResult<TenderPackageDto>> SearchPackagesAsync(PackageSearchQuery query, CancellationToken ct = default);
 

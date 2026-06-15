@@ -35,13 +35,23 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
         string text,
         CancellationToken cancellationToken = default)
     {
-        var deterministic = BidOpsDeterministicNoticeParser.Extract(title, text);
-        if (!IsExternalAiEnabled())
+        return await ExtractAsync(
+            new BidOpsNoticeAiExtractionRequest(title, string.Empty, string.Empty, null, text, string.Empty, []),
+            cancellationToken);
+    }
+
+    public async Task<BidOpsNoticeExtract> ExtractAsync(
+        BidOpsNoticeAiExtractionRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var sourceText = BuildDeterministicSourceText(request);
+        var deterministic = BidOpsDeterministicNoticeParser.Extract(request.Title, sourceText);
+        if (!BidOpsAiHttpSettingsFactory.TryCreate(_configuration, BidOpsAiUse.NoticeStaging, out var settings))
             return deterministic;
 
         try
         {
-            return await ExtractWithOpenAiCompatibleAsync(title, text, deterministic, cancellationToken);
+            return await ExtractWithOpenAiCompatibleAsync(request, deterministic, settings, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -50,35 +60,18 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
         }
     }
 
-    private bool IsExternalAiEnabled()
-    {
-        var provider = _configuration["BidOps:Ai:Provider"];
-        return _configuration.GetValue<bool>("BidOps:Ai:Enabled") &&
-               string.Equals(provider, "OpenAICompatible", StringComparison.OrdinalIgnoreCase) &&
-               !string.IsNullOrWhiteSpace(_configuration["BidOps:Ai:Endpoint"]) &&
-               !string.IsNullOrWhiteSpace(_configuration["BidOps:Ai:ApiKey"]) &&
-               !string.IsNullOrWhiteSpace(_configuration["BidOps:Ai:Model"]);
-    }
-
     private async Task<BidOpsNoticeExtract> ExtractWithOpenAiCompatibleAsync(
-        string title,
-        string text,
+        BidOpsNoticeAiExtractionRequest request,
         BidOpsNoticeExtract fallback,
+        BidOpsAiHttpSettings settings,
         CancellationToken ct)
     {
-        var endpoint = _configuration["BidOps:Ai:Endpoint"]!.Trim();
-        var apiKey = _configuration["BidOps:Ai:ApiKey"]!.Trim();
-        var model = _configuration["BidOps:Ai:Model"]!.Trim();
-        var maxInputCharacters = Math.Clamp(
-            _configuration.GetValue<int?>("BidOps:Ai:MaxInputCharacters") ?? 24_000,
-            4_000,
-            80_000);
-
-        var prompt = BuildPrompt(title, Truncate(text, maxInputCharacters), fallback);
+        var prompt = BuildPrompt(request, Truncate(BuildSourceBundle(request), settings.MaxInputCharacters), fallback);
         var requestBody = new
         {
-            model,
+            model = settings.Model,
             temperature = 0,
+            max_tokens = settings.MaxOutputTokens,
             response_format = new { type = "json_object" },
             messages = new object[]
             {
@@ -95,13 +88,13 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
             }
         };
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, settings.Endpoint)
         {
             Content = new StringContent(JsonSerializer.Serialize(requestBody, JsonOptions), Encoding.UTF8, "application/json")
         };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
 
-        using var response = await _httpClient.SendAsync(request, ct);
+        using var response = await _httpClient.SendAsync(httpRequest, ct);
         response.EnsureSuccessStatusCode();
         var responseText = await response.Content.ReadAsStringAsync(ct);
         var content = ExtractAssistantContent(responseText);
@@ -110,8 +103,8 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
     }
 
     private static string BuildPrompt(
-        string title,
-        string text,
+        BidOpsNoticeAiExtractionRequest request,
+        string sourceBundle,
         BidOpsNoticeExtract fallback)
     {
         var fallbackJson = JsonSerializer.Serialize(fallback, JsonOptions);
@@ -167,14 +160,73 @@ Rules:
 - Do not invent buyer, agency, budget, package, or dates.
 - If package data is absent, return one package with empty packageNo and packageName equal to projectName.
 - Include qualification, deadline, bid document, warranty, performance, and rejection-risk requirements when present.
+- Decide which fields to prioritize from noticeType/title/content:
+  - TenderAnnouncement or ProcurementAnnouncement: return notice-level project/buyer/agency/dates plus packages and requirements.
+  - CandidateAnnouncement: return notice-level fields plus package rows when visible; candidate supplier rows are handled by the outcome extractor, so do not invent them in requirements.
+  - AwardAnnouncement or ResultAnnouncement: return notice-level projectCode/buyer/agency/publishTime and package identity fields when visible; winner rows are handled by the outcome extractor.
+  - CorrectionAnnouncement/ChangeAnnouncement: return changed notice-level fields and any affected package/deadline fields that are explicitly present.
+- Announcement body HTML is authoritative for inline tables such as Word/MsoNormalTable. Use attachment extracted text when packages or requirements are in PDF/Word/Excel/ZIP attachments.
 - Fallback deterministic extraction for reference: {{fallbackJson}}
 
 Notice title:
-{{title}}
+{{request.Title}}
 
-Notice text:
-{{text}}
+Notice metadata:
+noticeType hint: {{request.NoticeType}}
+sourceUrl: {{request.SourceUrl}}
+publishTime: {{request.PublishTime?.ToString("O", CultureInfo.InvariantCulture) ?? ""}}
+
+Public source materials:
+{{sourceBundle}}
 """;
+    }
+
+    private static string BuildDeterministicSourceText(BidOpsNoticeAiExtractionRequest request)
+    {
+        var builder = new StringBuilder();
+        AppendSection(builder, "Announcement Text", request.Text);
+        AppendSection(builder, "Announcement HTML", request.Html);
+        foreach (var attachment in request.Attachments)
+        {
+            AppendSection(builder, $"Attachment: {attachment.FileName}", attachment.Text);
+        }
+
+        return builder.ToString();
+    }
+
+    private static string BuildSourceBundle(BidOpsNoticeAiExtractionRequest request)
+    {
+        var builder = new StringBuilder();
+        AppendSection(builder, "公告正文 HTML", request.Html);
+        AppendSection(builder, "公告正文纯文本", request.Text);
+
+        if (request.Attachments.Count == 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("附件：无");
+            return builder.ToString();
+        }
+
+        for (var i = 0; i < request.Attachments.Count; i++)
+        {
+            var attachment = request.Attachments[i];
+            builder.AppendLine();
+            builder.AppendLine($"附件 {i + 1}");
+            builder.AppendLine($"fileName: {attachment.FileName}");
+            builder.AppendLine($"fileType: {attachment.FileType}");
+            builder.AppendLine($"fileUrl: {attachment.FileUrl}");
+            builder.AppendLine($"fileSize: {attachment.FileSize?.ToString(CultureInfo.InvariantCulture) ?? string.Empty}");
+            AppendSection(builder, "extractedText", attachment.Text);
+        }
+
+        return builder.ToString();
+    }
+
+    private static void AppendSection(StringBuilder builder, string title, string content)
+    {
+        builder.AppendLine();
+        builder.AppendLine($"## {title}");
+        builder.AppendLine(string.IsNullOrWhiteSpace(content) ? "(empty)" : content.Trim());
     }
 
     private static string ExtractAssistantContent(string responseText)

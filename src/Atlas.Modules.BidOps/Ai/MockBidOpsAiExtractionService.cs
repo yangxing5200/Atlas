@@ -7,17 +7,27 @@ public sealed class MockBidOpsAiExtractionService : IBidOpsAiExtractionService
         string text,
         CancellationToken cancellationToken = default)
     {
+        return ExtractAsync(
+            new BidOpsNoticeAiExtractionRequest(title, string.Empty, string.Empty, null, text, string.Empty, []),
+            cancellationToken);
+    }
+
+    public Task<BidOpsNoticeExtract> ExtractAsync(
+        BidOpsNoticeAiExtractionRequest request,
+        CancellationToken cancellationToken = default)
+    {
         var now = DateTime.UtcNow;
-        var projectName = string.IsNullOrWhiteSpace(title)
+        var sourceText = $"{request.Text}\n{request.Html}\n{string.Join('\n', request.Attachments.Select(x => x.Text))}";
+        var projectName = string.IsNullOrWhiteSpace(request.Title)
             ? "公开标讯样例项目"
-            : title.Trim();
+            : request.Title.Trim();
 
         var package = new BidOpsPackageExtract(
             LotNo: "LOT-1",
             LotName: "默认标段",
             PackageNo: "PKG-1",
             PackageName: projectName,
-            Category: DetectCategory(text),
+            Category: DetectCategory(sourceText),
             Quantity: null,
             Unit: string.Empty,
             BudgetAmount: 100000m,

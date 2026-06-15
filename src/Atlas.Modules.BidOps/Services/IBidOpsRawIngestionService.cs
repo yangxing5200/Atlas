@@ -15,7 +15,8 @@ public sealed record RawIngestionCommand(
     string TextContent,
     string HtmlContent,
     DateTime? PublishTime,
-    IReadOnlyList<RawAttachmentCandidate>? Attachments = null);
+    IReadOnlyList<RawAttachmentCandidate>? Attachments = null,
+    bool ForceRefresh = false);
 
 public interface IBidOpsRawIngestionService
 {

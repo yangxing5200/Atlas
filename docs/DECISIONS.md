@@ -1,5 +1,64 @@
 # Decisions
 
+## 2026-06-15 BidOps Review Outcome Editing And DeepSeek Replacement
+
+- Reviewer-prompted DeepSeek outcome reparse is treated as a replacement operation. The Worker still deletes existing `OutcomeSupplierRecord` rows for the Raw notice first, but when a reviewer prompt is present it persists only DeepSeek-returned rows instead of merging deterministic rows back in.
+- Automatic structured parsing keeps the previous deterministic-plus-AI enrichment behavior, because unattended parsing should preserve rule-based recall when no human correction prompt exists.
+- Review-detail manual editing is scoped to public outcome/candidate lead rows for unapproved review tasks. Editing does not write formal Notice/Package/Requirement facts and does not create contacts, capabilities, private relationships, or pursuit decisions.
+- Edited outcome rows are treated as reviewer-confirmed staging/lead data with `ExtractionConfidence = 1`. If the supplier or buyer name changes, weak existing organization links are cleared and approval-time sync creates or relinks buyer/supplier master records idempotently.
+- Background job payload/result display should format JSON before rendering so Chinese text from DeepSeek prompts/results is shown as readable Chinese instead of raw unicode escape sequences.
+
+## 2026-06-14 BidOps Local Worker DeepSeek Configuration
+
+- DeepSeek credentials remain Worker runtime configuration, not background job payload. Jobs record the Raw notice id, review prompt, and source context; the Worker resolves `BidOps:Ai:*` and `DEEPSEEK_API_KEY` when the job executes.
+- `BidOpsLocal` enables BidOps AI locally and intentionally does not define an empty `BidOps:Ai:ApiKey`, so local runs can inherit a base config value or use the safer `DEEPSEEK_API_KEY` environment variable.
+- Local Worker restarts use a dedicated script that sets `DOTNET_ENVIRONMENT=BidOpsLocal` and `ASPNETCORE_ENVIRONMENT=BidOpsLocal` before launching `Atlas.Worker`. This avoids accidentally loading the default RabbitMQ-enabled Worker configuration during BidOps local parsing tests.
+
+## 2026-06-14 BidOps DeepSeek Job Result Drilldown
+
+- DeepSeek/outcome reparse jobs continue to persist parsed rows through Worker-owned services before the UI displays them. The review page and job detail page read the current database state instead of treating task result text as the source of truth.
+- Outcome reparse rebuilds only the current Raw notice's `OutcomeSupplierRecord` rows and syncs conservative buyer/supplier master-data shells. Structured parse rebuilds staging review data. Formal Notice/Package/Requirement import still requires human approval.
+- Background job `Result` now stores a compact JSON summary for structured parse and outcome supplier extraction jobs so operators can see RawNoticeId, review task id, saved row counts, and buyer/supplier sync counts without exposing full prompt input or large source documents in the global job table.
+- Frontend extraction of RawNoticeId from job payload/result uses raw string matching before JSON parsing because Atlas snowflake ids exceed JavaScript's safe integer range.
+
+## 2026-06-14 BidOps Review Outcome AI Adjustment
+
+- Review-page DeepSeek adjustment is scoped to public outcome/candidate detail rows for the current Raw notice. It enqueues `bidops.outcome.supplier-extract` with the reviewer prompt instead of running AI work in WebApi.
+- The job deletes and rebuilds only that Raw notice's `OutcomeSupplierRecord` rows. Formal Notice/Package/Requirement import and approved organization association still require human approval.
+- Approved or already-formal Raw notices are protected from this AI reparse endpoint in MVP, matching the existing Raw notice reparse boundary.
+- Amounts remain stored as CNY yuan in `OutcomeSupplierRecord.AwardAmount`; the review candidate list displays `最终报价` in 万元 for user review.
+- Reviewer prompts are saved in the background job payload for traceability. They should describe public extraction corrections, not private supplier intelligence or non-public influence.
+- DeepSeek receives the stored public announcement HTML snapshot plus extracted attachment text and attachment metadata. The prompt tells it which field set matters for the detected notice type so HTML tables, PDF/Office/Excel/ZIP attachment text, and body-level procurement numbers can all be used as evidence.
+
+## 2026-06-14 BidOps Review Approval Organization Linking
+
+- Review detail now shows the parsed buyer and public outcome supplier rows before approval, so reviewers can see whether approval will create or link master-data organizations.
+- If a historical or failed parse review task has no persisted outcome rows yet, review detail builds a read-only preview from the stored Raw notice text/HTML and extracted attachment text. This preview is not persisted; Worker extraction and approval-time fallback remain the write paths.
+- Approval remains the human gate for reviewed notice import and review-scoped organization association. If public outcome extraction has already linked or created a master-data shell, approval refreshes it and records this notice's association idempotently.
+- Public result/candidate supplier extraction is treated as a resilient side path of structured parsing. If generic tender/procurement staging parsing fails on an outcome announcement, the Worker still attempts outcome supplier extraction so public award rows are not lost.
+- Review approval also checks whether the Raw notice has outcome supplier rows; when missing, it runs extraction before entering the approval transaction so existing review tasks can still create/link suppliers from the source announcement.
+- Buyer procurement facts are stored in `bidops_buyer_procurement_record` as source-backed purchase history linked to the approved notice and Raw notice. They do not create opportunities, pursuits, contacts, or private relationship facts.
+- Supplier master records keep `CreatedFrom*` fields for the announcement that first created the supplier shell, and `LastOutcome*` fields for the latest related public outcome announcement. Existing suppliers are updated and associated instead of duplicated.
+- The approval sync uses the original Raw notice detail URL as the source URL for buyer procurement and supplier outcome traceability.
+
+## 2026-06-14 BidOps Reverse Closure State Grid Award HTML Tables
+
+- State Grid WCM `CONT` HTML tables are parsed deterministically inside the evidence table parser instead of adding a browser/rendering dependency.
+- State Grid WCM Raw HTML snapshots preserve the original `CONT` HTML when available, so Word-style tables such as `p.MsoNormal`/`MsoNormalTable` remain reviewable and re-extractable instead of being encoded into a synthetic `<pre>`.
+- Award table parsing treats procurement/project code as announcement context and allows regex fallback from the surrounding正文. Lot number/name fallback is limited to the text immediately before the table so multi-lot announcements do not inherit the first global lot accidentally.
+- `forceRefresh` manual import re-fetches the public source through Worker, refreshes stored Raw text/HTML even when the content hash is unchanged, forces attachment text extraction, and then reruns structured parsing. Approved Raw notices are not force-refreshed in MVP.
+- Reverse closure debug DTOs now expose award `ProjectUnit` and `LotName`, plus closure-level `ProjectUnit` and `LotName`, because State Grid award notices commonly provide `项目单位` and `分标名称` directly in the result table.
+- Reverse lifecycle linking treats repeated package numbers as lot-scoped when lot numbers are available. A candidate/tender row with `包1` should not link to an award `包1` from a different `分标编号`.
+
+## 2026-06-13 BidOps Reverse Lifecycle Closure Debug
+
+- Package lifecycle reverse closure is implemented as DTO/debug output first. It does not add lifecycle persistence tables, does not write SupplierCapability, and does not promote public outcome/candidate clues into confirmed business facts.
+- The debug API does not crawl State Grid or download attachments in the WebApi request thread. If the award URL is not already a RawNotice, it enqueues the existing manual import Worker job and returns an explicit warning/job id.
+- Existing State Grid `doci-win` support is reused for award-result import: detail API `index/getNoticeWin`, attachment list API `index/getWinFile`, and download API `downLoadWinFile`.
+- Award amount precedence is conservative: use AwardNotice amount when present; otherwise use the matched rank-1 or unique matched candidate final quote; otherwise mark `award amount missing`.
+- Candidate and tender reverse matching uses project code exact match first, then project-name similarity, normalized package number, supplier-name equality, rank, and tender/procurement title/type hints. All suggested closures still require manual review in this phase when confidence is below 0.90 or any field is missing.
+- Development derived-data cleanup is exposed only as `tools/Atlas.LocalSetup reset-bidops-derived-data`. It is dry-run by default, requires `--confirm` to delete, and protects RawNotice, RawAttachment, CrawlSource, CrawlChannel, CrawlRunLog, attachment files, and supplier master data.
+
 ## 2026-06-11 BidOps MVP Integration
 
 - Keep Atlas on the repository's current .NET 8 target framework and central package policy. No package or framework upgrade is introduced.
@@ -276,3 +335,37 @@
 - The supplier analysis page defaults its lead table to `hasAwardAmount=true` and amount-descending sorting because users open this view to inspect public outcome clues with monetary value, not just the newest extracted rows.
 - Public outcome supplier summary now prioritizes suppliers with positive cumulative parsed award amount, then cumulative amount, then lead counts. Count-only suppliers are still visible after amount-bearing suppliers rather than hidden.
 - Parsed award amounts remain evidence-backed public-result clues. They are not treated as reviewed BidOutcome business facts and do not automatically update supplier master data, contacts, or pursuit decisions.
+
+## 2026-06-14 BidOps Crawl Adapter And Organization Master Data
+
+- Crawl source-specific behavior is represented behind `IBidOpsCrawlAdapter`. The first adapter, `StateGridEcpCrawlAdapter`, participates in SGCC source/detail URL validation and declares public SGCC ECP support for inline HTML tables and public attachments including PDF, Office, Excel, and ZIP/RAR metadata; actual crawling, download, and text extraction remain Worker-side jobs.
+- Public result extraction now combines generic result-text parsing with the evidence/table parser used by reverse lifecycle closure, so HTML中标公告 tables can populate project unit, lot number/name, package number/name, awarded supplier, and amount fields.
+- Public outcome/candidate notices conservatively upsert `bidops_buyer` and `bidops_supplier` master records by normalized organization name. Existing records are linked and lightly refreshed instead of duplicated.
+- Auto-created supplier records are master-data shells only. The pipeline does not create contacts, capabilities, qualifications, private relationships, pursuit decisions, or any non-public influence data from public award notices.
+- `OutcomeSupplierRecord.BuyerId` is a weak traceability link to the buyer master record. AI/parser results still originate from Raw/attachment text and remain separate from formal reviewed tender business facts.
+
+## 2026-06-14 BidOps DeepSeek Outcome Extraction
+
+- DeepSeek is integrated through the existing optional `BidOps:Ai:*` switch as an OpenAI-compatible HTTP provider. It is disabled by default, uses config or `DEEPSEEK_API_KEY` for credentials, and defaults to `https://api.deepseek.com/chat/completions` with model `deepseek-v4-flash`.
+- Outcome supplier extraction remains Worker-owned and staging/lead-only. Deterministic parsers run first; DeepSeek may enrich or correct public result rows, but the persistence service still deletes/rebuilds only that RawNotice's `OutcomeSupplierRecord` rows and then syncs conservative buyer/supplier master data.
+- Re-extraction uses the existing RawNotice `重解析` path. It force-runs attachment text extraction, then structured parsing, then outcome supplier extraction; approved/formal Raw notices remain protected from mutation in MVP.
+- `采购代理服务费` is stored separately as `OutcomeSupplierRecord.ProcurementAgencyServiceFeeAmount`. It must not be folded into `AwardAmount`, because service fee is a public transaction-administration clue rather than the supplier award amount.
+
+## 2026-06-14 BidOps Review Detail Structured Modules
+
+- The review detail page infers a display-only notice kind from staged notice type, title, and Raw notice text so reviewers see different structured modules for `中标/成交结果公告`, `推荐中标候选人公示`, and `采购公告`.
+- This inference does not create new formal business facts by itself. It only chooses which existing staging/lead rows to display before the existing human review approval flow.
+- Candidate notices show candidate leads and a separate package-detail module even when candidate lead extraction is empty, because reviewers still need to inspect the parsed package and requirement staging data before deciding whether to approve, ignore, or reparse.
+
+## 2026-06-14 BidOps Wrapped PDF Outcome Table Extraction
+
+- Wrapped SGCC PDF result tables are parsed deterministically before AI enrichment, because common public PDF extraction output breaks table cells across lines in a repeatable way and should not depend on DeepSeek availability.
+- Candidate/result notice kind is decided before routing evidence parsers. Candidate announcements remain `Candidate` records even when column labels contain `推荐中标人`; only result/award announcements are allowed to create `Awarded` records from award evidence parsing.
+- Monetary cells are normalized to CNY yuan only when the surrounding table/header makes the unit explicit, such as `万元人民币`. Discount rates, percentages, and score-like values are preserved in evidence but not stored as `AwardAmount`.
+- Existing Raw notices are not mutated automatically by code deployment. Review modules receive corrected candidate/winning detail rows after the existing Worker-owned RawNotice `重解析` flow rebuilds extracted attachment text, staging rows, and outcome supplier records.
+
+## 2026-06-14 BidOps Notice List Filters And Updated Time
+
+- `最后更新时间` uses Atlas entity `UpdatedAt` with `CreatedAt` as the UI fallback, so existing rows display a stable timestamp without a tenant migration.
+- Review-pool公告类型 filtering is based on `NoticeStaging.NoticeType`, matching the source used to enrich the review-list project, buyer, region, deadline, and confidence columns.
+- Formal notice search now has a dedicated query object instead of reusing the generic paged query, so notice-type filters are accepted by the API contract rather than ignored by the backend.

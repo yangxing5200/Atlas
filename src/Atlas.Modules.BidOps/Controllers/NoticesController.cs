@@ -19,7 +19,7 @@ public sealed class NoticesController : ControllerBase
 
     [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.BusinessRead)]
     [HttpGet]
-    public async Task<IActionResult> SearchAsync([FromQuery] BidOpsPagedQuery query, CancellationToken ct)
+    public async Task<IActionResult> SearchAsync([FromQuery] NoticeSearchQuery query, CancellationToken ct)
     {
         return Ok(await _queries.SearchNoticesAsync(query, ct));
     }

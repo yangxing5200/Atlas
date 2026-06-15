@@ -168,6 +168,7 @@ public static partial class StateGridEcpWcmParser
         AppendJsonText(resultValue, "resultValue", builder, 0);
 
         var text = Trim(builder.ToString(), MaxTextLength);
+        var rawHtml = FindFirstString(resultValue, "CONT", "NOTICE_CONT", "CHG_NOTICE_CONT", "NOTICE_CONTENT", "CONTENT");
         var attachments = DiscoverAttachments(resultValue, notice.DetailUrl)
             .ToList();
         TryAddBidNoticeDownloadAttachment(resultValue, notice, title, attachments);
@@ -175,7 +176,7 @@ public static partial class StateGridEcpWcmParser
         return new StateGridNoticeDocument(
             Trim(title, 500),
             text,
-            BuildSyntheticHtml(title, text),
+            BuildNoticeHtml(title, text, rawHtml),
             publishTime,
             attachments);
     }
@@ -735,6 +736,22 @@ public static partial class StateGridEcpWcmParser
     private static string BuildSyntheticHtml(string title, string text)
     {
         return $"<html><body><h1>{WebUtility.HtmlEncode(title)}</h1><pre>{WebUtility.HtmlEncode(text)}</pre></body></html>";
+    }
+
+    private static string BuildNoticeHtml(string title, string text, string? rawHtml)
+    {
+        if (string.IsNullOrWhiteSpace(rawHtml))
+            return BuildSyntheticHtml(title, text);
+
+        return $"""
+<html>
+<head><meta charset="utf-8"><title>{WebUtility.HtmlEncode(title)}</title></head>
+<body>
+<h1>{WebUtility.HtmlEncode(title)}</h1>
+{rawHtml}
+</body>
+</html>
+""";
     }
 
     private static void AppendLine(StringBuilder builder, string value)

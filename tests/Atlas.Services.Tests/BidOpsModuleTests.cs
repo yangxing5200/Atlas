@@ -1,21 +1,30 @@
 using System.IO.Compression;
+using System.Net;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using Atlas.BackgroundTasks;
 using Atlas.Core.Authorization;
+using Atlas.Core.Entities.Global;
+using Atlas.Core.Services;
 using Atlas.Extensions.DependencyInjection;
 using Atlas.Modules.BidOps;
 using Atlas.Modules.BidOps.Ai;
+using Atlas.Modules.BidOps.Ai.Evidence;
+using Atlas.Modules.BidOps.BackgroundJobs;
 using Atlas.Modules.BidOps.Controllers;
 using Atlas.Modules.BidOps.Crawling;
 using Atlas.Modules.BidOps.Documents;
 using Atlas.Modules.BidOps.EntityConfigurations;
 using Atlas.Modules.BidOps.Entities.Outcomes;
+using Atlas.Modules.BidOps.Models;
 using Atlas.Modules.BidOps.Queries;
 using Atlas.Modules.BidOps.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using UglyToad.PdfPig.Core;
 using UglyToad.PdfPig.Fonts.Standard14Fonts;
 using UglyToad.PdfPig.Writer;
@@ -45,15 +54,391 @@ public sealed class BidOpsModuleTests
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsOpportunityMaintenanceService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsSupplierService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsOutcomeSupplierExtractionService));
+        Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsOutcomeSupplierAiExtractionService));
+        Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsOrganizationMasterDataService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsSupplierMaintenanceService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsMatchingService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsPursuitService));
+        Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsReverseLifecycleClosureService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsOperationsQueryService));
+        Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsCrawlAdapter) && x.ImplementationType == typeof(StateGridEcpCrawlAdapter));
         Assert.Contains(services, x => x.ServiceType == typeof(IStateGridEcpCrawler));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsAttachmentProcessingService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsTextExtractor));
         Assert.True(services.Count(x => x.ServiceType == typeof(IBackgroundJobHandler)) >= 14);
         Assert.True(services.Count(x => x.ServiceType == typeof(IRecurringTask)) >= 4);
+    }
+
+    [Fact]
+    public async Task BidOpsOutcomeSupplierAiExtractionService_ExtractsDeepSeekJsonRecords()
+    {
+        string? capturedBody = null;
+        Uri? capturedUri = null;
+        var assistantJson = """
+{
+  "records": [
+    {
+      "supplierName": "北京乙科技有限公司",
+      "outcomeType": "Awarded",
+      "rank": 1,
+      "awardAmount": "123.45万元",
+      "procurementAgencyServiceFeeAmount": "1234.56元",
+      "projectName": "国网测试项目",
+      "projectCode": "872610",
+      "buyerName": "国网测试采购单位",
+      "lotNo": "9001005-9999",
+      "lotName": "综合服务",
+      "packageNo": "1",
+      "packageName": "测试包件",
+      "category": "服务",
+      "evidenceText": "包1 成交人 北京乙科技有限公司 采购代理服务费1234.56元",
+      "confidence": 0.91
+    }
+  ]
+}
+""";
+        var responseJson = JsonSerializer.Serialize(new
+        {
+            choices = new[]
+            {
+                new
+                {
+                    message = new
+                    {
+                        content = assistantJson
+                    }
+                }
+            }
+        });
+        var handler = new StubHttpMessageHandler(async (request, ct) =>
+        {
+            capturedUri = request.RequestUri;
+            capturedBody = request.Content == null ? string.Empty : await request.Content.ReadAsStringAsync(ct);
+
+            Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
+            Assert.Equal("test-key", request.Headers.Authorization?.Parameter);
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
+            };
+        });
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["BidOps:Ai:Enabled"] = "true",
+                ["BidOps:Ai:Provider"] = "DeepSeek",
+                ["BidOps:Ai:ApiKey"] = "test-key",
+                ["BidOps:Ai:BaseUrl"] = "https://api.deepseek.com",
+                ["BidOps:Ai:Model"] = "deepseek-v4-flash",
+                ["BidOps:Ai:UseForOutcomeSuppliers"] = "true"
+            })
+            .Build();
+        var service = new BidOpsOutcomeSupplierAiExtractionService(
+            new HttpClient(handler),
+            configuration,
+            NullLogger<BidOpsOutcomeSupplierAiExtractionService>.Instance);
+
+        var records = await service.ExtractAsync(
+            new BidOpsOutcomeSupplierAiExtractionRequest(
+                "国网测试项目成交结果公告",
+                "AwardAnnouncement",
+                "https://example.test/notice",
+                new DateTime(2026, 6, 14),
+                "采购编号：872610\n包1 成交人 北京乙科技有限公司 采购代理服务费1234.56元",
+                [],
+                "表格中的最终报价单位是万元，采购编号在正文里。",
+                "<table class=\"MsoNormalTable\"><tr><td>包1</td><td>北京乙科技有限公司</td></tr></table>",
+                [
+                    new BidOpsAiAttachmentInput(
+                        "成交结果公告.pdf",
+                        "pdf",
+                        "https://example.test/result.pdf",
+                        12345,
+                        "附件表格：包1 成交人 北京乙科技有限公司")
+                ]));
+
+        var record = Assert.Single(records);
+        Assert.Equal(new Uri("https://api.deepseek.com/chat/completions"), capturedUri);
+        Assert.Contains("\"response_format\"", capturedBody);
+        using var capturedDocument = JsonDocument.Parse(capturedBody!);
+        var capturedPrompt = capturedDocument.RootElement
+            .GetProperty("messages")[1]
+            .GetProperty("content")
+            .GetString();
+        Assert.Contains("表格中的最终报价单位是万元", capturedPrompt!);
+        Assert.Contains("MsoNormalTable", capturedPrompt!);
+        Assert.Contains("成交结果公告.pdf", capturedPrompt!);
+        Assert.Equal("北京乙科技有限公司", record.SupplierName);
+        Assert.Equal(BidOpsOutcomeTypes.Awarded, record.OutcomeType);
+        Assert.Equal(1234500m, record.AwardAmount);
+        Assert.Equal(1234.56m, record.ProcurementAgencyServiceFeeAmount);
+        Assert.Equal("872610", record.ProjectCode);
+        Assert.Equal("9001005-9999", record.LotNo);
+        Assert.Equal("包1", record.PackageNo);
+    }
+
+    [Fact]
+    public void BidOpsOutcomeSupplierExtractionService_ReviewerPromptUsesAiRowsAsReplacement()
+    {
+        var deterministic = new List<BidOpsOutcomeSupplierExtract>
+        {
+            new()
+            {
+                SupplierName = "旧规则厂家有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                PackageNo = "包1",
+                Confidence = 0.6m
+            }
+        };
+        var ai = new List<BidOpsOutcomeSupplierExtract>
+        {
+            new()
+            {
+                SupplierName = "DeepSeek修正厂家有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                PackageNo = "包1",
+                Confidence = 0.95m
+            }
+        };
+        var method = typeof(BidOpsOutcomeSupplierExtractionService).GetMethod(
+            "ChooseOutcomeExtractsForPersistence",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        var selected = (IReadOnlyList<BidOpsOutcomeSupplierExtract>)method!.Invoke(
+            null,
+            new object?[] { deterministic, ai, "用附件 PDF 表格重新解析" })!;
+
+        var record = Assert.Single(selected);
+        Assert.Equal("DeepSeek修正厂家有限公司", record.SupplierName);
+    }
+
+    [Fact]
+    public async Task BidOpsStructuredExtractionService_SendsHtmlAndAttachmentsToDeepSeek()
+    {
+        string? capturedBody = null;
+        var assistantJson = """
+{
+  "noticeType": "AwardAnnouncement",
+  "projectName": "国网测试成交结果公告",
+  "projectCode": "CG-2026-001",
+  "buyerName": "国网测试采购单位",
+  "agencyName": "测试代理机构",
+  "region": "河南",
+  "budgetAmount": null,
+  "publishTime": "2026-06-12T00:00:00",
+  "signupDeadline": null,
+  "bidDeadline": null,
+  "openBidTime": null,
+  "confidence": 0.91,
+  "packages": [
+    {
+      "lotNo": "LOT-1",
+      "lotName": "综合服务",
+      "packageNo": "包1",
+      "packageName": "测试服务包",
+      "category": "Service",
+      "quantity": null,
+      "unit": "",
+      "budgetAmount": null,
+      "maxPrice": null,
+      "deliveryPlace": "",
+      "deliveryPeriod": "",
+      "confidence": 0.88,
+      "requirements": []
+    }
+  ]
+}
+""";
+        var responseJson = JsonSerializer.Serialize(new
+        {
+            choices = new[]
+            {
+                new
+                {
+                    message = new
+                    {
+                        content = assistantJson
+                    }
+                }
+            }
+        });
+        var handler = new StubHttpMessageHandler(async (request, ct) =>
+        {
+            capturedBody = request.Content == null ? string.Empty : await request.Content.ReadAsStringAsync(ct);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
+            };
+        });
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["BidOps:Ai:Enabled"] = "true",
+                ["BidOps:Ai:Provider"] = "DeepSeek",
+                ["BidOps:Ai:ApiKey"] = "test-key",
+                ["BidOps:Ai:BaseUrl"] = "https://api.deepseek.com",
+                ["BidOps:Ai:Model"] = "deepseek-v4-flash",
+                ["BidOps:Ai:UseForNoticeStaging"] = "true"
+            })
+            .Build();
+        var service = new BidOpsStructuredExtractionService(
+            new HttpClient(handler),
+            configuration,
+            NullLogger<BidOpsStructuredExtractionService>.Instance);
+
+        var extract = await service.ExtractAsync(
+            new BidOpsNoticeAiExtractionRequest(
+                "国网测试成交结果公告",
+                "AwardAnnouncement",
+                "https://example.test/notice",
+                new DateTime(2026, 6, 12),
+                "公告正文：采购编号：CG-2026-001",
+                "<table class=\"MsoNormalTable\"><tr><td>采购编号</td><td>CG-2026-001</td></tr></table>",
+                [
+                    new BidOpsAiAttachmentInput(
+                        "成交结果附件.pdf",
+                        "pdf",
+                        "https://example.test/attachment.pdf",
+                        45678,
+                        "附件内容：分标编号 LOT-1 包1")
+                ]),
+            CancellationToken.None);
+
+        using var capturedDocument = JsonDocument.Parse(capturedBody!);
+        var capturedPrompt = capturedDocument.RootElement
+            .GetProperty("messages")[1]
+            .GetProperty("content")
+            .GetString();
+        Assert.Contains("公告正文 HTML", capturedPrompt!);
+        Assert.Contains("MsoNormalTable", capturedPrompt!);
+        Assert.Contains("附件 1", capturedPrompt!);
+        Assert.Contains("成交结果附件.pdf", capturedPrompt!);
+        Assert.Contains("AwardAnnouncement or ResultAnnouncement", capturedPrompt!);
+        Assert.Equal("CG-2026-001", extract.ProjectCode);
+        Assert.Equal("包1", Assert.Single(extract.Packages).PackageNo);
+    }
+
+    [Fact]
+    public async Task StructuredParseJobHandler_ExtractsOutcomeSuppliersWhenNoticeParsingFails()
+    {
+        var parsing = new Mock<IBidOpsAiParsingService>(MockBehavior.Strict);
+        parsing
+            .Setup(x => x.ParseRawNoticeAsync(123, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("parse failed"));
+
+        var extraction = new Mock<IBidOpsOutcomeSupplierExtractionService>(MockBehavior.Strict);
+        extraction
+            .Setup(x => x.ExtractRawNoticeAsync(123, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OutcomeSupplierExtractionResultDto
+            {
+                RawNoticeId = 123,
+                IsOutcomeNotice = true,
+                ExtractedCount = 93,
+                SavedCount = 93
+            });
+
+        var handler = new StructuredParseJobHandler(
+            new ExecutionIdentityAccessor(),
+            parsing.Object,
+            extraction.Object,
+            NullLogger<StructuredParseJobHandler>.Instance);
+        var payload = new StructuredParseJobPayload(300001, null, 42, "bidops", 123);
+        var context = new BackgroundJobExecutionContext(new BackgroundJob
+        {
+            Id = 1,
+            Payload = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+        });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => handler.HandleAsync(context));
+
+        extraction.Verify(x => x.ExtractRawNoticeAsync(123, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task StructuredParseJobHandler_ReturnsJsonResultSummary()
+    {
+        var parsing = new Mock<IBidOpsAiParsingService>(MockBehavior.Strict);
+        parsing
+            .Setup(x => x.ParseRawNoticeAsync(123, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(456);
+
+        var extraction = new Mock<IBidOpsOutcomeSupplierExtractionService>(MockBehavior.Strict);
+        extraction
+            .Setup(x => x.ExtractRawNoticeAsync(123, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OutcomeSupplierExtractionResultDto
+            {
+                RawNoticeId = 123,
+                IsOutcomeNotice = true,
+                ExtractedCount = 3,
+                SavedCount = 2,
+                Message = "saved"
+            });
+
+        var handler = new StructuredParseJobHandler(
+            new ExecutionIdentityAccessor(),
+            parsing.Object,
+            extraction.Object,
+            NullLogger<StructuredParseJobHandler>.Instance);
+        var payload = new StructuredParseJobPayload(300001, null, 42, "bidops", 123);
+        var context = new BackgroundJobExecutionContext(new BackgroundJob
+        {
+            Id = 1,
+            Payload = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+        });
+
+        var result = await handler.HandleAsync(context);
+
+        Assert.True(result.Succeeded);
+        using var document = JsonDocument.Parse(result.Result!);
+        Assert.Equal(123, document.RootElement.GetProperty("rawNoticeId").GetInt64());
+        Assert.Equal(456, document.RootElement.GetProperty("reviewTaskId").GetInt64());
+        Assert.Equal(2, document.RootElement
+            .GetProperty("outcomeSupplierExtraction")
+            .GetProperty("savedCount")
+            .GetInt32());
+    }
+
+    [Fact]
+    public async Task OutcomeSupplierExtractJobHandler_ReturnsJsonResultSummary()
+    {
+        var extraction = new Mock<IBidOpsOutcomeSupplierExtractionService>(MockBehavior.Strict);
+        extraction
+            .Setup(x => x.ExtractRawNoticeAsync(123, "提示词", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OutcomeSupplierExtractionResultDto
+            {
+                RawNoticeId = 123,
+                IsOutcomeNotice = true,
+                ExtractedCount = 4,
+                SavedCount = 3,
+                BuyerCreatedCount = 1,
+                SupplierUpdatedCount = 2,
+                Message = "已保存 3 条公开结果厂家线索。"
+            });
+
+        var handler = new OutcomeSupplierExtractJobHandler(
+            new ExecutionIdentityAccessor(),
+            extraction.Object,
+            NullLogger<OutcomeSupplierExtractJobHandler>.Instance);
+        var payload = new OutcomeSupplierExtractJobPayload(300001, null, 42, "bidops", 123, "提示词");
+        var context = new BackgroundJobExecutionContext(new BackgroundJob
+        {
+            Id = 1,
+            Payload = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+        });
+
+        var result = await handler.HandleAsync(context);
+
+        Assert.True(result.Succeeded);
+        using var document = JsonDocument.Parse(result.Result!);
+        Assert.Equal(123, document.RootElement.GetProperty("rawNoticeId").GetInt64());
+        Assert.Equal(3, document.RootElement.GetProperty("savedCount").GetInt32());
+        Assert.Equal(1, document.RootElement.GetProperty("buyerCreatedCount").GetInt32());
+        Assert.Equal(2, document.RootElement.GetProperty("supplierUpdatedCount").GetInt32());
+        Assert.True(document.RootElement.GetProperty("reviewerPrompt").GetBoolean());
+        Assert.Contains("已保存", result.Result);
+        Assert.DoesNotContain("\\u", result.Result);
     }
 
     [Fact]
@@ -94,6 +479,8 @@ public sealed class BidOpsModuleTests
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.Dashboard));
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.RawNotice));
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.Opportunity));
+        Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.Buyer));
+        Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.BuyerProcurement));
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.Supplier));
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.SupplierEvidence));
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.OutcomeSupplierRecord));
@@ -101,6 +488,35 @@ public sealed class BidOpsModuleTests
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.GoNoGoDecision));
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.Pursuit));
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.PursuitTask));
+    }
+
+    [Fact]
+    public void StateGridEcpCrawlAdapter_DeclaresTableAndAttachmentCapabilities()
+    {
+        var adapter = new StateGridEcpCrawlAdapter();
+        var source = new Atlas.Modules.BidOps.Entities.Crawling.CrawlSource
+        {
+            SourceType = BidOpsCrawlSourceTypes.StateGridEcp,
+            BaseUrl = "https://ecp.sgcc.com.cn/ecp2.0/portal/",
+            NeedLogin = false
+        };
+
+        Assert.True(adapter.CanHandle(source));
+        Assert.True(adapter.SupportsInlineHtmlTables);
+        Assert.True(adapter.SupportsAttachmentDiscovery);
+        Assert.Contains("pdf", adapter.SupportedAttachmentTypes);
+        Assert.Contains("zip", adapter.SupportedAttachmentTypes);
+        Assert.True(adapter.CanImportDetail(new Uri("https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-win/2606128522123684_2018060501171111")));
+    }
+
+    [Theory]
+    [InlineData("项目单位：国网四川省电力公司", "国网四川省电力公司")]
+    [InlineData("采购人: 北京电力交易中心有限公司", "北京电力交易中心有限公司")]
+    [InlineData("中标人：许继电气股份有限公司", "许继电气股份有限公司")]
+    public void BidOpsOrganizationNameNormalizer_RemovesCommonNoticeLabels(string value, string expected)
+    {
+        Assert.Equal(expected, BidOpsOrganizationNameNormalizer.Clean(value));
+        Assert.Equal(expected, BidOpsOrganizationNameNormalizer.NormalizeForMatch(value));
     }
 
     [Fact]
@@ -205,6 +621,57 @@ public sealed class BidOpsModuleTests
         Assert.Equal("import-url", importUrlRoute);
         Assert.Equal("backfill-attachments", backfillAttachmentsRoute);
         Assert.Equal("{id:long}/attachments/{attachmentId:long}/file", attachmentFileRoute);
+    }
+
+    [Fact]
+    public void ReviewTasksController_DeclaresOutcomeAiReparseContract()
+    {
+        var route = typeof(ReviewTasksController)
+            .GetMethod(nameof(ReviewTasksController.OutcomeAiReparseAsync))?
+            .GetCustomAttributes<HttpPostAttribute>()
+            .SingleOrDefault()?
+            .Template;
+        var addRoute = typeof(ReviewTasksController)
+            .GetMethod(nameof(ReviewTasksController.AddOutcomeSupplierAsync))?
+            .GetCustomAttributes<HttpPostAttribute>()
+            .SingleOrDefault()?
+            .Template;
+        var updateRoute = typeof(ReviewTasksController)
+            .GetMethod(nameof(ReviewTasksController.UpdateOutcomeSupplierAsync))?
+            .GetCustomAttributes<HttpPutAttribute>()
+            .SingleOrDefault()?
+            .Template;
+        var deleteRoute = typeof(ReviewTasksController)
+            .GetMethod(nameof(ReviewTasksController.DeleteOutcomeSupplierAsync))?
+            .GetCustomAttributes<HttpDeleteAttribute>()
+            .SingleOrDefault()?
+            .Template;
+
+        Assert.Equal("{id:long}/outcome-ai-reparse", route);
+        Assert.Equal("{id:long}/outcome-suppliers", addRoute);
+        Assert.Equal("{id:long}/outcome-suppliers/{recordId:long}", updateRoute);
+        Assert.Equal("{id:long}/outcome-suppliers/{recordId:long}", deleteRoute);
+        Assert.NotNull(typeof(ReviewOutcomeAiReparseRequest).GetProperty(nameof(ReviewOutcomeAiReparseRequest.Prompt)));
+        Assert.NotNull(typeof(ReviewOutcomeSupplierRecordEditRequest).GetProperty(nameof(ReviewOutcomeSupplierRecordEditRequest.SupplierName)));
+        Assert.NotNull(typeof(ReviewOutcomeSupplierRecordEditRequest).GetProperty(nameof(ReviewOutcomeSupplierRecordEditRequest.AwardAmount)));
+        Assert.NotNull(typeof(OutcomeSupplierExtractJobPayload).GetProperty(nameof(OutcomeSupplierExtractJobPayload.ReviewerPrompt)));
+    }
+
+    [Fact]
+    public void BidOpsNoticeListContracts_ExposeNoticeTypeFiltersAndUpdatedAt()
+    {
+        var noticeSearchParameter = typeof(NoticesController)
+            .GetMethod(nameof(NoticesController.SearchAsync))?
+            .GetParameters()
+            .First()
+            .ParameterType;
+
+        Assert.Equal(typeof(NoticeSearchQuery), noticeSearchParameter);
+        Assert.NotNull(typeof(ReviewTaskSearchQuery).GetProperty(nameof(ReviewTaskSearchQuery.NoticeType)));
+        Assert.NotNull(typeof(NoticeSearchQuery).GetProperty(nameof(NoticeSearchQuery.NoticeType)));
+        Assert.NotNull(typeof(RawNoticeDto).GetProperty(nameof(RawNoticeDto.UpdatedAt)));
+        Assert.NotNull(typeof(ReviewTaskDto).GetProperty(nameof(ReviewTaskDto.UpdatedAt)));
+        Assert.NotNull(typeof(NoticeDto).GetProperty(nameof(NoticeDto.UpdatedAt)));
     }
 
     [Fact]
@@ -642,6 +1109,107 @@ public sealed class BidOpsModuleTests
     }
 
     [Fact]
+    public void BidOpsOutcomeSupplierExtractBuilder_ExtractsWrappedPdfCandidateRows()
+    {
+        const string text = """
+国网浙江电力 2026 年第三次服务公开招标采购中标候选人名单公示及否决原因公示
+（招标编号：ZBGW26-008）
+推荐中标候选人
+序
+号 分标编号 分标名
+称 包号 推荐中标人
+投标总价
+(万元人民
+币)/投标折
+扣率
+1 112610-900
+1002-0001
+电网工
+程施工-
+基建
+包 1 浙江省送变电工程有
+限公司
+10452.4907
+00
+满足招
+标文件
+要求
+综合排
+序第一
+名
+2 112610-900
+1002-0001
+电网工
+程施工-
+基建
+包 2 浙江大有实业有限公
+司
+2872.41300
+0
+满足招
+标文件
+要求
+综合排
+序第一
+名
+否决原因公示
+""";
+
+        var records = BidOpsOutcomeSupplierExtractBuilder.Extract(
+            "国网浙江电力2026年第三次服务公开招标采购中标候选人名单公示及否决原因公示",
+            "CandidateAnnouncement",
+            "https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-win/2606128520069185_2018060501171107",
+            new DateTime(2026, 6, 12, 13, 52, 44, DateTimeKind.Utc),
+            text,
+            323981982046490624);
+
+        Assert.Equal(2, records.Count);
+        Assert.All(records, x => Assert.Equal(BidOpsOutcomeTypes.Candidate, x.OutcomeType));
+        Assert.Contains(records, x =>
+            x.SupplierName == "浙江省送变电工程有限公司" &&
+            x.LotNo == "112610-9001002-0001" &&
+            x.LotName == "电网工程施工-基建" &&
+            x.PackageNo == "包 1" &&
+            x.Rank == 1 &&
+            x.AwardAmount == 104524907.00m);
+        Assert.Contains(records, x =>
+            x.SupplierName == "浙江大有实业有限公司" &&
+            x.PackageNo == "包 2" &&
+            x.AwardAmount == 28724130.00m);
+    }
+
+    [Fact]
+    public void BidOpsOutcomeSupplierExtractBuilder_ExtractsWrappedPdfAwardRows()
+    {
+        const string text = """
+国网测试项目成交结果公告
+采购编号：SGCC-RESULT-001
+序号 分标编号 分标名称 包号 成交人 成交金额（万元）
+1 9003001-9999
+综合服务
+包 2 北京乙科技有
+限公司
+123.4500
+采购人：国网测试单位
+""";
+
+        var record = Assert.Single(BidOpsOutcomeSupplierExtractBuilder.Extract(
+            "国网测试项目成交结果公告",
+            "AwardAnnouncement",
+            "https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-win/test",
+            null,
+            text,
+            1));
+
+        Assert.Equal(BidOpsOutcomeTypes.Awarded, record.OutcomeType);
+        Assert.Equal("北京乙科技有限公司", record.SupplierName);
+        Assert.Equal("9003001-9999", record.LotNo);
+        Assert.Equal("综合服务", record.LotName);
+        Assert.Equal("包 2", record.PackageNo);
+        Assert.Equal(1234500.00m, record.AwardAmount);
+    }
+
+    [Fact]
     public void BidOpsOutcomeSupplierTextParser_DoesNotTreatDiscountRateAsAwardAmount()
     {
         const string text = """
@@ -842,6 +1410,55 @@ resultValue.notice.BID_AGT: 山东诚信工程建设监理有限公司
         Assert.Equal("国网北京市电力公司2026年服务类第三次公开招标采购变更公告1", document.Title);
         Assert.Contains("CHG_NOTICE_CONT", document.Text);
         Assert.Equal(new DateTime(2026, 6, 11), document.PublishTime);
+    }
+
+    [Fact]
+    public void StateGridEcpWcmParser_PreservesWinHtmlTablesForOutcomeExtraction()
+    {
+        const string detailJson = """
+{
+  "successful": true,
+  "resultValue": {
+    "fileFlag": "0",
+    "notice": {
+      "PURPRJ_NAME": "国家电网有限公司2026年特高压项目第二次服务公开招标采购中标公告",
+      "CONT": "<p align=\"center\"><b>中标公告</b></p><p><b>（招标编号：</b><b>0711-26OTL04213025</b><b>）</b></p><table border=\"1\"><tbody><tr><td><p><b><span>分标编号</span></b></p></td><td><p><b><span>分标名称</span></b></p></td><td><p><b><span>包号</span></b></p></td><td><p><b><span>中标状态</span></b></p></td><td><p><b><span>项目单位</span></b></p></td><td><p><b><span>中标人</span></b></p></td></tr><tr><td><p><span>SG2674-9001-13028</span></p></td><td><p><span>变电站土建施工</span></p></td><td><p><span><span>包</span><span>1</span></span></p></td><td><p><span>中标</span></p></td><td><p><span>国网四川省电力公司</span></p></td><td><p><span>中国电建集团江西省水电工程局有限公司</span></p></td></tr></tbody></table>"
+    }
+  }
+}
+""";
+        var notice = new StateGridEcpApiNotice(
+            string.Empty,
+            "https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-win/2606128522123684_2018060501171111",
+            "doci-win",
+            "2018060501171111",
+            2606128522123684,
+            null,
+            null,
+            string.Empty,
+            string.Empty);
+
+        var document = StateGridEcpWcmParser.ParseNoticeDetail(detailJson, notice);
+        Assert.Contains("<table", document.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("分标编号", document.Html);
+        Assert.Contains("中国电建集团江西省水电工程局有限公司", document.Html);
+
+        var records = BidOpsAwardEvidenceParser.Extract([
+            new BidOpsEvidenceDocument(
+                new EvidenceSourceRef(1, null, "AwardAnnouncement", notice.DetailUrl, null, null, null, null, null),
+                document.Title,
+                "AwardAnnouncement",
+                document.PublishTime,
+                document.Text)
+        ]);
+
+        var record = Assert.Single(records);
+        Assert.Equal("0711-26OTL04213025", record.ProjectCode);
+        Assert.Equal("SG2674-9001-13028", record.LotNo);
+        Assert.Equal("变电站土建施工", record.LotName);
+        Assert.Equal("包1", record.PackageNo);
+        Assert.Equal("国网四川省电力公司", record.ProjectUnit);
+        Assert.Equal("中国电建集团江西省水电工程局有限公司", record.AwardedSupplierName);
     }
 
     [Fact]
@@ -1706,6 +2323,23 @@ resultValue.notice.bidagtName: 山东诚信工程建设监理有限公司
             .Replace(">", "&gt;", StringComparison.Ordinal)
             .Replace("\"", "&quot;", StringComparison.Ordinal)
             .Replace("'", "&apos;", StringComparison.Ordinal);
+    }
+
+    private sealed class StubHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _sendAsync;
+
+        public StubHttpMessageHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> sendAsync)
+        {
+            _sendAsync = sendAsync;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            return _sendAsync(request, cancellationToken);
+        }
     }
 
     private sealed record StateGridPackageRow(

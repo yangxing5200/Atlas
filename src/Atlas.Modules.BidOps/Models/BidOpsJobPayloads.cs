@@ -16,7 +16,8 @@ public sealed record ManualUrlImportJobPayload(
     string DetailUrl,
     string? Title,
     string? NoticeType,
-    string? TextContent)
+    string? TextContent,
+    bool ForceRefresh)
     : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
 
 public sealed record RawAttachmentBackfillJobPayload(
@@ -104,5 +105,6 @@ public sealed record OutcomeSupplierExtractJobPayload(
     long? StoreId,
     long UserId,
     string UserName,
-    long RawNoticeId)
+    long RawNoticeId,
+    string? ReviewerPrompt = null)
     : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);

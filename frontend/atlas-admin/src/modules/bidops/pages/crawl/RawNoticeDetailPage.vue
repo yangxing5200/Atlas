@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { RefreshRight } from '@element-plus/icons-vue'
+import { Download, RefreshRight } from '@element-plus/icons-vue'
 import { rawNoticesApi } from '@/api/bidops/rawNotices.api'
 import PageContainer from '@/shared/components/PageContainer.vue'
 import { formatDateTime } from '@/shared/utils/date'
@@ -21,6 +21,7 @@ const rawNotice = ref<RawNoticeDto | null>(null)
 const attachments = ref<RawAttachmentDto[]>([])
 const pipeline = ref<RawNoticePipelineDto | null>(null)
 const reparseLoading = ref(false)
+const reimportLoading = ref(false)
 
 async function loadData() {
   loading.value = true
@@ -59,12 +60,41 @@ async function reparseRawNotice() {
   }
 }
 
+async function reimportRawNotice() {
+  if (!rawNotice.value) return
+
+  reimportLoading.value = true
+  try {
+    const job = await rawNoticesApi.importUrl({
+      detailUrl: rawNotice.value.detailUrl,
+      sourceId: rawNotice.value.sourceId,
+      channelId: rawNotice.value.channelId || null,
+      title: rawNotice.value.title,
+      noticeType: rawNotice.value.noticeType,
+      forceRefresh: true,
+    })
+    ElMessage.success(job.alreadyExists ? `重新导入任务已存在：${job.jobId}` : `已提交重新导入任务：${job.jobId}`)
+    await loadData()
+  } finally {
+    reimportLoading.value = false
+  }
+}
+
 onMounted(loadData)
 </script>
 
 <template>
   <PageContainer title="原始公告详情" description="查看公告原文、来源地址和采集到的公开附件。">
     <template #actions>
+      <PermissionButton
+        v-if="rawNotice && !isApprovedRawNotice(rawNotice.status)"
+        :icon="Download"
+        :loading="reimportLoading"
+        :permission="BIDOPS_PERMISSIONS.CRAWL_IMPORT"
+        @click="reimportRawNotice"
+      >
+        重新导入
+      </PermissionButton>
       <PermissionButton
         v-if="rawNotice && !isApprovedRawNotice(rawNotice.status)"
         :icon="RefreshRight"
@@ -89,6 +119,7 @@ onMounted(loadData)
           <el-descriptions-item label="公告类型">{{ formatNoticeType(rawNotice.noticeType) }}</el-descriptions-item>
           <el-descriptions-item label="发布时间">{{ formatDateTime(rawNotice.publishTime) }}</el-descriptions-item>
           <el-descriptions-item label="抓取时间">{{ formatDateTime(rawNotice.fetchTime) }}</el-descriptions-item>
+          <el-descriptions-item label="最后更新时间">{{ formatDateTime(rawNotice.updatedAt || rawNotice.createdAt) }}</el-descriptions-item>
           <el-descriptions-item label="内容哈希">{{ rawNotice.contentHash }}</el-descriptions-item>
           <el-descriptions-item label="状态"><BidOpsStatusTag :value="rawNotice.status" kind="rawNotice" /></el-descriptions-item>
           <el-descriptions-item label="错误信息">{{ rawNotice.lastError || '-' }}</el-descriptions-item>

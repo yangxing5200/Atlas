@@ -75,6 +75,7 @@ public sealed class RawAttachmentBackfillJobHandler : IBackgroundJobHandler
                     candidate.ChannelId,
                     candidate.NoticeType,
                     context.Job.Id,
+                    forceRefresh: false,
                     ct);
                 if (!rawNoticeId.HasValue)
                 {

@@ -327,6 +327,80 @@ http://localhost:5173/bidops/crawl/raw-notices
 Use the `补齐历史附件` action after WebApi and Worker have both loaded the latest
 `Atlas.Modules.BidOps.dll`.
 
+## Reverse Lifecycle Closure Debug
+
+The first package-lifecycle debug entry starts from a public State Grid ECP
+`doci-win` result notice and tries to link backward:
+
+```text
+Award result notice -> candidate announcement -> tender/procurement announcement
+```
+
+The target sample URL is:
+
+```text
+https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-win/2606128522123684_2018060501171111
+```
+
+`doci-win` is treated as an award/win notice. The existing State Grid Worker
+adapter parses the URL as `doctype=doci-win`, `noticeId=2606128522123684`,
+`menuId=2018060501171111`, calls `index/getNoticeWin`, then reads win
+attachments through `index/getWinFile` and `downLoadWinFile`.
+
+Debug API:
+
+```http
+POST /api/bidops/lifecycle/debug/reverse-close-url
+Content-Type: application/json
+
+{
+  "url": "https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-win/2606128522123684_2018060501171111",
+  "resetDerivedData": false,
+  "persistEvidence": true
+}
+```
+
+If the RawNotice already exists and Worker has processed its attachments, the
+response includes `awardEvidence`, candidate/tender notice matches, extracted
+candidate/tender evidence, and `closures`. State Grid WCM HTML tables such as
+`分标编号 / 分标名称 / 包号 / 中标状态 / 项目单位 / 中标人` are parsed into
+award evidence fields including `lotNo`, `lotName`, `packageNo`, `projectUnit`,
+and `awardedSupplierName`. If the RawNotice is not available yet, the API
+enqueues the existing manual import job and returns a warning with the job id.
+WebApi does not crawl or download attachments synchronously.
+
+For an already known RawNotice id:
+
+```http
+POST /api/bidops/lifecycle/debug/reverse-close-raw-notice/{rawNoticeId}
+```
+
+The debug closure is DTO-only in this phase. It does not write supplier
+capability facts and does not create formal lifecycle tables. Missing links are
+reported explicitly, for example `candidate notice not found`, `tender notice
+not found`, `award amount missing`, `package number ambiguous`, or
+`parser template not matched`.
+
+Development-only derived-data cleanup is available through LocalSetup. It is
+dry-run by default and protects RawNotice, RawAttachment, CrawlSource,
+CrawlChannel, CrawlRunLog, attachment files, and supplier master data:
+
+```powershell
+dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -- reset-bidops-derived-data --dry-run `
+  --tenant-id 300001 `
+  --global "Server=localhost;Port=3306;Database=atlas_global_bidops;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;" `
+  --tenant "Server=localhost;Port=3306;Database=atlas_bidops_runtime;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;"
+```
+
+Only execute the delete in a development database:
+
+```powershell
+dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -- reset-bidops-derived-data --confirm `
+  --tenant-id 300001 `
+  --global "Server=localhost;Port=3306;Database=atlas_global_bidops;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;" `
+  --tenant "Server=localhost;Port=3306;Database=atlas_bidops_runtime;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;"
+```
+
 ## Attachment Text Extraction
 
 Attachment download and text extraction run only in Atlas.Worker. Binary files
@@ -347,6 +421,49 @@ Extracted attachment text is appended to the Raw notice text before deterministi
 or optional AI structured parsing. The parser still writes only Staging rows;
 human review is required before formal Notice/Package/Requirement records are
 created.
+
+## Optional DeepSeek Extraction
+
+DeepSeek is wired through the existing optional `BidOps:Ai:*` settings and is
+disabled by default outside the local BidOps profile. Worker is the important
+process to configure because it owns crawling, attachment text extraction,
+structured parsing, and outcome supplier lead extraction. Background job payloads
+do not carry API keys; the Worker resolves the key from its effective
+configuration or `DEEPSEEK_API_KEY` when the job executes.
+
+```powershell
+$env:BidOps__Ai__Enabled='true'
+$env:BidOps__Ai__Provider='DeepSeek'
+$env:BidOps__Ai__BaseUrl='https://api.deepseek.com'
+$env:BidOps__Ai__Model='deepseek-v4-flash'
+$env:BidOps__Ai__UseForNoticeStaging='true'
+$env:BidOps__Ai__UseForOutcomeSuppliers='true'
+$env:DEEPSEEK_API_KEY='...'
+dotnet run --project src\Atlas.Worker\Atlas.Worker.csproj
+```
+
+If `BidOps:Ai:Endpoint` is empty, DeepSeek requests are sent to
+`https://api.deepseek.com/chat/completions`. `BidOps:Ai:ApiKey` may be used
+instead of `DEEPSEEK_API_KEY` for local-only configuration files that are not
+committed. In `BidOpsLocal`, do not set `BidOps:Ai:ApiKey` to an empty string;
+that shadows lower-priority configuration and makes the Worker behave as if no
+token exists.
+
+DeepSeek outcome extraction is a correction/enrichment layer, not a business
+import shortcut. Deterministic result parsers run first; DeepSeek receives the
+public Raw notice text, extracted attachment text, and deterministic reference
+rows, then returns strict JSON supplier lead candidates. The Worker still writes
+only `bidops_outcome_supplier_record` lead rows and conservative buyer/supplier
+master-data links. `采购代理服务费` is stored separately in
+`ProcurementAgencyServiceFeeAmount` and is not counted as `AwardAmount`.
+
+When a reviewer submits a correction prompt from the review-detail page, the
+DeepSeek result is treated as the replacement set for that Raw notice's
+中标/候选明细. Existing outcome rows are deleted before the Worker persists the
+DeepSeek rows, and deterministic historical rows are not merged back into that
+prompted run. Reviewers can also manually add, edit, or delete outcome rows
+before approval; approval then syncs buyer/supplier master data from the edited
+rows.
 
 ## State Grid ECP Public Adapter
 
@@ -519,8 +636,58 @@ dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -
 Public outcome supplier leads come from explicit supplier/candidate/winner
 fields in public中标/成交/候选公示 and extracted attachments. They are stored in
 `bidops_outcome_supplier_record` as traceable leads with source and package
-snapshots. They do not automatically create supplier master data or contact
+snapshots. They conservatively upsert buyer and supplier master records by
+normalized public organization name, and link records through `BuyerId` and
+`SupplierId` where possible. They do not automatically create contacts,
+capabilities, qualification evidence, pursuit decisions, or external contact
 actions.
+
+Review detail shows the parsed buyer and public result supplier rows before
+approval under `采购方与厂家`. Approval is the review-scoped association gate:
+approving the review task creates or links the buyer and supplier master
+records if needed, records the buyer procurement history in
+`bidops_buyer_procurement_record`, and associates each outcome supplier row with
+the existing or newly-created supplier. If public outcome extraction already
+created or linked a master-data shell, approval refreshes it idempotently. The
+supplier shell records which public announcement created it through
+`CreatedFrom*` fields; existing suppliers keep the association through
+`LastOutcome*` and `OutcomeSupplierRecord.SupplierId`.
+
+If persisted outcome rows are missing on an older or failed parse review task,
+the review detail page builds a read-only preview from the stored Raw notice
+text/HTML plus already-extracted attachment text. The preview helps reviewers
+inspect buyers and suppliers before approval; it does not write master data or
+replace the Worker/approval extraction paths.
+
+Worker structured parsing attempts outcome supplier extraction even when the
+generic procurement staging parser cannot fully parse a result/candidate
+announcement. Approval also runs a missing-outcome-row check before the review
+transaction, so existing review tasks can still extract and link public award
+rows from the original Raw notice before creating buyer/supplier associations.
+
+Raw notice detail exposes two recovery actions for unapproved announcements:
+`重新导入` re-fetches the public URL in Worker with `forceRefresh=true`, refreshes
+stored Raw text/HTML even when the content hash is unchanged, forces attachment
+text extraction, and queues a fresh structured parse. `重解析` keeps the stored
+Raw content and only reruns attachment text extraction plus structured parsing.
+Both paths rebuild that RawNotice's outcome supplier lead rows, including any
+DeepSeek-assisted result rows when optional AI is enabled. Approved Raw notices
+are protected from force refresh in MVP.
+
+State Grid ECP crawling is exposed through `IBidOpsCrawlAdapter` and currently
+implemented by `StateGridEcpCrawlAdapter`. The adapter participates in
+source/detail URL validation and declares support for inline HTML announcement
+tables and public attachment discovery, including PDF, Office, Excel, and
+ZIP/RAR attachment metadata. Attachment binaries and extracted long text still
+go through `IBidOpsFileStore`; parsing still runs in Worker jobs before staging
+or outcome lead creation.
+
+State Grid WCM imports preserve the original `CONT` HTML as the Raw HTML
+snapshot when available. Word/WPS-style tables such as `p.MsoNormal` or
+`MsoNormalTable` are parsed by table headers. If a result table omits
+采购编号/招标编号 or 分标编号/分标名称, the parser uses regex fallback from the
+announcement正文 and the text immediately before the table; `流标`/`废标` rows are
+not converted into supplier outcome records.
 
 To backfill local public outcome supplier leads after improving extraction rules
 or attachment text extraction, use the authenticated API:
@@ -542,6 +709,17 @@ dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -
 ```
 
 Start Worker against the isolated Global DB:
+
+```powershell
+.\scripts\restart-worker.ps1
+```
+
+The restart script writes Worker output to `var\logs\worker-local.log` and sets
+`DOTNET_ENVIRONMENT=BidOpsLocal` / `ASPNETCORE_ENVIRONMENT=BidOpsLocal` before
+launching the process. If starting Worker manually, set those environment
+variables first; otherwise it may load the default RabbitMQ-enabled config.
+
+Manual equivalent:
 
 ```powershell
 $env:DOTNET_ENVIRONMENT='BidOpsLocal'

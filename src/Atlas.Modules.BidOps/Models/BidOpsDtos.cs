@@ -64,6 +64,8 @@ public sealed class RawNoticeDto
     public string TextContent { get; set; } = string.Empty;
     public RawNoticeStatus Status { get; set; }
     public string LastError { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+    public DateTime? UpdatedAt { get; set; }
 }
 
 public sealed class RawNoticePipelineDto
@@ -158,6 +160,7 @@ public sealed class ReviewTaskDto
     public int RequirementCount { get; set; }
     public int RejectRiskCount { get; set; }
     public DateTime CreatedAt { get; set; }
+    public DateTime? UpdatedAt { get; set; }
     public DateTime? ReviewedAt { get; set; }
 }
 
@@ -221,11 +224,29 @@ public sealed class RequirementStagingDto
     public decimal AiConfidence { get; set; }
 }
 
+public sealed class ReviewBuyerInfoDto
+{
+    public long? BuyerId { get; set; }
+    public string BuyerName { get; set; } = string.Empty;
+    public bool Exists { get; set; }
+    public bool WillCreateOnApproval { get; set; }
+    public string ProjectName { get; set; } = string.Empty;
+    public string ProjectCode { get; set; } = string.Empty;
+    public string NoticeTitle { get; set; } = string.Empty;
+    public string SourceUrl { get; set; } = string.Empty;
+    public string Region { get; set; } = string.Empty;
+    public DateTime? PublishTime { get; set; }
+    public decimal? BudgetAmount { get; set; }
+    public int PackageCount { get; set; }
+}
+
 public sealed class ReviewTaskDetailDto
 {
     public ReviewTaskDto Task { get; set; } = new();
     public RawNoticeDto? RawNotice { get; set; }
     public NoticeStagingDto? Notice { get; set; }
+    public ReviewBuyerInfoDto? Buyer { get; set; }
+    public List<OutcomeSupplierRecordDto> OutcomeSuppliers { get; set; } = [];
     public List<PackageStagingDto> Packages { get; set; } = [];
     public List<RawAttachmentDto> Attachments { get; set; } = [];
 }
@@ -244,6 +265,8 @@ public sealed class NoticeDto
     public DateTime? PublishTime { get; set; }
     public DateTime? BidDeadline { get; set; }
     public string Status { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+    public DateTime? UpdatedAt { get; set; }
 }
 
 public sealed class TenderPackageDto
@@ -426,6 +449,7 @@ public sealed class OutcomeSupplierRecordDto
     public long RawNoticeId { get; set; }
     public long? NoticeId { get; set; }
     public long? TenderPackageId { get; set; }
+    public long? BuyerId { get; set; }
     public long? SupplierId { get; set; }
     public string SourceUrl { get; set; } = string.Empty;
     public string NoticeTitle { get; set; } = string.Empty;
@@ -444,6 +468,7 @@ public sealed class OutcomeSupplierRecordDto
     public string OutcomeType { get; set; } = string.Empty;
     public int? Rank { get; set; }
     public decimal? AwardAmount { get; set; }
+    public decimal? ProcurementAgencyServiceFeeAmount { get; set; }
     public string Currency { get; set; } = string.Empty;
     public string EvidenceText { get; set; } = string.Empty;
     public decimal ExtractionConfidence { get; set; }
@@ -482,6 +507,7 @@ public sealed class PackageHistoricalSupplierLeadDto
     public string OutcomeType { get; set; } = string.Empty;
     public int? Rank { get; set; }
     public decimal? AwardAmount { get; set; }
+    public decimal? ProcurementAgencyServiceFeeAmount { get; set; }
     public string Currency { get; set; } = string.Empty;
     public string ProjectName { get; set; } = string.Empty;
     public string ProjectCode { get; set; } = string.Empty;
@@ -502,7 +528,19 @@ public sealed class OutcomeSupplierExtractionResultDto
     public bool IsOutcomeNotice { get; set; }
     public int ExtractedCount { get; set; }
     public int SavedCount { get; set; }
+    public int BuyerCreatedCount { get; set; }
+    public int BuyerUpdatedCount { get; set; }
+    public int SupplierCreatedCount { get; set; }
+    public int SupplierUpdatedCount { get; set; }
     public string Message { get; set; } = string.Empty;
+}
+
+public sealed class BidOpsOrganizationMasterDataSyncResult
+{
+    public int BuyerCreatedCount { get; set; }
+    public int BuyerUpdatedCount { get; set; }
+    public int SupplierCreatedCount { get; set; }
+    public int SupplierUpdatedCount { get; set; }
 }
 
 public sealed class OutcomeSupplierBackfillEnqueueDto

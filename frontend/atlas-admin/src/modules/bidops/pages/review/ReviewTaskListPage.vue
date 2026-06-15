@@ -9,19 +9,25 @@ import { useTableQuery } from '@/shared/composables/useTableQuery'
 import { formatDateTime } from '@/shared/utils/date'
 import BidOpsStatusTag from '../../components/BidOpsStatusTag.vue'
 import type { ReviewTaskDto, ReviewTaskStatus } from '../../types'
-import { formatNoticeType, reviewTaskStatusOptions } from '../../utils/display'
+import { formatNoticeType, noticeTypeOptions, reviewTaskStatusOptions } from '../../utils/display'
 
 interface ReviewTaskListQuery {
   keyword: string
   status?: ReviewTaskStatus | ''
+  noticeType?: string
   pageIndex: number
   pageSize: number
 }
 
 const router = useRouter()
 const table = useTableQuery<ReviewTaskDto, ReviewTaskListQuery>(
-  (params) => reviewTasksApi.search({ ...params, status: params.status || undefined }),
-  { keyword: '', status: '', pageIndex: 1, pageSize: 20 },
+  (params) =>
+    reviewTasksApi.search({
+      ...params,
+      status: params.status || undefined,
+      noticeType: params.noticeType || undefined,
+    }),
+  { keyword: '', status: '', noticeType: '', pageIndex: 1, pageSize: 20 },
 )
 
 function projectTitle(row: ReviewTaskDto) {
@@ -46,6 +52,11 @@ function confidencePercent(value: number) {
       <el-form-item label="状态">
         <el-select v-model="table.query.status" clearable placeholder="全部" style="width: 190px">
           <el-option v-for="item in reviewTaskStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="公告类型">
+        <el-select v-model="table.query.noticeType" clearable filterable placeholder="全部" style="width: 210px">
+          <el-option v-for="item in noticeTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
       </el-form-item>
     </SearchForm>
@@ -86,6 +97,7 @@ function confidencePercent(value: number) {
       </el-table-column>
       <el-table-column label="状态" width="120"><template #default="{ row }"><BidOpsStatusTag :value="row.status" kind="reviewTask" /></template></el-table-column>
       <el-table-column label="创建时间" width="170"><template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template></el-table-column>
+      <el-table-column label="最后更新时间" width="170"><template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template></el-table-column>
       <el-table-column label="操作" width="120" fixed="right">
         <template #default="{ row }">
           <el-button size="small" type="primary" plain :icon="View" @click="router.push(`/bidops/review/tasks/${row.id}`)">审核</el-button>

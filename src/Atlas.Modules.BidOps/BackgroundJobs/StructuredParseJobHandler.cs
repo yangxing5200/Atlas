@@ -1,3 +1,5 @@
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using Atlas.BackgroundTasks;
 using Atlas.Core.Services;
 using Atlas.Modules.BidOps.Models;
@@ -8,6 +10,11 @@ namespace Atlas.Modules.BidOps.BackgroundJobs;
 
 public sealed class StructuredParseJobHandler : IBackgroundJobHandler
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
     private readonly IExecutionIdentityAccessor _identityAccessor;
     private readonly IBidOpsAiParsingService _parsing;
     private readonly IBidOpsOutcomeSupplierExtractionService _outcomeSupplierExtraction;
@@ -34,26 +41,46 @@ public sealed class StructuredParseJobHandler : IBackgroundJobHandler
         var payload = context.GetPayload<StructuredParseJobPayload>();
         using var identity = BidOpsJobIdentity.Begin(_identityAccessor, payload);
 
-        var reviewTaskId = await _parsing.ParseRawNoticeAsync(payload.RawNoticeId, ct);
+        long reviewTaskId;
+        try
+        {
+            reviewTaskId = await _parsing.ParseRawNoticeAsync(payload.RawNoticeId, ct);
+        }
+        catch
+        {
+            await TryExtractOutcomeSuppliersAsync(payload.RawNoticeId, ct);
+            throw;
+        }
+
         _logger.LogInformation(
             "BidOps structured parse generated review task {ReviewTaskId} for raw notice {RawNoticeId}.",
             reviewTaskId,
             payload.RawNoticeId);
 
+        var outcome = await TryExtractOutcomeSuppliersAsync(payload.RawNoticeId, ct);
+        return BackgroundJobExecutionResult.Success(JsonSerializer.Serialize(new
+        {
+            rawNoticeId = payload.RawNoticeId,
+            reviewTaskId,
+            outcomeSupplierExtraction = outcome
+        }, JsonOptions));
+    }
+
+    private async Task<OutcomeSupplierExtractionResultDto?> TryExtractOutcomeSuppliersAsync(
+        long rawNoticeId,
+        CancellationToken ct)
+    {
         try
         {
-            var outcome = await _outcomeSupplierExtraction.ExtractRawNoticeAsync(payload.RawNoticeId, ct);
-            return BackgroundJobExecutionResult.Success(
-                $"reviewTaskId={reviewTaskId}; outcomeSupplierRecords={outcome.SavedCount}");
+            return await _outcomeSupplierExtraction.ExtractRawNoticeAsync(rawNoticeId, ct);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(
                 ex,
                 "BidOps structured parse could not extract outcome supplier records for raw notice {RawNoticeId}.",
-                payload.RawNoticeId);
+                rawNoticeId);
+            return null;
         }
-
-        return BackgroundJobExecutionResult.Success($"reviewTaskId={reviewTaskId}");
     }
 }

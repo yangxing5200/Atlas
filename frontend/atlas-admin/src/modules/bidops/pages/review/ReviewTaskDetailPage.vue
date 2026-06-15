@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete, Edit, Plus, RefreshRight } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
+import { rawNoticesApi } from '@/api/bidops/rawNotices.api'
 import { reviewTasksApi } from '@/api/bidops/reviewTasks.api'
 import PageContainer from '@/shared/components/PageContainer.vue'
 import { useRequest } from '@/shared/composables/useRequest'
@@ -10,26 +12,91 @@ import { formatMoney } from '@/shared/utils/money'
 import BidOpsStatusTag from '../../components/BidOpsStatusTag.vue'
 import RawAttachmentTable from '../../components/RawAttachmentTable.vue'
 import RawNoticePreview from '../../components/RawNoticePreview.vue'
+import PermissionButton from '../../components/PermissionButton.vue'
 import RequirementTable from '../../components/RequirementTable.vue'
 import ReviewDecisionPanel from '../../components/ReviewDecisionPanel.vue'
-import type { PackageStagingDto, RequirementStagingDto, ReviewTaskDetailDto } from '../../types'
-import { formatCategory, formatNoticeType, formatPackageNo } from '../../utils/display'
+import { BIDOPS_PERMISSIONS } from '../../constants'
+import type {
+  OutcomeSupplierRecordDto,
+  PackageStagingDto,
+  RequirementStagingDto,
+  ReviewOutcomeSupplierRecordEditRequest,
+  ReviewTaskDetailDto,
+} from '../../types'
+import { formatCategory, formatCommonStatus, formatNoticeType, formatPackageNo } from '../../utils/display'
+
+interface OutcomeEditForm {
+  projectName: string
+  projectCode: string
+  buyerName: string
+  lotNo: string
+  lotName: string
+  packageNo: string
+  packageName: string
+  category: string
+  supplierName: string
+  outcomeType: string
+  rank: number | null
+  awardAmountWan: number | null
+  procurementAgencyServiceFeeAmount: number | null
+  evidenceText: string
+}
 
 const route = useRoute()
 const router = useRouter()
 const detail = ref<ReviewTaskDetailDto | null>(null)
 const loading = ref(false)
 const decisionRequest = useRequest()
+const rawReparseRequest = useRequest()
+const outcomeAiReparseRequest = useRequest()
+const outcomeEditRequest = useRequest()
+const outcomeAiPrompt = ref('')
+const outcomeAiJobId = ref('')
+const rawReparseJobId = ref('')
+const outcomeEditVisible = ref(false)
+const outcomeEditMode = ref<'create' | 'edit'>('create')
+const editingOutcomeId = ref('')
+const outcomeEditForm = ref<OutcomeEditForm>(createEmptyOutcomeForm())
+const detailRefreshAttempts = ref(0)
+let detailRefreshTimer: number | undefined
 const taskId = computed(() => String(route.params.id || ''))
 const task = computed(() => detail.value?.task)
 const notice = computed(() => detail.value?.notice)
 const rawNotice = computed(() => detail.value?.rawNotice)
 const rawText = computed(() => rawNotice.value?.textContent || rawNotice.value?.textPreview || '')
+const buyer = computed(() => detail.value?.buyer)
+const outcomeSuppliers = computed(() => detail.value?.outcomeSuppliers || [])
 const packages = computed(() => detail.value?.packages || [])
 const attachments = computed(() => detail.value?.attachments || [])
 const allRequirements = computed(() => packages.value.flatMap((pkg) => pkg.requirements || []))
 const rejectRiskCount = computed(() => allRequirements.value.filter((item) => item.isRejectRisk).length)
 const mandatoryCount = computed(() => allRequirements.value.filter((item) => item.isMandatory).length)
+const noticeKind = computed(() => detectNoticeKind())
+const awardRows = computed(() =>
+  outcomeSuppliers.value
+    .slice()
+    .sort((left, right) => compareOutcomeRows(left, right)),
+)
+const candidateRows = computed(() =>
+  outcomeSuppliers.value
+    .slice()
+    .sort((left, right) => compareOutcomeRows(left, right)),
+)
+const procurementPackages = computed(() =>
+  packages.value
+    .slice()
+    .sort((left, right) => compareText(packageSortKey(left), packageSortKey(right))),
+)
+const canAdjustOutcomeAi = computed(() => Boolean(notice.value) && (noticeKind.value === 'award' || noticeKind.value === 'candidate'))
+const canEditOutcomeRows = computed(() =>
+  Boolean(notice.value && rawNotice.value && !isApprovedRawNoticeStatus(rawNotice.value.status) && isEditableReviewTaskStatus(task.value?.status)),
+)
+const showGenericOutcomeLeads = computed(() => noticeKind.value === 'other' && outcomeSuppliers.value.length > 0)
+const outcomeTypeOptions = [
+  { label: '中标/成交', value: 'Awarded' },
+  { label: '候选', value: 'Candidate' },
+  { label: '入围', value: 'Shortlisted' },
+]
 
 async function loadData() {
   loading.value = true
@@ -65,13 +132,344 @@ function packageTitle(pkg: PackageStagingDto) {
   return pkg.packageName || formatPackageNo(pkg.packageNo) || pkg.lotName || '未命名包件'
 }
 
+function packageSubtitle(pkg: PackageStagingDto) {
+  return [pkg.lotName || '未分标段', formatCategory(pkg.category)]
+    .filter((item) => item && item !== '-')
+    .join(' · ')
+}
+
 function packageRequirements(pkg: PackageStagingDto): RequirementStagingDto[] {
   return pkg.requirements || []
 }
 
+function organizationState(exists?: boolean, willCreate?: boolean) {
+  if (exists) return '已存在'
+  if (willCreate) return '审核通过后创建'
+  return '待补录'
+}
+
+function supplierState(row: OutcomeSupplierRecordDto) {
+  return row.supplierId ? '已关联厂家' : '审核通过后创建/关联'
+}
+
+function isEditableReviewTaskStatus(status?: unknown) {
+  return status !== 3 && status !== '3' && status !== 'Approved' && status !== 'Ignored'
+}
+
+function isApprovedRawNoticeStatus(status?: unknown) {
+  return status === 3 || status === '3' || status === 'Approved'
+}
+
+function detectNoticeKind() {
+  const type = String(notice.value?.noticeType || task.value?.noticeType || rawNotice.value?.noticeType || '')
+  const signal = [
+    type,
+    notice.value?.projectName,
+    task.value?.taskTitle,
+    rawNotice.value?.title,
+    rawText.value.slice(0, 600),
+  ].join(' ')
+
+  if (type === 'CandidateAnnouncement' || /推荐.*(?:中标|成交)候选人|(?:中标|成交)候选人/.test(signal)) {
+    return 'candidate'
+  }
+
+  if (
+    type === 'AwardAnnouncement' ||
+    type === 'ResultAnnouncement' ||
+    /(?:中标|成交)(?:结果)?公告|(?:中标|成交)结果/.test(signal)
+  ) {
+    return 'award'
+  }
+
+  if (
+    type === 'ProcurementAnnouncement' ||
+    type === 'TenderAnnouncement' ||
+    /(?:采购|招标)公告|竞争性谈判|询价采购|公开招标/.test(signal)
+  ) {
+    return 'procurement'
+  }
+
+  return 'other'
+}
+
+function formatRank(value?: number | null) {
+  return value ? String(value) : '-'
+}
+
+function formatWanYuan(value?: number | null) {
+  const number = Number(value)
+  if (value === null || value === undefined || Number.isNaN(number)) return '-'
+
+  return (number / 10000).toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
+  })
+}
+
+function outcomeProjectCode(row: OutcomeSupplierRecordDto) {
+  return displayText(row.projectCode, notice.value?.projectCode, task.value?.projectCode)
+}
+
+function outcomeLotNo(row: OutcomeSupplierRecordDto) {
+  const pkg = matchedPackageForOutcome(row)
+  return displayText(row.lotNo, pkg?.lotNo)
+}
+
+function outcomeLotName(row: OutcomeSupplierRecordDto) {
+  const pkg = matchedPackageForOutcome(row)
+  return displayText(row.lotName, pkg?.lotName)
+}
+
+function outcomePackageNo(row: OutcomeSupplierRecordDto) {
+  const pkg = matchedPackageForOutcome(row)
+  return formatPackageNo(displayText(row.packageNo, pkg?.packageNo))
+}
+
+function outcomePackageName(row: OutcomeSupplierRecordDto) {
+  const pkg = matchedPackageForOutcome(row)
+  return displayText(row.packageName, pkg?.packageName)
+}
+
+function outcomeReviewSummary(row: OutcomeSupplierRecordDto) {
+  return displayText(row.evidenceText)
+}
+
+function matchedPackageForOutcome(row: OutcomeSupplierRecordDto) {
+  const packageNo = normalizeCode(row.packageNo)
+  const lotNo = normalizeCode(row.lotNo)
+  const packageName = normalizeText(row.packageName)
+
+  return packages.value.find((pkg) => {
+    if (packageNo && normalizeCode(pkg.packageNo) === packageNo) return true
+    if (lotNo && normalizeCode(pkg.lotNo) === lotNo) return true
+    if (packageName) {
+      const candidate = normalizeText(pkg.packageName)
+      return candidate.includes(packageName) || packageName.includes(candidate)
+    }
+    return false
+  })
+}
+
+function compareOutcomeRows(left: OutcomeSupplierRecordDto, right: OutcomeSupplierRecordDto) {
+  const packageCompare = compareText(outcomeSortKey(left), outcomeSortKey(right))
+  if (packageCompare !== 0) return packageCompare
+  return Number(left.rank || 999) - Number(right.rank || 999)
+}
+
+function outcomeSortKey(row: OutcomeSupplierRecordDto) {
+  return [
+    normalizeCode(row.lotNo),
+    normalizeCode(row.packageNo),
+    normalizeText(row.packageName),
+    normalizeText(row.supplierName),
+  ].join('|')
+}
+
+function packageSortKey(pkg: PackageStagingDto) {
+  return [normalizeCode(pkg.lotNo), normalizeCode(pkg.packageNo), normalizeText(pkg.packageName)].join('|')
+}
+
+function compareText(left: string, right: string) {
+  return left.localeCompare(right, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' })
+}
+
+function normalizeCode(value?: string | null) {
+  return normalizeText(value).replace(/[\s:：,，;；]/g, '').toUpperCase()
+}
+
+function normalizeText(value?: string | null) {
+  return String(value || '').trim()
+}
+
+function displayText(...values: Array<string | null | undefined>) {
+  for (const value of values) {
+    const text = normalizeText(value)
+    if (text && text !== '-' && text !== '待补录') return text
+  }
+
+  return '-'
+}
+
+function createEmptyOutcomeForm(): OutcomeEditForm {
+  return {
+    projectName: '',
+    projectCode: '',
+    buyerName: '',
+    lotNo: '',
+    lotName: '',
+    packageNo: '',
+    packageName: '',
+    category: '',
+    supplierName: '',
+    outcomeType: 'Candidate',
+    rank: null,
+    awardAmountWan: null,
+    procurementAgencyServiceFeeAmount: null,
+    evidenceText: '',
+  }
+}
+
+function openJob(jobId: string) {
+  if (!jobId) return
+  void router.push(`/bidops/operations/jobs/${jobId}`)
+}
+
+function defaultOutcomeType() {
+  return noticeKind.value === 'award' ? 'Awarded' : 'Candidate'
+}
+
+function openCreateOutcome() {
+  if (!canEditOutcomeRows.value) return
+
+  outcomeEditMode.value = 'create'
+  editingOutcomeId.value = ''
+  outcomeEditForm.value = {
+    ...createEmptyOutcomeForm(),
+    projectName: notice.value?.projectName || task.value?.projectName || rawNotice.value?.title || '',
+    projectCode: notice.value?.projectCode || task.value?.projectCode || '',
+    buyerName: notice.value?.buyerName || task.value?.buyerName || '',
+    outcomeType: defaultOutcomeType(),
+  }
+  outcomeEditVisible.value = true
+}
+
+function openEditOutcome(row: OutcomeSupplierRecordDto) {
+  if (!canEditOutcomeRows.value) return
+
+  const id = String(row.id || '')
+  editingOutcomeId.value = id && id !== '0' ? id : ''
+  outcomeEditMode.value = editingOutcomeId.value ? 'edit' : 'create'
+  outcomeEditForm.value = {
+    projectName: row.projectName || notice.value?.projectName || task.value?.projectName || '',
+    projectCode: row.projectCode || notice.value?.projectCode || task.value?.projectCode || '',
+    buyerName: row.buyerName || notice.value?.buyerName || task.value?.buyerName || '',
+    lotNo: row.lotNo || '',
+    lotName: row.lotName || '',
+    packageNo: row.packageNo || '',
+    packageName: row.packageName || '',
+    category: row.category || '',
+    supplierName: row.supplierName || '',
+    outcomeType: row.outcomeType || defaultOutcomeType(),
+    rank: row.rank ?? null,
+    awardAmountWan: yuanToWan(row.awardAmount),
+    procurementAgencyServiceFeeAmount: row.procurementAgencyServiceFeeAmount ?? null,
+    evidenceText: row.evidenceText || '',
+  }
+  outcomeEditVisible.value = true
+}
+
+async function submitOutcomeEdit() {
+  const form = outcomeEditForm.value
+  if (!form.supplierName.trim()) {
+    ElMessage.warning('请填写厂家名称')
+    return
+  }
+
+  const payload = buildOutcomeEditPayload(form)
+  await outcomeEditRequest.run(() =>
+    editingOutcomeId.value
+      ? reviewTasksApi.updateOutcomeSupplier(taskId.value, editingOutcomeId.value, payload)
+      : reviewTasksApi.addOutcomeSupplier(taskId.value, payload),
+  )
+  ElMessage.success(editingOutcomeId.value ? '明细已更新' : '明细已新增')
+  outcomeEditVisible.value = false
+  await loadData()
+}
+
+async function deleteOutcome(row: OutcomeSupplierRecordDto) {
+  const id = String(row.id || '')
+  if (!canEditOutcomeRows.value || !id || id === '0') return
+
+  await ElMessageBox.confirm(`确认删除“${row.supplierName || '该厂家'}”这条解析明细？`, '删除解析明细', {
+    type: 'warning',
+    confirmButtonText: '删除',
+    cancelButtonText: '取消',
+  })
+  await outcomeEditRequest.run(() => reviewTasksApi.deleteOutcomeSupplier(taskId.value, id))
+  ElMessage.success('明细已删除')
+  await loadData()
+}
+
+function buildOutcomeEditPayload(form: OutcomeEditForm): ReviewOutcomeSupplierRecordEditRequest {
+  return {
+    projectName: form.projectName.trim(),
+    projectCode: form.projectCode.trim(),
+    buyerName: form.buyerName.trim(),
+    lotNo: form.lotNo.trim(),
+    lotName: form.lotName.trim(),
+    packageNo: form.packageNo.trim(),
+    packageName: form.packageName.trim(),
+    category: form.category.trim(),
+    supplierName: form.supplierName.trim(),
+    outcomeType: form.outcomeType,
+    rank: form.rank,
+    awardAmount: wanToYuan(form.awardAmountWan),
+    procurementAgencyServiceFeeAmount: form.procurementAgencyServiceFeeAmount,
+    evidenceText: form.evidenceText.trim(),
+  }
+}
+
+function yuanToWan(value?: number | null) {
+  const number = Number(value)
+  if (value === null || value === undefined || Number.isNaN(number)) return null
+  return Number((number / 10000).toFixed(6))
+}
+
+function wanToYuan(value?: number | null) {
+  const number = Number(value)
+  if (value === null || value === undefined || Number.isNaN(number)) return null
+  return Number((number * 10000).toFixed(2))
+}
+
+async function submitOutcomeAiReparse() {
+  const prompt = outcomeAiPrompt.value.trim()
+  if (!prompt) {
+    ElMessage.warning('请输入给 DeepSeek 的调整提示词')
+    return
+  }
+
+  const job = await outcomeAiReparseRequest.run(() =>
+    reviewTasksApi.outcomeAiReparse(taskId.value, { prompt }),
+  )
+  outcomeAiJobId.value = String(job.jobId || '')
+  ElMessage.success(`已提交 DeepSeek 重新解析任务：${outcomeAiJobId.value}`)
+  scheduleDetailRefresh()
+}
+
+async function reparseRawNotice() {
+  if (!rawNotice.value || isApprovedRawNoticeStatus(rawNotice.value.status)) return
+
+  const job = await rawReparseRequest.run(() =>
+    rawNoticesApi.reparse(rawNotice.value!.id, { reason: 'Review task detail page' }),
+  )
+  rawReparseJobId.value = String(job.jobId || '')
+  ElMessage.success(job.alreadyExists ? `重解析任务已存在：${rawReparseJobId.value}` : `已提交重解析任务：${rawReparseJobId.value}`)
+  scheduleDetailRefresh()
+}
+
+function scheduleDetailRefresh() {
+  detailRefreshAttempts.value = 0
+  queueDetailRefresh()
+}
+
+function queueDetailRefresh() {
+  if (detailRefreshTimer) {
+    window.clearTimeout(detailRefreshTimer)
+  }
+
+  detailRefreshTimer = window.setTimeout(async () => {
+    detailRefreshAttempts.value += 1
+    await loadData()
+    if (detailRefreshAttempts.value < 4) {
+      queueDetailRefresh()
+    }
+  }, 4000)
+}
+
 async function approve(remark: string) {
   try {
-    await ElMessageBox.confirm('审核通过后将创建正式公告、包件和要求项。', '审核通过', {
+    await ElMessageBox.confirm('审核通过后将创建正式公告、包件、要求项，并同步采购方/厂家主数据与中标关联。', '审核通过', {
       confirmButtonText: '通过',
       cancelButtonText: '取消',
       type: 'warning',
@@ -100,10 +498,28 @@ async function ignore(remark: string) {
 }
 
 onMounted(loadData)
+
+onUnmounted(() => {
+  if (detailRefreshTimer) {
+    window.clearTimeout(detailRefreshTimer)
+  }
+})
 </script>
 
 <template>
   <PageContainer title="审核详情" description="核对公告原文、解析字段、包件和要求项；确认无误后才写入正式业务表。">
+    <template #actions>
+      <PermissionButton
+        v-if="rawNotice && !isApprovedRawNoticeStatus(rawNotice.status)"
+        :icon="RefreshRight"
+        :loading="rawReparseRequest.loading"
+        :permission="BIDOPS_PERMISSIONS.REVIEW_APPROVE"
+        @click="reparseRawNotice"
+      >
+        重新解析
+      </PermissionButton>
+    </template>
+
     <el-skeleton v-if="loading" :rows="12" animated />
     <el-empty v-else-if="!detail" description="未找到审核任务" />
     <template v-else>
@@ -152,6 +568,7 @@ onMounted(loadData)
             <el-descriptions-item label="公告类型">{{ formatNoticeType(rawNotice?.noticeType) }}</el-descriptions-item>
             <el-descriptions-item label="发布时间">{{ formatDateTime(rawNotice?.publishTime) }}</el-descriptions-item>
             <el-descriptions-item label="采集时间">{{ formatDateTime(rawNotice?.fetchTime) }}</el-descriptions-item>
+            <el-descriptions-item label="最后更新时间">{{ formatDateTime(rawNotice?.updatedAt || rawNotice?.createdAt) }}</el-descriptions-item>
             <el-descriptions-item label="采集状态"><BidOpsStatusTag :value="rawNotice?.status" kind="rawNotice" /></el-descriptions-item>
             <el-descriptions-item label="错误信息">{{ rawNotice?.lastError || '-' }}</el-descriptions-item>
           </el-descriptions>
@@ -166,7 +583,10 @@ onMounted(loadData)
         <section class="content-panel">
           <div class="panel-heading">
             <h2>解析结果</h2>
-            <span>审核后写入正式公告、包件和要求项</span>
+            <el-link v-if="rawReparseJobId" type="primary" @click="openJob(rawReparseJobId)">
+              重解析任务 {{ rawReparseJobId }}
+            </el-link>
+            <span v-else>审核后写入正式公告、包件、要求项，并同步采购方/厂家关联</span>
           </div>
           <el-alert
             v-if="!notice"
@@ -190,13 +610,342 @@ onMounted(loadData)
             <el-descriptions-item label="复核状态"><BidOpsStatusTag :value="notice.reviewStatus" kind="review" /></el-descriptions-item>
           </el-descriptions>
 
-          <div class="package-list">
+          <section v-if="canAdjustOutcomeAi" class="ai-reparse-panel">
+            <div class="ai-reparse-heading">
+              <div>
+                <h2>DeepSeek 解析调整</h2>
+                <p>通过补充提示词重跑当前公告的中标/候选明细。</p>
+              </div>
+              <el-link v-if="outcomeAiJobId" type="primary" @click="openJob(outcomeAiJobId)">
+                任务 {{ outcomeAiJobId }}
+              </el-link>
+            </div>
+            <el-input
+              v-model="outcomeAiPrompt"
+              type="textarea"
+              :rows="4"
+              maxlength="4000"
+              show-word-limit
+              placeholder="例如：采购编号在正文“采购编号：XXXX”中；表格第一列是包号，第二列是推荐的成交候选人；最终报价单位是万元；不要把分标编号当采购编号。"
+            />
+            <div class="ai-reparse-actions">
+              <el-button type="primary" :loading="outcomeAiReparseRequest.loading" @click="submitOutcomeAiReparse">
+                让 DeepSeek 重新解析
+              </el-button>
+              <el-button :disabled="loading" @click="loadData">刷新数据</el-button>
+            </div>
+          </section>
+
+          <template v-if="noticeKind === 'award'">
+            <div class="section-heading">
+              <h2 class="section-title">中标/成交明细</h2>
+              <PermissionButton
+                v-if="canEditOutcomeRows"
+                size="small"
+                type="primary"
+                plain
+                :icon="Plus"
+                :permission="BIDOPS_PERMISSIONS.REVIEW_APPROVE"
+                @click="openCreateOutcome"
+              >
+                新增明细
+              </PermissionButton>
+            </div>
+            <el-table :data="awardRows" border size="small" empty-text="未识别到中标/成交明细">
+              <el-table-column label="采购编号" min-width="150" show-overflow-tooltip>
+                <template #default="{ row }">{{ outcomeProjectCode(row) }}</template>
+              </el-table-column>
+              <el-table-column label="分标编号" min-width="150" show-overflow-tooltip>
+                <template #default="{ row }">{{ outcomeLotNo(row) }}</template>
+              </el-table-column>
+              <el-table-column label="分标名称" min-width="150" show-overflow-tooltip>
+                <template #default="{ row }">{{ outcomeLotName(row) }}</template>
+              </el-table-column>
+              <el-table-column label="包号" width="110" show-overflow-tooltip>
+                <template #default="{ row }">{{ outcomePackageNo(row) }}</template>
+              </el-table-column>
+              <el-table-column label="中标状态" width="110">
+                <template #default="{ row }">{{ formatCommonStatus(row.outcomeType) }}</template>
+              </el-table-column>
+              <el-table-column prop="supplierName" label="成交供应商" min-width="210" show-overflow-tooltip />
+              <el-table-column v-if="canEditOutcomeRows" label="操作" width="140" fixed="right">
+                <template #default="{ row }">
+                  <PermissionButton
+                    text
+                    size="small"
+                    :icon="Edit"
+                    :permission="BIDOPS_PERMISSIONS.REVIEW_APPROVE"
+                    @click="openEditOutcome(row)"
+                  >
+                    编辑
+                  </PermissionButton>
+                  <PermissionButton
+                    v-if="String(row.id || '') !== '0'"
+                    text
+                    size="small"
+                    type="danger"
+                    :icon="Delete"
+                    :permission="BIDOPS_PERMISSIONS.REVIEW_APPROVE"
+                    @click="deleteOutcome(row)"
+                  >
+                    删除
+                  </PermissionButton>
+                </template>
+              </el-table-column>
+            </el-table>
+          </template>
+
+          <template v-else-if="noticeKind === 'candidate'">
+            <div class="section-heading">
+              <h2 class="section-title">候选人明细</h2>
+              <PermissionButton
+                v-if="canEditOutcomeRows"
+                size="small"
+                type="primary"
+                plain
+                :icon="Plus"
+                :permission="BIDOPS_PERMISSIONS.REVIEW_APPROVE"
+                @click="openCreateOutcome"
+              >
+                新增明细
+              </PermissionButton>
+            </div>
+            <el-table :data="candidateRows" border size="small" empty-text="未识别到候选人明细">
+              <el-table-column label="采购编号" min-width="150" show-overflow-tooltip>
+                <template #default="{ row }">{{ outcomeProjectCode(row) }}</template>
+              </el-table-column>
+              <el-table-column label="分标编号" min-width="150" show-overflow-tooltip>
+                <template #default="{ row }">{{ outcomeLotNo(row) }}</template>
+              </el-table-column>
+              <el-table-column label="分标名称" min-width="150" show-overflow-tooltip>
+                <template #default="{ row }">{{ outcomeLotName(row) }}</template>
+              </el-table-column>
+              <el-table-column label="包号" width="110" show-overflow-tooltip>
+                <template #default="{ row }">{{ outcomePackageNo(row) }}</template>
+              </el-table-column>
+              <el-table-column label="包名称" min-width="190" show-overflow-tooltip>
+                <template #default="{ row }">{{ outcomePackageName(row) }}</template>
+              </el-table-column>
+              <el-table-column label="排名" width="90">
+                <template #default="{ row }">{{ formatRank(row.rank) }}</template>
+              </el-table-column>
+              <el-table-column prop="supplierName" label="推荐的成交候选人" min-width="210" show-overflow-tooltip />
+              <el-table-column label="最终报价（万元）" width="150" align="right">
+                <template #default="{ row }">{{ formatWanYuan(row.awardAmount) }}</template>
+              </el-table-column>
+              <el-table-column label="评审情况" min-width="260" show-overflow-tooltip>
+                <template #default="{ row }">{{ outcomeReviewSummary(row) }}</template>
+              </el-table-column>
+              <el-table-column v-if="canEditOutcomeRows" label="操作" width="140" fixed="right">
+                <template #default="{ row }">
+                  <PermissionButton
+                    text
+                    size="small"
+                    :icon="Edit"
+                    :permission="BIDOPS_PERMISSIONS.REVIEW_APPROVE"
+                    @click="openEditOutcome(row)"
+                  >
+                    编辑
+                  </PermissionButton>
+                  <PermissionButton
+                    v-if="String(row.id || '') !== '0'"
+                    text
+                    size="small"
+                    type="danger"
+                    :icon="Delete"
+                    :permission="BIDOPS_PERMISSIONS.REVIEW_APPROVE"
+                    @click="deleteOutcome(row)"
+                  >
+                    删除
+                  </PermissionButton>
+                </template>
+              </el-table-column>
+            </el-table>
+
+            <h2 class="section-title">对应包件明细</h2>
+            <el-empty v-if="procurementPackages.length === 0" description="没有解析到对应包件" />
+            <template v-else>
+              <el-table :data="procurementPackages" border size="small" empty-text="没有解析到对应包件">
+                <el-table-column label="分标编号" min-width="130" show-overflow-tooltip>
+                  <template #default="{ row }">{{ row.lotNo || '-' }}</template>
+                </el-table-column>
+                <el-table-column prop="lotName" label="分标名称" min-width="140" show-overflow-tooltip />
+                <el-table-column label="包号" width="110">
+                  <template #default="{ row }">{{ formatPackageNo(row.packageNo) }}</template>
+                </el-table-column>
+                <el-table-column prop="packageName" label="包名称" min-width="220" show-overflow-tooltip />
+                <el-table-column label="品类" width="110">
+                  <template #default="{ row }">{{ formatCategory(row.category) }}</template>
+                </el-table-column>
+                <el-table-column label="预算" width="130" align="right">
+                  <template #default="{ row }">{{ formatMoney(row.budgetAmount) }}</template>
+                </el-table-column>
+                <el-table-column label="要求项" width="90">
+                  <template #default="{ row }">{{ row.requirements?.length || 0 }}</template>
+                </el-table-column>
+              </el-table>
+              <section v-for="pkg in procurementPackages" :key="pkg.id" class="detail-module">
+                <div class="module-heading">
+                  <div>
+                    <h3>{{ packageTitle(pkg) }}</h3>
+                    <p>{{ packageSubtitle(pkg) }}</p>
+                  </div>
+                  <el-tag effect="light">置信度 {{ confidencePercent(pkg.aiConfidence) }}</el-tag>
+                </div>
+                <el-descriptions :column="2" border>
+                  <el-descriptions-item label="分标编号">{{ pkg.lotNo || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="分标名称">{{ pkg.lotName || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="包号">{{ formatPackageNo(pkg.packageNo) }}</el-descriptions-item>
+                  <el-descriptions-item label="包名称">{{ pkg.packageName || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="品类">{{ formatCategory(pkg.category) }}</el-descriptions-item>
+                  <el-descriptions-item label="预算">{{ formatMoney(pkg.budgetAmount) }}</el-descriptions-item>
+                  <el-descriptions-item label="复核状态"><BidOpsStatusTag :value="pkg.reviewStatus" kind="review" /></el-descriptions-item>
+                </el-descriptions>
+                <h3 class="requirements-title">资格 / 商务 / 风险要求</h3>
+                <RequirementTable :requirements="packageRequirements(pkg)" class="requirements" />
+              </section>
+            </template>
+          </template>
+
+          <template v-else-if="noticeKind === 'procurement'">
+            <h2 class="section-title">采购公告明细</h2>
+            <el-empty v-if="procurementPackages.length === 0" description="没有解析到采购包件" />
+            <template v-else>
+              <el-table :data="procurementPackages" border size="small" empty-text="没有解析到采购包件">
+                <el-table-column label="分标编号" min-width="130" show-overflow-tooltip>
+                  <template #default="{ row }">{{ row.lotNo || '-' }}</template>
+                </el-table-column>
+                <el-table-column prop="lotName" label="分标名称" min-width="140" show-overflow-tooltip />
+                <el-table-column label="包号" width="110">
+                  <template #default="{ row }">{{ formatPackageNo(row.packageNo) }}</template>
+                </el-table-column>
+                <el-table-column prop="packageName" label="包名称" min-width="220" show-overflow-tooltip />
+                <el-table-column label="品类" width="110">
+                  <template #default="{ row }">{{ formatCategory(row.category) }}</template>
+                </el-table-column>
+                <el-table-column label="预算" width="130" align="right">
+                  <template #default="{ row }">{{ formatMoney(row.budgetAmount) }}</template>
+                </el-table-column>
+                <el-table-column label="要求项" width="90">
+                  <template #default="{ row }">{{ row.requirements?.length || 0 }}</template>
+                </el-table-column>
+              </el-table>
+              <section v-for="pkg in procurementPackages" :key="pkg.id" class="detail-module">
+                <div class="module-heading">
+                  <div>
+                    <h3>{{ packageTitle(pkg) }}</h3>
+                    <p>{{ packageSubtitle(pkg) }}</p>
+                  </div>
+                  <el-tag effect="light">置信度 {{ confidencePercent(pkg.aiConfidence) }}</el-tag>
+                </div>
+                <el-descriptions :column="2" border>
+                  <el-descriptions-item label="分标编号">{{ pkg.lotNo || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="分标名称">{{ pkg.lotName || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="包号">{{ formatPackageNo(pkg.packageNo) }}</el-descriptions-item>
+                  <el-descriptions-item label="包名称">{{ pkg.packageName || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="品类">{{ formatCategory(pkg.category) }}</el-descriptions-item>
+                  <el-descriptions-item label="预算">{{ formatMoney(pkg.budgetAmount) }}</el-descriptions-item>
+                  <el-descriptions-item label="复核状态"><BidOpsStatusTag :value="pkg.reviewStatus" kind="review" /></el-descriptions-item>
+                </el-descriptions>
+                <h3 class="requirements-title">资格 / 商务 / 风险要求</h3>
+                <RequirementTable :requirements="packageRequirements(pkg)" class="requirements" />
+              </section>
+            </template>
+          </template>
+
+          <h2 class="section-title">采购方</h2>
+          <div class="org-review">
+            <section class="org-block">
+              <div class="org-block-heading">
+                <h3>采购方</h3>
+                <el-tag :type="buyer?.exists ? 'success' : buyer?.willCreateOnApproval ? 'warning' : 'info'" effect="light">
+                  {{ organizationState(buyer?.exists, buyer?.willCreateOnApproval) }}
+                </el-tag>
+              </div>
+              <el-empty v-if="!buyer" description="未识别到采购方" />
+              <el-descriptions v-else :column="1" border>
+                <el-descriptions-item label="名称">{{ buyer.buyerName || '-' }}</el-descriptions-item>
+                <el-descriptions-item label="系统ID">{{ buyer.buyerId || '-' }}</el-descriptions-item>
+                <el-descriptions-item label="项目">{{ buyer.projectName || '-' }}</el-descriptions-item>
+                <el-descriptions-item label="项目编码">{{ buyer.projectCode || '-' }}</el-descriptions-item>
+                <el-descriptions-item label="预算">{{ formatMoney(buyer.budgetAmount) }}</el-descriptions-item>
+                <el-descriptions-item label="采购包数">{{ buyer.packageCount }}</el-descriptions-item>
+              </el-descriptions>
+            </section>
+
+            <section v-if="showGenericOutcomeLeads" class="org-block">
+              <div class="org-block-heading">
+                <h3>厂家中标线索</h3>
+                <div class="org-actions">
+                  <el-tag effect="light">{{ outcomeSuppliers.length }} 条</el-tag>
+                  <PermissionButton
+                    v-if="canEditOutcomeRows"
+                    size="small"
+                    type="primary"
+                    plain
+                    :icon="Plus"
+                    :permission="BIDOPS_PERMISSIONS.REVIEW_APPROVE"
+                    @click="openCreateOutcome"
+                  >
+                    新增明细
+                  </PermissionButton>
+                </div>
+              </div>
+              <el-table :data="outcomeSuppliers" border size="small" empty-text="未识别到中标/候选厂家">
+                <el-table-column prop="supplierName" label="厂家" min-width="180" show-overflow-tooltip />
+                <el-table-column label="关联状态" width="150">
+                  <template #default="{ row }">
+                    <el-tag :type="row.supplierId ? 'success' : 'warning'" effect="light">{{ supplierState(row) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="结果" width="110">
+                  <template #default="{ row }">{{ formatCommonStatus(row.outcomeType) }}</template>
+                </el-table-column>
+                <el-table-column label="分标/包号" min-width="150" show-overflow-tooltip>
+                  <template #default="{ row }">{{ row.lotNo || '-' }} / {{ formatPackageNo(row.packageNo) }}</template>
+                </el-table-column>
+                <el-table-column prop="packageName" label="包名称" min-width="180" show-overflow-tooltip />
+                <el-table-column label="金额" width="130" align="right">
+                  <template #default="{ row }">{{ formatMoney(row.awardAmount) }}</template>
+                </el-table-column>
+                <el-table-column label="代理服务费" width="130" align="right">
+                  <template #default="{ row }">{{ formatMoney(row.procurementAgencyServiceFeeAmount) }}</template>
+                </el-table-column>
+                <el-table-column v-if="canEditOutcomeRows" label="操作" width="140" fixed="right">
+                  <template #default="{ row }">
+                    <PermissionButton
+                      text
+                      size="small"
+                      :icon="Edit"
+                      :permission="BIDOPS_PERMISSIONS.REVIEW_APPROVE"
+                      @click="openEditOutcome(row)"
+                    >
+                      编辑
+                    </PermissionButton>
+                    <PermissionButton
+                      v-if="String(row.id || '') !== '0'"
+                      text
+                      size="small"
+                      type="danger"
+                      :icon="Delete"
+                      :permission="BIDOPS_PERMISSIONS.REVIEW_APPROVE"
+                      @click="deleteOutcome(row)"
+                    >
+                      删除
+                    </PermissionButton>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </section>
+          </div>
+
+          <div v-if="noticeKind === 'other'" class="package-list">
             <el-empty v-if="packages.length === 0" description="没有解析到包件" />
             <section v-for="pkg in packages" :key="pkg.id" class="package-block">
               <div class="package-heading">
                 <div>
                   <h3>{{ packageTitle(pkg) }}</h3>
-                  <p>{{ pkg.lotName || '未分标段' }} · {{ formatCategory(pkg.category) }}</p>
+                  <p>{{ packageSubtitle(pkg) }}</p>
                 </div>
                 <el-tag effect="light">置信度 {{ confidencePercent(pkg.aiConfidence) }}</el-tag>
               </div>
@@ -213,6 +962,87 @@ onMounted(loadData)
           </div>
         </section>
       </div>
+
+      <el-dialog
+        v-model="outcomeEditVisible"
+        :title="outcomeEditMode === 'edit' ? '编辑中标/候选明细' : '新增中标/候选明细'"
+        width="760px"
+        destroy-on-close
+      >
+        <el-form label-position="top" class="outcome-edit-form">
+          <div class="outcome-form-grid">
+            <el-form-item label="采购编号">
+              <el-input v-model="outcomeEditForm.projectCode" placeholder="正文或表格中的采购编号" />
+            </el-form-item>
+            <el-form-item label="采购方">
+              <el-input v-model="outcomeEditForm.buyerName" placeholder="采购方/项目单位" />
+            </el-form-item>
+            <el-form-item label="分标编号">
+              <el-input v-model="outcomeEditForm.lotNo" placeholder="分标编号" />
+            </el-form-item>
+            <el-form-item label="分标名称">
+              <el-input v-model="outcomeEditForm.lotName" placeholder="分标名称" />
+            </el-form-item>
+            <el-form-item label="包号">
+              <el-input v-model="outcomeEditForm.packageNo" placeholder="包1 / 包 01" />
+            </el-form-item>
+            <el-form-item label="包名称">
+              <el-input v-model="outcomeEditForm.packageName" placeholder="包名称" />
+            </el-form-item>
+            <el-form-item label="结果类型">
+              <el-select v-model="outcomeEditForm.outcomeType" style="width: 100%">
+                <el-option
+                  v-for="item in outcomeTypeOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="排名">
+              <el-input-number v-model="outcomeEditForm.rank" :min="1" :max="99" controls-position="right" style="width: 100%" />
+            </el-form-item>
+            <el-form-item label="厂家名称" class="wide">
+              <el-input v-model="outcomeEditForm.supplierName" placeholder="中标人 / 成交供应商 / 推荐候选人" />
+            </el-form-item>
+            <el-form-item label="最终报价 / 成交金额（万元）">
+              <el-input-number
+                v-model="outcomeEditForm.awardAmountWan"
+                :min="0"
+                :precision="6"
+                controls-position="right"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="代理服务费（元）">
+              <el-input-number
+                v-model="outcomeEditForm.procurementAgencyServiceFeeAmount"
+                :min="0"
+                :precision="2"
+                controls-position="right"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="项目名称" class="wide">
+              <el-input v-model="outcomeEditForm.projectName" placeholder="项目名称" />
+            </el-form-item>
+            <el-form-item label="评审情况 / 证据" class="wide">
+              <el-input
+                v-model="outcomeEditForm.evidenceText"
+                type="textarea"
+                :rows="4"
+                maxlength="2000"
+                show-word-limit
+                placeholder="填写公告原文中的评审情况、排名依据或表格片段"
+              />
+            </el-form-item>
+          </div>
+        </el-form>
+        <template #footer>
+          <el-button @click="outcomeEditVisible = false">取消</el-button>
+          <el-button type="primary" :loading="outcomeEditRequest.loading" @click="submitOutcomeEdit">保存</el-button>
+        </template>
+      </el-dialog>
 
       <ReviewDecisionPanel class="decision-panel" :submitting="decisionRequest.loading" @approve="approve" @ignore="ignore" />
     </template>
@@ -266,7 +1096,8 @@ onMounted(loadData)
 
 .summary-grid span,
 .panel-heading span,
-.package-heading p {
+.package-heading p,
+.module-heading p {
   color: #687385;
   font-size: 12px;
 }
@@ -295,7 +1126,8 @@ onMounted(loadData)
 }
 
 .panel-heading,
-.package-heading {
+.package-heading,
+.module-heading {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -306,6 +1138,7 @@ onMounted(loadData)
 .panel-heading h2,
 .section-title,
 .package-heading h3,
+.module-heading h3,
 .requirements-title {
   margin: 0;
   color: #17202a;
@@ -327,6 +1160,114 @@ onMounted(loadData)
   margin-top: 16px;
 }
 
+.detail-module {
+  min-width: 0;
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid #e7edf5;
+}
+
+.detail-table {
+  margin-top: 12px;
+}
+
+.ai-reparse-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px 0;
+  margin-top: 16px;
+  border-top: 1px solid #e7edf5;
+  border-bottom: 1px solid #e7edf5;
+}
+
+.ai-reparse-heading,
+.ai-reparse-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ai-reparse-heading h2 {
+  margin: 0;
+  color: #17202a;
+  font-size: 15px;
+}
+
+.ai-reparse-heading p {
+  margin: 4px 0 0;
+  color: #687385;
+  font-size: 12px;
+}
+
+.ai-reparse-actions {
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  margin-bottom: 10px;
+}
+
+.section-heading .section-title {
+  margin: 0;
+}
+
+.org-review {
+  display: grid;
+  gap: 16px;
+}
+
+.org-block {
+  min-width: 0;
+}
+
+.org-block + .org-block {
+  padding-top: 14px;
+  border-top: 1px solid #e7edf5;
+}
+
+.org-block-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.org-block-heading h3 {
+  margin: 0;
+  color: #17202a;
+  font-size: 15px;
+}
+
+.org-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.outcome-edit-form {
+  min-width: 0;
+}
+
+.outcome-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 14px;
+}
+
+.outcome-form-grid .wide {
+  grid-column: 1 / -1;
+}
+
 .package-block {
   min-width: 0;
   padding-top: 16px;
@@ -334,11 +1275,13 @@ onMounted(loadData)
 }
 
 .package-heading h3,
+.module-heading h3,
 .requirements-title {
   font-size: 15px;
 }
 
-.package-heading p {
+.package-heading p,
+.module-heading p {
   margin: 4px 0 0;
 }
 
@@ -372,6 +1315,15 @@ onMounted(loadData)
 
   .content-panel {
     padding: 12px;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .outcome-form-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

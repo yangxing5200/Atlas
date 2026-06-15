@@ -7,6 +7,7 @@ using Atlas.Modules.BidOps.Ai;
 using Atlas.Modules.BidOps.BackgroundJobs;
 using Atlas.Modules.BidOps.Crawling;
 using Atlas.Modules.BidOps.Documents;
+using Atlas.Modules.BidOps.Entities.Buyers;
 using Atlas.Modules.BidOps.Entities.Crawling;
 using Atlas.Modules.BidOps.Entities.Matching;
 using Atlas.Modules.BidOps.Entities.Opportunities;
@@ -38,9 +39,11 @@ public sealed class BidOpsModule : AtlasModule
         context.Services.AddScoped<IBidOpsOpportunityMaintenanceService, BidOpsOpportunityMaintenanceService>();
         context.Services.AddScoped<IBidOpsSupplierService, BidOpsSupplierService>();
         context.Services.AddScoped<IBidOpsOutcomeSupplierExtractionService, BidOpsOutcomeSupplierExtractionService>();
+        context.Services.AddScoped<IBidOpsOrganizationMasterDataService, BidOpsOrganizationMasterDataService>();
         context.Services.AddScoped<IBidOpsSupplierMaintenanceService, BidOpsSupplierMaintenanceService>();
         context.Services.AddScoped<IBidOpsMatchingService, BidOpsMatchingService>();
         context.Services.AddScoped<IBidOpsPursuitService, BidOpsPursuitService>();
+        context.Services.AddScoped<IBidOpsReverseLifecycleClosureService, BidOpsReverseLifecycleClosureService>();
         context.Services.AddScoped<IBidOpsQueryService, BidOpsQueryService>();
         context.Services.AddScoped<IBidOpsOperationsQueryService, BidOpsOperationsQueryService>();
         context.Services.AddHttpClient<IStateGridEcpCrawler, StateGridEcpCrawler>(client =>
@@ -55,9 +58,15 @@ public sealed class BidOpsModule : AtlasModule
         {
             client.Timeout = TimeSpan.FromMinutes(2);
         });
+        context.Services.AddHttpClient<IBidOpsOutcomeSupplierAiExtractionService, BidOpsOutcomeSupplierAiExtractionService>(client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(2);
+        });
         context.Services.AddSingleton<IBidOpsFileStore, LocalBidOpsFileStore>();
         context.Services.AddSingleton<IBidOpsTextExtractor, BidOpsTextExtractor>();
         context.Services.AddSingleton<BidOpsContentHasher>();
+        context.Services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IBidOpsCrawlAdapter, StateGridEcpCrawlAdapter>());
         context.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IBackgroundJobHandler, ManualUrlImportJobHandler>());
         context.Services.TryAddEnumerable(
@@ -461,6 +470,16 @@ public sealed class BidOpsModule : AtlasModule
                 BidOpsDataResources.Opportunity,
                 "BidOps opportunity",
                 entityType: typeof(Opportunity).FullName,
+                supportedScopes: new[] { AtlasDataScopeType.AllTenant })
+            .AddDataResource(
+                BidOpsDataResources.Buyer,
+                "BidOps buyer",
+                entityType: typeof(Buyer).FullName,
+                supportedScopes: new[] { AtlasDataScopeType.AllTenant })
+            .AddDataResource(
+                BidOpsDataResources.BuyerProcurement,
+                "BidOps buyer procurement",
+                entityType: typeof(BuyerProcurementRecord).FullName,
                 supportedScopes: new[] { AtlasDataScopeType.AllTenant })
             .AddDataResource(
                 BidOpsDataResources.Supplier,

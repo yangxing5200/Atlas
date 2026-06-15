@@ -44,6 +44,7 @@ public sealed class ManualUrlImportJobHandler : IBackgroundJobHandler
             payload.ChannelId,
             payload.NoticeType,
             context.Job.Id,
+            payload.ForceRefresh,
             ct);
 
         rawNoticeId ??= await _ingestion.ImportManualUrlAsync(
@@ -55,30 +56,42 @@ public sealed class ManualUrlImportJobHandler : IBackgroundJobHandler
                 payload.NoticeType ?? "TenderAnnouncement",
                 payload.TextContent ?? string.Empty,
                 HtmlContent: string.Empty,
-                PublishTime: null),
+                PublishTime: null,
+                ForceRefresh: payload.ForceRefresh),
             context.Job.Id,
             ct);
         var createdRawNoticeId = rawNoticeId.Value;
+        var forceParseRunId = payload.ForceRefresh
+            ? Guid.NewGuid().ToString("N")
+            : null;
 
         await _jobs.EnqueueAsync(
             new EnqueueBackgroundJobRequest<AttachmentProcessJobPayload>
             {
                 JobType = BidOpsBackgroundJobTypes.AttachmentProcess,
                 Queue = BidOpsBackgroundJobQueues.BidOps,
-                JobName = "BidOps process manual notice attachments",
+                JobName = payload.ForceRefresh
+                    ? "BidOps refresh manual notice attachments"
+                    : "BidOps process manual notice attachments",
                 TenantId = payload.TenantId,
                 StoreId = payload.StoreId,
-                DeduplicationKey = $"bidops:attachment-process:{payload.TenantId}:{createdRawNoticeId}:{DateTime.UtcNow:yyyyMMddHHmm}",
+                DeduplicationKey = payload.ForceRefresh
+                    ? $"bidops:attachment-process-refresh:{payload.TenantId}:{createdRawNoticeId}:{forceParseRunId}"
+                    : $"bidops:attachment-process:{payload.TenantId}:{createdRawNoticeId}:{DateTime.UtcNow:yyyyMMddHHmm}",
                 Payload = new AttachmentProcessJobPayload(
                     payload.TenantId,
                     payload.StoreId,
                     payload.UserId,
                     payload.UserName,
-                    createdRawNoticeId)
+                    createdRawNoticeId,
+                    forceParseRunId)
             },
             ct);
 
-        _logger.LogInformation("BidOps manual URL import created raw notice {RawNoticeId}.", createdRawNoticeId);
+        _logger.LogInformation(
+            "BidOps manual URL import completed for raw notice {RawNoticeId}. forceRefresh={ForceRefresh}.",
+            createdRawNoticeId,
+            payload.ForceRefresh);
         return BackgroundJobExecutionResult.Success($"rawNoticeId={createdRawNoticeId}");
     }
 }

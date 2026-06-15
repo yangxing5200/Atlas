@@ -140,6 +140,9 @@ switch (command)
     case "repair-bidops-data-quality":
         await RepairBidOpsDataQualityAsync(tenantConnection);
         break;
+    case "reset-bidops-derived-data":
+        await ResetBidOpsDerivedDataAsync(tenantConnection, args);
+        break;
     case "approve-bidops-pending":
         await ApproveBidOpsPendingAsync(tenantConnection);
         break;
@@ -156,7 +159,7 @@ switch (command)
         break;
     default:
         throw new InvalidOperationException(
-            $"Unknown command '{command}'. Use: init-global, create-tenant-db, seed-demo, seed-local, seed-production, seed-bidops-state-grid, bidops-status, ensure-bidops-opportunities, ensure-bidops-suppliers, ensure-bidops-matching, ensure-bidops-pursuits, ensure-bidops-outcomes, repair-bidops-data-quality, approve-bidops-pending, cancel-bidops-crawl-jobs, reset-demo.");
+            $"Unknown command '{command}'. Use: init-global, create-tenant-db, seed-demo, seed-local, seed-production, seed-bidops-state-grid, bidops-status, ensure-bidops-opportunities, ensure-bidops-suppliers, ensure-bidops-matching, ensure-bidops-pursuits, ensure-bidops-outcomes, repair-bidops-data-quality, reset-bidops-derived-data, approve-bidops-pending, cancel-bidops-crawl-jobs, reset-demo.");
 }
 
 static async Task InitGlobalAsync(string globalConnection)
@@ -447,6 +450,69 @@ CREATE TABLE IF NOT EXISTS `bidops_supplier` (
   `Status` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
   `QualityScore` decimal(6,2) NULL,
   `Remark` varchar(1000) CHARACTER SET utf8mb4 NOT NULL,
+  `CreatedFromRawNoticeId` bigint NULL,
+  `CreatedFromNoticeId` bigint NULL,
+  `CreatedFromNoticeTitle` varchar(500) CHARACTER SET utf8mb4 NOT NULL DEFAULT '',
+  `CreatedFromSourceUrl` varchar(1500) CHARACTER SET utf8mb4 NOT NULL DEFAULT '',
+  `LastOutcomeRawNoticeId` bigint NULL,
+  `LastOutcomeNoticeId` bigint NULL,
+  `LastOutcomeNoticeTitle` varchar(500) CHARACTER SET utf8mb4 NOT NULL DEFAULT '',
+  `LastOutcomeAtUtc` datetime(6) NULL,
+  `CreatedAt` datetime(6) NOT NULL,
+  `UpdatedAt` datetime(6) NULL,
+  `TenantId` bigint NOT NULL,
+  PRIMARY KEY (`Id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+""");
+
+    await AddColumnIfMissingAsync(tenantDb, "bidops_supplier", "CreatedFromRawNoticeId", "ALTER TABLE `bidops_supplier` ADD COLUMN `CreatedFromRawNoticeId` bigint NULL;");
+    await AddColumnIfMissingAsync(tenantDb, "bidops_supplier", "CreatedFromNoticeId", "ALTER TABLE `bidops_supplier` ADD COLUMN `CreatedFromNoticeId` bigint NULL;");
+    await AddColumnIfMissingAsync(tenantDb, "bidops_supplier", "CreatedFromNoticeTitle", "ALTER TABLE `bidops_supplier` ADD COLUMN `CreatedFromNoticeTitle` varchar(500) CHARACTER SET utf8mb4 NOT NULL DEFAULT '';");
+    await AddColumnIfMissingAsync(tenantDb, "bidops_supplier", "CreatedFromSourceUrl", "ALTER TABLE `bidops_supplier` ADD COLUMN `CreatedFromSourceUrl` varchar(1500) CHARACTER SET utf8mb4 NOT NULL DEFAULT '';");
+    await AddColumnIfMissingAsync(tenantDb, "bidops_supplier", "LastOutcomeRawNoticeId", "ALTER TABLE `bidops_supplier` ADD COLUMN `LastOutcomeRawNoticeId` bigint NULL;");
+    await AddColumnIfMissingAsync(tenantDb, "bidops_supplier", "LastOutcomeNoticeId", "ALTER TABLE `bidops_supplier` ADD COLUMN `LastOutcomeNoticeId` bigint NULL;");
+    await AddColumnIfMissingAsync(tenantDb, "bidops_supplier", "LastOutcomeNoticeTitle", "ALTER TABLE `bidops_supplier` ADD COLUMN `LastOutcomeNoticeTitle` varchar(500) CHARACTER SET utf8mb4 NOT NULL DEFAULT '';");
+    await AddColumnIfMissingAsync(tenantDb, "bidops_supplier", "LastOutcomeAtUtc", "ALTER TABLE `bidops_supplier` ADD COLUMN `LastOutcomeAtUtc` datetime(6) NULL;");
+
+    await tenantDb.Database.ExecuteSqlRawAsync("""
+CREATE TABLE IF NOT EXISTS `bidops_buyer` (
+  `Id` bigint NOT NULL,
+  `BuyerNo` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
+  `Name` varchar(300) CHARACTER SET utf8mb4 NOT NULL,
+  `NameNormalized` varchar(191) CHARACTER SET utf8mb4 NOT NULL,
+  `UnifiedSocialCreditCode` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
+  `Region` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+  `SourceUrl` varchar(1500) CHARACTER SET utf8mb4 NOT NULL,
+  `LastProjectCode` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+  `LastProjectName` varchar(500) CHARACTER SET utf8mb4 NOT NULL,
+  `LastNoticeTitle` varchar(500) CHARACTER SET utf8mb4 NOT NULL,
+  `LastSeenAtUtc` datetime(6) NULL,
+  `Status` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
+  `Remark` varchar(1000) CHARACTER SET utf8mb4 NOT NULL,
+  `CreatedAt` datetime(6) NOT NULL,
+  `UpdatedAt` datetime(6) NULL,
+  `TenantId` bigint NOT NULL,
+  PRIMARY KEY (`Id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+""");
+
+    await tenantDb.Database.ExecuteSqlRawAsync("""
+CREATE TABLE IF NOT EXISTS `bidops_buyer_procurement_record` (
+  `Id` bigint NOT NULL,
+  `BuyerId` bigint NOT NULL,
+  `RawNoticeId` bigint NOT NULL,
+  `NoticeId` bigint NULL,
+  `SourceUrl` varchar(1500) CHARACTER SET utf8mb4 NOT NULL,
+  `NoticeTitle` varchar(500) CHARACTER SET utf8mb4 NOT NULL,
+  `NoticeType` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
+  `ProjectName` varchar(500) CHARACTER SET utf8mb4 NOT NULL,
+  `ProjectCode` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+  `Region` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+  `PublishTime` datetime(6) NULL,
+  `BudgetAmount` decimal(18,2) NULL,
+  `PackageCount` int NOT NULL,
+  `SourceHash` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
+  `Remark` varchar(1000) CHARACTER SET utf8mb4 NOT NULL,
   `CreatedAt` datetime(6) NOT NULL,
   `UpdatedAt` datetime(6) NULL,
   `TenantId` bigint NOT NULL,
@@ -516,6 +582,22 @@ CREATE TABLE IF NOT EXISTS `bidops_supplier_evidence_document` (
     await CreateIndexIfMissingAsync(tenantDb, "bidops_supplier", "IX_bidops_supplier_TenantId_Status_CreatedAt", "CREATE INDEX `IX_bidops_supplier_TenantId_Status_CreatedAt` ON `bidops_supplier` (`TenantId`, `Status`, `CreatedAt`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_supplier", "IX_bidops_supplier_TenantId_SupplierNo", "CREATE UNIQUE INDEX `IX_bidops_supplier_TenantId_SupplierNo` ON `bidops_supplier` (`TenantId`, `SupplierNo`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_supplier", "IX_bidops_supplier_TenantId_UnifiedSocialCreditCode", "CREATE INDEX `IX_bidops_supplier_TenantId_UnifiedSocialCreditCode` ON `bidops_supplier` (`TenantId`, `UnifiedSocialCreditCode`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_supplier", "IX_bidops_supplier_TenantId_CreatedFromRawNoticeId", "CREATE INDEX `IX_bidops_supplier_TenantId_CreatedFromRawNoticeId` ON `bidops_supplier` (`TenantId`, `CreatedFromRawNoticeId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_supplier", "IX_bidops_supplier_TenantId_LastOutcomeNoticeId", "CREATE INDEX `IX_bidops_supplier_TenantId_LastOutcomeNoticeId` ON `bidops_supplier` (`TenantId`, `LastOutcomeNoticeId`);");
+
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_buyer", "IX_bidops_buyer_TenantId", "CREATE INDEX `IX_bidops_buyer_TenantId` ON `bidops_buyer` (`TenantId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_buyer", "IX_bidops_buyer_TenantId_BuyerNo", "CREATE UNIQUE INDEX `IX_bidops_buyer_TenantId_BuyerNo` ON `bidops_buyer` (`TenantId`, `BuyerNo`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_buyer", "IX_bidops_buyer_TenantId_NameNormalized", "CREATE UNIQUE INDEX `IX_bidops_buyer_TenantId_NameNormalized` ON `bidops_buyer` (`TenantId`, `NameNormalized`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_buyer", "IX_bidops_buyer_TenantId_UnifiedSocialCreditCode", "CREATE INDEX `IX_bidops_buyer_TenantId_UnifiedSocialCreditCode` ON `bidops_buyer` (`TenantId`, `UnifiedSocialCreditCode`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_buyer", "IX_bidops_buyer_TenantId_Status_CreatedAt", "CREATE INDEX `IX_bidops_buyer_TenantId_Status_CreatedAt` ON `bidops_buyer` (`TenantId`, `Status`, `CreatedAt`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_buyer", "IX_bidops_buyer_TenantId_LastSeenAtUtc", "CREATE INDEX `IX_bidops_buyer_TenantId_LastSeenAtUtc` ON `bidops_buyer` (`TenantId`, `LastSeenAtUtc`);");
+
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_buyer_procurement_record", "IX_bidops_buyer_procurement_record_TenantId", "CREATE INDEX `IX_bidops_buyer_procurement_record_TenantId` ON `bidops_buyer_procurement_record` (`TenantId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_buyer_procurement_record", "IX_bidops_buyer_procurement_record_TenantId_BuyerId_PublishTime", "CREATE INDEX `IX_bidops_buyer_procurement_record_TenantId_BuyerId_PublishTime` ON `bidops_buyer_procurement_record` (`TenantId`, `BuyerId`, `PublishTime`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_buyer_procurement_record", "IX_bidops_buyer_procurement_record_TenantId_RawNoticeId", "CREATE INDEX `IX_bidops_buyer_procurement_record_TenantId_RawNoticeId` ON `bidops_buyer_procurement_record` (`TenantId`, `RawNoticeId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_buyer_procurement_record", "IX_bidops_buyer_procurement_record_TenantId_NoticeId", "CREATE INDEX `IX_bidops_buyer_procurement_record_TenantId_NoticeId` ON `bidops_buyer_procurement_record` (`TenantId`, `NoticeId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_buyer_procurement_record", "IX_bidops_buyer_procurement_record_TenantId_ProjectCode", "CREATE INDEX `IX_bidops_buyer_procurement_record_TenantId_ProjectCode` ON `bidops_buyer_procurement_record` (`TenantId`, `ProjectCode`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_buyer_procurement_record", "IX_bidops_buyer_procurement_record_TenantId_SourceHash", "CREATE UNIQUE INDEX `IX_bidops_buyer_procurement_record_TenantId_SourceHash` ON `bidops_buyer_procurement_record` (`TenantId`, `SourceHash`);");
 
     await CreateIndexIfMissingAsync(tenantDb, "bidops_supplier_capability", "IX_bidops_supplier_capability_SupplierId", "CREATE INDEX `IX_bidops_supplier_capability_SupplierId` ON `bidops_supplier_capability` (`SupplierId`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_supplier_capability", "IX_bidops_supplier_capability_TenantId", "CREATE INDEX `IX_bidops_supplier_capability_TenantId` ON `bidops_supplier_capability` (`TenantId`);");
@@ -778,6 +860,7 @@ CREATE TABLE IF NOT EXISTS `bidops_outcome_supplier_record` (
   `RawNoticeId` bigint NOT NULL,
   `NoticeId` bigint NULL,
   `TenderPackageId` bigint NULL,
+  `BuyerId` bigint NULL,
   `SupplierId` bigint NULL,
   `SourceUrl` varchar(1500) CHARACTER SET utf8mb4 NOT NULL,
   `NoticeTitle` varchar(500) CHARACTER SET utf8mb4 NOT NULL,
@@ -797,6 +880,7 @@ CREATE TABLE IF NOT EXISTS `bidops_outcome_supplier_record` (
   `OutcomeType` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
   `Rank` int NULL,
   `AwardAmount` decimal(18,2) NULL,
+  `ProcurementAgencyServiceFeeAmount` decimal(18,2) NULL,
   `Currency` varchar(16) CHARACTER SET utf8mb4 NOT NULL,
   `EvidenceText` varchar(2000) CHARACTER SET utf8mb4 NOT NULL,
   `ExtractionConfidence` decimal(5,4) NOT NULL,
@@ -808,6 +892,18 @@ CREATE TABLE IF NOT EXISTS `bidops_outcome_supplier_record` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """);
 
+    await AddColumnIfMissingAsync(
+        tenantDb,
+        "bidops_outcome_supplier_record",
+        "BuyerId",
+        "ALTER TABLE `bidops_outcome_supplier_record` ADD COLUMN `BuyerId` bigint NULL AFTER `TenderPackageId`;");
+
+    await AddColumnIfMissingAsync(
+        tenantDb,
+        "bidops_outcome_supplier_record",
+        "ProcurementAgencyServiceFeeAmount",
+        "ALTER TABLE `bidops_outcome_supplier_record` ADD COLUMN `ProcurementAgencyServiceFeeAmount` decimal(18,2) NULL AFTER `AwardAmount`;");
+
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant", "CREATE INDEX `IX_bidops_outcome_record_Tenant` ON `bidops_outcome_supplier_record` (`TenantId`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_CreatedAt", "CREATE INDEX `IX_bidops_outcome_record_Tenant_CreatedAt` ON `bidops_outcome_supplier_record` (`TenantId`, `CreatedAt`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_Category_Pub", "CREATE INDEX `IX_bidops_outcome_record_Tenant_Category_Pub` ON `bidops_outcome_supplier_record` (`TenantId`, `Category`, `PublishTime`);");
@@ -816,6 +912,8 @@ CREATE TABLE IF NOT EXISTS `bidops_outcome_supplier_record` (
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_ProjectCode", "CREATE INDEX `IX_bidops_outcome_record_Tenant_ProjectCode` ON `bidops_outcome_supplier_record` (`TenantId`, `ProjectCode`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_RawNotice", "CREATE INDEX `IX_bidops_outcome_record_Tenant_RawNotice` ON `bidops_outcome_supplier_record` (`TenantId`, `RawNoticeId`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_SourceHash", "CREATE UNIQUE INDEX `IX_bidops_outcome_record_Tenant_SourceHash` ON `bidops_outcome_supplier_record` (`TenantId`, `SourceHash`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_supplier_record_BuyerId", "CREATE INDEX `IX_bidops_outcome_supplier_record_BuyerId` ON `bidops_outcome_supplier_record` (`BuyerId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_Buyer", "CREATE INDEX `IX_bidops_outcome_record_Tenant_Buyer` ON `bidops_outcome_supplier_record` (`TenantId`, `BuyerId`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_Supplier", "CREATE INDEX `IX_bidops_outcome_record_Tenant_Supplier` ON `bidops_outcome_supplier_record` (`TenantId`, `SupplierId`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_SupplierNorm", "CREATE INDEX `IX_bidops_outcome_record_Tenant_SupplierNorm` ON `bidops_outcome_supplier_record` (`TenantId`, `SupplierNameNormalized`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_Package", "CREATE INDEX `IX_bidops_outcome_record_Tenant_Package` ON `bidops_outcome_supplier_record` (`TenantId`, `TenderPackageId`);");
@@ -829,6 +927,43 @@ static async Task CreateIndexIfMissingAsync(DbContext db, string tableName, stri
         return;
 
     await db.Database.ExecuteSqlRawAsync(createSql);
+}
+
+static async Task AddColumnIfMissingAsync(DbContext db, string tableName, string columnName, string alterSql)
+{
+    if (!await TableExistsAsync(db, tableName) || await ColumnExistsAsync(db, tableName, columnName))
+        return;
+
+    await db.Database.ExecuteSqlRawAsync(alterSql);
+}
+
+static async Task<bool> ColumnExistsAsync(DbContext db, string tableName, string columnName)
+{
+    var connection = db.Database.GetDbConnection();
+    if (connection.State != ConnectionState.Open)
+        await connection.OpenAsync();
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = """
+SELECT COUNT(1)
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME = @tableName
+  AND COLUMN_NAME = @columnName
+""";
+
+    var tableParameter = command.CreateParameter();
+    tableParameter.ParameterName = "@tableName";
+    tableParameter.Value = tableName;
+    command.Parameters.Add(tableParameter);
+
+    var columnParameter = command.CreateParameter();
+    columnParameter.ParameterName = "@columnName";
+    columnParameter.Value = columnName;
+    command.Parameters.Add(columnParameter);
+
+    var result = await command.ExecuteScalarAsync();
+    return Convert.ToInt32(result) > 0;
 }
 
 static async Task<bool> IndexExistsAsync(DbContext db, string tableName, string indexName)
@@ -892,6 +1027,109 @@ static async Task<int> ExecuteIfTableExistsAsync(DbContext db, string tableName,
     }
 
     return await db.Database.ExecuteSqlRawAsync(sql);
+}
+
+static async Task ResetBidOpsDerivedDataAsync(string tenantConnection, string[] args)
+{
+    await using var tenantDb = CreateTenantDbContext(tenantConnection);
+    var tenantIdText = GetOption(args, "--tenant-id");
+    var tenantId = long.TryParse(tenantIdText, out var parsedTenantId) && parsedTenantId > 0
+        ? parsedTenantId
+        : BidOpsTenantId;
+    var confirm = HasFlag(args, "--confirm");
+    var dryRun = !confirm || HasFlag(args, "--dry-run");
+    var tables = new[]
+    {
+        "bidops_requirement_staging",
+        "bidops_package_staging",
+        "bidops_review_task",
+        "bidops_notice_staging",
+        "bidops_requirement_item",
+        "bidops_tender_package",
+        "bidops_notice",
+        "bidops_outcome_supplier_record",
+        "bidops_buyer_procurement_record",
+        "bidops_opportunity_watch",
+        "bidops_opportunity_stage_history",
+        "bidops_opportunity",
+        "bidops_missing_evidence_check",
+        "bidops_supplier_match_result",
+        "bidops_go_no_go_decision",
+        "bidops_supplier_match_run",
+        "bidops_pursuit_follow_record",
+        "bidops_pursuit_task",
+        "bidops_pursuit"
+    };
+
+    Console.WriteLine($"BidOps derived data reset for tenant {tenantId}.");
+    Console.WriteLine("Protected tables: bidops_raw_notice, bidops_raw_attachment, bidops_crawl_source, bidops_crawl_channel, bidops_crawl_run_log, attachment files, buyer and supplier master data.");
+    Console.WriteLine(dryRun
+        ? "Mode: dry-run. No rows will be deleted. Add --confirm without --dry-run to execute."
+        : "Mode: confirmed delete.");
+
+    var total = 0L;
+    foreach (var table in tables)
+    {
+        if (!await TableExistsAsync(tenantDb, table))
+        {
+            Console.WriteLine($"  {table}: table missing");
+            continue;
+        }
+
+        var count = await CountTenantRowsAsync(tenantDb, table, tenantId);
+        total += count;
+        Console.WriteLine($"  {table}: {count}");
+    }
+
+    Console.WriteLine($"Total derived rows: {total}");
+    if (dryRun)
+        return;
+
+    var deleted = 0;
+    foreach (var table in tables)
+    {
+        if (!await TableExistsAsync(tenantDb, table))
+            continue;
+
+        deleted += await DeleteTenantRowsAsync(tenantDb, table, tenantId);
+    }
+
+    Console.WriteLine($"BidOps derived data reset completed. deletedRows={deleted}");
+}
+
+static async Task<int> DeleteTenantRowsAsync(DbContext db, string tableName, long tenantId)
+{
+    var connection = db.Database.GetDbConnection();
+    if (connection.State != ConnectionState.Open)
+        await connection.OpenAsync();
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = $"DELETE FROM `{tableName}` WHERE `TenantId` = @tenantId";
+
+    var tenantParameter = command.CreateParameter();
+    tenantParameter.ParameterName = "@tenantId";
+    tenantParameter.Value = tenantId;
+    command.Parameters.Add(tenantParameter);
+
+    return await command.ExecuteNonQueryAsync();
+}
+
+static async Task<long> CountTenantRowsAsync(DbContext db, string tableName, long tenantId)
+{
+    var connection = db.Database.GetDbConnection();
+    if (connection.State != ConnectionState.Open)
+        await connection.OpenAsync();
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = $"SELECT COUNT(1) FROM `{tableName}` WHERE `TenantId` = @tenantId";
+
+    var tenantParameter = command.CreateParameter();
+    tenantParameter.ParameterName = "@tenantId";
+    tenantParameter.Value = tenantId;
+    command.Parameters.Add(tenantParameter);
+
+    var result = await command.ExecuteScalarAsync();
+    return Convert.ToInt64(result);
 }
 
 static async Task RepairBidOpsDataQualityAsync(string tenantConnection)
@@ -2037,6 +2275,11 @@ static string? GetOption(string[] args, string name)
     return null;
 }
 
+static bool HasFlag(string[] args, string name)
+{
+    return args.Any(arg => string.Equals(arg, name, StringComparison.OrdinalIgnoreCase));
+}
+
 static string? ExtractDatabaseName(string connectionString)
 {
     foreach (var segment in connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
@@ -2116,6 +2359,7 @@ Atlas.LocalSetup commands:
   ensure-bidops-matching Ensure local BidOps matching tables exist for smoke testing.
   ensure-bidops-pursuits Ensure local BidOps pursuit tables exist for smoke testing.
   ensure-bidops-outcomes Ensure local BidOps outcome supplier tables exist for smoke testing.
+  reset-bidops-derived-data Dry-run BidOps derived data cleanup; add --confirm to delete in dev DB.
   approve-bidops-pending Approve one pending BidOps review task in the local tenant.
   cancel-bidops-crawl-jobs Cancel pending/running local BidOps crawl jobs.
   reset-demo        Drop and recreate local demo databases, then seed demo data.
@@ -2123,6 +2367,9 @@ Atlas.LocalSetup commands:
 Options:
   --global <connection-string>  Overrides ATLAS_GLOBAL_CONNECTION.
   --tenant <connection-string>  Overrides ATLAS_TENANT_CONNECTION.
+  --tenant-id <id>              Tenant id for reset-bidops-derived-data; defaults to BidOps local tenant.
+  --dry-run                     Print derived data counts without deleting.
+  --confirm                     Required to delete derived data.
 """);
 }
 

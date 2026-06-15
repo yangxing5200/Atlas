@@ -89,8 +89,8 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
             return await ReparseExistingStagingAsync(raw, existingStaging, existingTask, ct);
         }
 
-        var text = await ReadRawTextAsync(raw, ct);
-        var extract = await _ai.ExtractAsync(raw.Title, text, ct);
+        var aiRequest = await BuildAiRequestAsync(raw, ct);
+        var extract = await _ai.ExtractAsync(aiRequest, ct);
         var rawAiOutput = await SaveAiOutputAsync(extract, ct);
 
         var noticeStaging = new NoticeStaging
@@ -169,8 +169,8 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
         ReviewTask? reviewTask,
         CancellationToken ct)
     {
-        var text = await ReadRawTextAsync(raw, ct);
-        var extract = await _ai.ExtractAsync(raw.Title, text, ct);
+        var aiRequest = await BuildAiRequestAsync(raw, ct);
+        var extract = await _ai.ExtractAsync(aiRequest, ct);
         var rawAiOutput = await SaveAiOutputAsync(extract, ct);
 
         noticeStaging.NoticeType = Truncate(extract.NoticeType, NoticeTypeMaxLength);
@@ -269,41 +269,63 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
         }
     }
 
-    private async Task<string> ReadRawTextAsync(RawNotice raw, CancellationToken ct)
+    private async Task<BidOpsNoticeAiExtractionRequest> BuildAiRequestAsync(RawNotice raw, CancellationToken ct)
     {
-        var builder = new System.Text.StringBuilder();
-        if (string.IsNullOrWhiteSpace(raw.TextContentStorageKey))
-        {
-            builder.AppendLine(raw.TextPreview);
-        }
-        else
-        {
-            await using var stream = await _fileStore.OpenReadAsync(raw.TextContentStorageKey, ct);
-            using var reader = new StreamReader(stream);
-            var text = await reader.ReadToEndAsync(ct);
-            builder.AppendLine(string.IsNullOrWhiteSpace(text) ? raw.TextPreview : text);
-        }
+        var text = string.IsNullOrWhiteSpace(raw.TextContentStorageKey)
+            ? raw.TextPreview
+            : await TryReadStoredTextAsync(raw.TextContentStorageKey, raw.TextPreview, ct);
+        var html = string.IsNullOrWhiteSpace(raw.HtmlSnapshotStorageKey)
+            ? string.Empty
+            : await TryReadStoredTextAsync(raw.HtmlSnapshotStorageKey, string.Empty, ct);
 
-        var attachmentQuery = await _rawAttachments.QueryAsync(ct);
+        var attachmentQuery = await _rawAttachments.QueryAsync(raw.TenantId, ct);
         var attachments = await attachmentQuery
             .Where(x => x.RawNoticeId == raw.Id &&
                         x.TextExtractStatus == TextExtractStatus.Succeeded &&
                         x.TextContentStorageKey != string.Empty)
             .ToListAsync(ct);
+
+        var attachmentInputs = new List<BidOpsAiAttachmentInput>();
         foreach (var attachment in attachments)
         {
-            await using var attachmentStream = await _fileStore.OpenReadAsync(attachment.TextContentStorageKey, ct);
-            using var attachmentReader = new StreamReader(attachmentStream);
-            var attachmentText = await attachmentReader.ReadToEndAsync(ct);
+            var attachmentText = await TryReadStoredTextAsync(attachment.TextContentStorageKey, string.Empty, ct);
             if (string.IsNullOrWhiteSpace(attachmentText))
                 continue;
 
-            builder.AppendLine();
-            builder.AppendLine($"Attachment: {attachment.FileName}");
-            builder.AppendLine(attachmentText);
+            attachmentInputs.Add(new BidOpsAiAttachmentInput(
+                attachment.FileName,
+                attachment.FileType,
+                attachment.FileUrl,
+                attachment.FileSize,
+                attachmentText));
         }
 
-        return builder.ToString();
+        return new BidOpsNoticeAiExtractionRequest(
+            raw.Title,
+            raw.NoticeType,
+            raw.DetailUrl,
+            raw.PublishTime,
+            text,
+            html,
+            attachmentInputs);
+    }
+
+    private async Task<string> TryReadStoredTextAsync(
+        string storageKey,
+        string fallback,
+        CancellationToken ct)
+    {
+        try
+        {
+            await using var stream = await _fileStore.OpenReadAsync(storageKey, ct);
+            using var reader = new StreamReader(stream);
+            var text = await reader.ReadToEndAsync(ct);
+            return string.IsNullOrWhiteSpace(text) ? fallback : text;
+        }
+        catch (Exception ex) when (ex is IOException or FileNotFoundException or DirectoryNotFoundException)
+        {
+            return fallback;
+        }
     }
 
     private async Task<StoredFileInfo> SaveAiOutputAsync(BidOpsNoticeExtract extract, CancellationToken ct)
