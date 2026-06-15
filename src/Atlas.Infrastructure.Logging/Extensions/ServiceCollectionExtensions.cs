@@ -71,7 +71,9 @@ namespace Atlas.Infrastructure.Logging.Extensions
                 .Enrich.FromLogContext()
                 .Enrich.WithProperty("Application", "Atlas")
                 .Enrich.WithProperty("Environment",
-                    Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production")
+                    Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
+                    ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
+                    ?? "Production")
                 .Enrich.WithMachineName()
                 .Enrich.WithThreadId()
                 .Enrich.WithProcessId();
@@ -102,7 +104,7 @@ namespace Atlas.Infrastructure.Logging.Extensions
             if (options.EnableConsole)
             {
                 loggerConfig.WriteTo.Async(a => a.Console(
-                    outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}",
+                    outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}",
                     restrictedToMinimumLevel: LogEventLevel.Debug));
             }
 

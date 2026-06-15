@@ -1,5 +1,22 @@
 # Implementation Log
 
+## 2026-06-15 Worker Timestamped Logging
+
+Completed:
+
+- Registered the Atlas Serilog logging pipeline in `Atlas.Worker` and cleared the default .NET logging providers before adding Serilog.
+- Added Worker-specific `Logging:Atlas` settings with dedicated application, error, and audit log file paths.
+- Changed the Atlas console log output template to include full date, time, milliseconds, and timezone so `var/logs/worker-local.log` includes timestamps.
+- Updated Serilog environment enrichment to honor `DOTNET_ENVIRONMENT` when `ASPNETCORE_ENVIRONMENT` is not set.
+- Added Worker logging configuration regression tests.
+
+Verification:
+
+- `dotnet restore src\Atlas.Worker\Atlas.Worker.csproj --nologo` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\WorkerTimestampLogging\"` succeeded with 0 warnings.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "WorkerLoggingConfigurationTests" --nologo --verbosity minimal /nodeReuse:false /m:1` succeeded: 3 passed.
+- `git diff --check` succeeded.
+
 ## 2026-06-15 BidOps DeepSeek Chinese Prompts And Request Logging
 
 Completed:
