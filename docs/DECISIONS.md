@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-06-15 BidOps DeepSeek Chinese Prompts And Request Logging
+
+- DeepSeek/OpenAI-compatible prompts use Chinese natural-language instructions because the source notices, reviewer correction text, and expected reviewer workflow are Chinese. JSON field names and enum values remain English to preserve the existing internal parsing contract.
+- AI prompts provide the stored announcement body HTML plus attachment URLs/metadata/extracted text as source material, and do not include the public notice detail URL as extraction input. The notice URL remains database/job traceability metadata instead of model context.
+- AI request logs record provider, model, endpoint host/path, notice type, prompt length, attachment count, status code, elapsed time, response length, parsed row/package counts, the full JSON request body sent to DeepSeek/OpenAI-compatible chat completions, and the full raw response body returned by DeepSeek.
+- Authorization headers and API keys are never logged. Full prompt/source/response logging is intentionally Worker-side operational diagnostics for parser tuning and should be handled as potentially large public-source audit data.
+
 ## 2026-06-15 BidOps Review Outcome Editing And DeepSeek Replacement
 
 - Reviewer-prompted DeepSeek outcome reparse is treated as a replacement operation. The Worker still deletes existing `OutcomeSupplierRecord` rows for the Raw notice first, but when a reviewer prompt is present it persists only DeepSeek-returned rows instead of merging deterministic rows back in.

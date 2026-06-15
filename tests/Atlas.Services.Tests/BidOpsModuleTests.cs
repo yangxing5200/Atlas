@@ -23,6 +23,7 @@ using Atlas.Modules.BidOps.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using UglyToad.PdfPig.Core;
@@ -134,10 +135,11 @@ public sealed class BidOpsModuleTests
                 ["BidOps:Ai:UseForOutcomeSuppliers"] = "true"
             })
             .Build();
+        var logger = new CapturingLogger<BidOpsOutcomeSupplierAiExtractionService>();
         var service = new BidOpsOutcomeSupplierAiExtractionService(
             new HttpClient(handler),
             configuration,
-            NullLogger<BidOpsOutcomeSupplierAiExtractionService>.Instance);
+            logger);
 
         var records = await service.ExtractAsync(
             new BidOpsOutcomeSupplierAiExtractionRequest(
@@ -162,13 +164,26 @@ public sealed class BidOpsModuleTests
         Assert.Equal(new Uri("https://api.deepseek.com/chat/completions"), capturedUri);
         Assert.Contains("\"response_format\"", capturedBody);
         using var capturedDocument = JsonDocument.Parse(capturedBody!);
+        var capturedSystemPrompt = capturedDocument.RootElement
+            .GetProperty("messages")[0]
+            .GetProperty("content")
+            .GetString();
         var capturedPrompt = capturedDocument.RootElement
             .GetProperty("messages")[1]
             .GetProperty("content")
             .GetString();
+        Assert.Contains("公开中文采购中标/成交结果公告", capturedSystemPrompt!);
         Assert.Contains("表格中的最终报价单位是万元", capturedPrompt!);
         Assert.Contains("MsoNormalTable", capturedPrompt!);
         Assert.Contains("成交结果公告.pdf", capturedPrompt!);
+        Assert.Contains("https://example.test/result.pdf", capturedPrompt!);
+        Assert.DoesNotContain("https://example.test/notice", capturedPrompt!);
+        var logs = string.Join('\n', logger.Messages);
+        Assert.Contains("request body before DeepSeek call", logs);
+        Assert.Contains(capturedBody!, logs);
+        Assert.Contains("raw DeepSeek response", logs);
+        Assert.Contains(responseJson, logs);
+        Assert.DoesNotContain("test-key", logs);
         Assert.Equal("北京乙科技有限公司", record.SupplierName);
         Assert.Equal(BidOpsOutcomeTypes.Awarded, record.OutcomeType);
         Assert.Equal(1234500m, record.AwardAmount);
@@ -283,10 +298,11 @@ public sealed class BidOpsModuleTests
                 ["BidOps:Ai:UseForNoticeStaging"] = "true"
             })
             .Build();
+        var logger = new CapturingLogger<BidOpsStructuredExtractionService>();
         var service = new BidOpsStructuredExtractionService(
             new HttpClient(handler),
             configuration,
-            NullLogger<BidOpsStructuredExtractionService>.Instance);
+            logger);
 
         var extract = await service.ExtractAsync(
             new BidOpsNoticeAiExtractionRequest(
@@ -307,15 +323,28 @@ public sealed class BidOpsModuleTests
             CancellationToken.None);
 
         using var capturedDocument = JsonDocument.Parse(capturedBody!);
+        var capturedSystemPrompt = capturedDocument.RootElement
+            .GetProperty("messages")[0]
+            .GetProperty("content")
+            .GetString();
         var capturedPrompt = capturedDocument.RootElement
             .GetProperty("messages")[1]
             .GetProperty("content")
             .GetString();
+        Assert.Contains("公开招投标/采购公告", capturedSystemPrompt!);
         Assert.Contains("公告正文 HTML", capturedPrompt!);
         Assert.Contains("MsoNormalTable", capturedPrompt!);
         Assert.Contains("附件 1", capturedPrompt!);
         Assert.Contains("成交结果附件.pdf", capturedPrompt!);
-        Assert.Contains("AwardAnnouncement or ResultAnnouncement", capturedPrompt!);
+        Assert.Contains("https://example.test/attachment.pdf", capturedPrompt!);
+        Assert.DoesNotContain("https://example.test/notice", capturedPrompt!);
+        Assert.Contains("AwardAnnouncement 或 ResultAnnouncement", capturedPrompt!);
+        var logs = string.Join('\n', logger.Messages);
+        Assert.Contains("request body before DeepSeek call", logs);
+        Assert.Contains(capturedBody!, logs);
+        Assert.Contains("raw DeepSeek response", logs);
+        Assert.Contains(responseJson, logs);
+        Assert.DoesNotContain("test-key", logs);
         Assert.Equal("CG-2026-001", extract.ProjectCode);
         Assert.Equal("包1", Assert.Single(extract.Packages).PackageNo);
     }
@@ -2339,6 +2368,41 @@ resultValue.notice.bidagtName: 山东诚信工程建设监理有限公司
             CancellationToken cancellationToken)
         {
             return _sendAsync(request, cancellationToken);
+        }
+    }
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull
+        {
+            return NullScope.Instance;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return true;
+        }
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Messages.Add(formatter(state, exception));
+        }
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+
+            public void Dispose()
+            {
+            }
         }
     }
 

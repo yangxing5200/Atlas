@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
@@ -64,7 +65,7 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
                     new
                     {
                         role = "system",
-                        content = "You extract public Chinese procurement award/candidate notices into strict JSON. Return JSON only. Do not infer private or unavailable facts."
+                        content = "你负责从公开中文采购中标/成交结果公告、候选人公示中提取结构化 JSON。只返回 JSON，不要编造公告中没有的事实，不要推断非公开信息。"
                     },
                     new
                     {
@@ -73,19 +74,61 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
                     }
                 }
             };
+            var requestJson = JsonSerializer.Serialize(requestBody, JsonOptions);
+            var stopwatch = Stopwatch.StartNew();
+            _logger.LogInformation(
+                "BidOps outcome supplier AI request started. provider={Provider}, model={Model}, endpoint={Endpoint}, noticeType={NoticeType}, titleLength={TitleLength}, promptChars={PromptChars}, attachmentCount={AttachmentCount}, reviewerPrompt={HasReviewerPrompt}.",
+                settings.Provider,
+                settings.Model,
+                FormatEndpointForLog(settings.Endpoint),
+                request.NoticeType,
+                request.Title.Length,
+                prompt.Length,
+                request.Attachments?.Count ?? 0,
+                !string.IsNullOrWhiteSpace(request.ReviewerPrompt));
+            _logger.LogInformation(
+                "BidOps outcome supplier AI request body before DeepSeek call. requestBody={RequestBody}",
+                requestJson);
 
             using var httpRequest = new HttpRequestMessage(HttpMethod.Post, settings.Endpoint)
             {
-                Content = new StringContent(JsonSerializer.Serialize(requestBody, JsonOptions), Encoding.UTF8, "application/json")
+                Content = new StringContent(requestJson, Encoding.UTF8, "application/json")
             };
             httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
 
             using var response = await _httpClient.SendAsync(httpRequest, ct);
-            response.EnsureSuccessStatusCode();
-
             var responseText = await response.Content.ReadAsStringAsync(ct);
+            stopwatch.Stop();
+            _logger.LogInformation(
+                "BidOps outcome supplier AI raw DeepSeek response. statusCode={StatusCode}, responseBody={ResponseBody}",
+                (int)response.StatusCode,
+                responseText);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "BidOps outcome supplier AI request failed. provider={Provider}, model={Model}, endpoint={Endpoint}, statusCode={StatusCode}, elapsedMs={ElapsedMs}, responseChars={ResponseChars}.",
+                    settings.Provider,
+                    settings.Model,
+                    FormatEndpointForLog(settings.Endpoint),
+                    (int)response.StatusCode,
+                    stopwatch.ElapsedMilliseconds,
+                    responseText.Length);
+                response.EnsureSuccessStatusCode();
+            }
+
             var content = ExtractAssistantContent(responseText);
-            return ParseRecords(content);
+            var records = ParseRecords(content);
+            _logger.LogInformation(
+                "BidOps outcome supplier AI request completed. provider={Provider}, model={Model}, endpoint={Endpoint}, statusCode={StatusCode}, elapsedMs={ElapsedMs}, responseChars={ResponseChars}, assistantChars={AssistantChars}, recordCount={RecordCount}.",
+                settings.Provider,
+                settings.Model,
+                FormatEndpointForLog(settings.Endpoint),
+                (int)response.StatusCode,
+                stopwatch.ElapsedMilliseconds,
+                responseText.Length,
+                content.Length,
+                records.Count);
+            return records;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -104,13 +147,13 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
             request.DeterministicExtracts.Take(MaxReferenceExtracts),
             JsonOptions);
         var reviewerPrompt = string.IsNullOrWhiteSpace(request.ReviewerPrompt)
-            ? "No reviewer correction prompt was provided."
+            ? "审核人员没有提供额外修正提示。"
             : request.ReviewerPrompt.Trim();
         var sourceBundle = BuildSourceBundle(request);
         var expectedFields = BuildExpectedFields(request.NoticeType, request.Title);
 
         return $$"""
-Return one JSON object with this exact shape:
+请只返回一个 JSON 对象，结构必须严格符合下面的形状：
 {
   "records": [
     {
@@ -133,43 +176,49 @@ Return one JSON object with this exact shape:
   ]
 }
 
-Rules:
-- Extract only public result, award, shortlisted, or candidate supplier rows.
-- Keep original Chinese organization names exactly as written.
-- Required fields depend on the notice type:
+规则：
+- 只提取公开公告中的中标/成交结果、入围、推荐候选人或成交候选人厂家明细。
+- 中文组织名称必须保持公告原文写法，不要改写、翻译或补全。
+- 必填/重点字段取决于公告类型：
 {{expectedFields}}
-- Candidate/public recommendation notices must include 采购编号 in projectCode, 分标编号 in lotNo, 分标名称 in lotName, 包号 in packageNo, 包名称 in packageName, 排名 in rank, 推荐的成交候选人/推荐中标候选人 in supplierName, and 最终报价 in awardAmount when public.
-- Award/result notices must include 采购编号 in projectCode, 分标编号 in lotNo, 分标名称 in lotName, 包号 in packageNo, outcomeType Awarded for 中标/成交/成交供应商 rows, and 成交供应商/中标人 in supplierName.
-- If a table row has only package number and supplier, inherit public project code, buyer, lot number, lot name, or procurement number from the surrounding body text when explicit.
-- Do not confuse 采购编号/采购项目编号 with 分标编号. Use projectCode for 采购编号/项目编号 and lotNo for 分标编号/标段编号.
-- Do not confuse 分标名称 with 分标编号. Put names in lotName/packageName, not lotNo/packageNo.
-- Preserve packageNo exactly as written, including prefixes such as 包 or 第...包. Do not return bare 1 when the source text says 包1.
-- Do not use attachment filename prefixes as facts unless the same value appears in the document content.
-- Skip failed/流标/废标 rows unless a supplier is explicitly awarded or recommended.
-- Buyer, agency, contact, bank account, service-fee collection, and complaint organization names are not suppliers.
-- 采购代理服务费, 代理服务费, or 服务费金额 belongs in procurementAgencyServiceFeeAmount. It is not awardAmount.
-- If amounts are in 万元, convert to yuan before returning JSON. If unknown or a discount/rate/percentage, use null.
-- Evidence text must be a short source fragment from the public notice or attachment text. For candidate notices, prefer including the public 评审情况 or recommendation/ranking context in evidenceText.
-- Prefer complete records over many uncertain fragments. If no supplier is present, return an empty records array.
-- Deterministic extraction below is a reference only; correct it when it missed a PDF/table row or mixed up common body fields.
-- When the reviewer correction prompt conflicts with deterministic extraction and the source text supports the correction, follow the reviewer correction prompt.
-- Announcement body HTML is authoritative for inline HTML/Word tables such as MsoNormalTable. Attachments can contain the public result table; use extracted attachment text and attachment metadata to resolve rows.
+- 推荐候选人公示必须尽量提取：采购编号 -> projectCode，分标编号 -> lotNo，分标名称 -> lotName，包号 -> packageNo，包名称 -> packageName，排名 -> rank，推荐的成交候选人/推荐中标候选人 -> supplierName，公开的最终报价 -> awardAmount。
+- 中标/成交结果公告必须尽量提取：采购编号 -> projectCode，分标编号 -> lotNo，分标名称 -> lotName，包号 -> packageNo；中标/成交/成交供应商行的 outcomeType 必须为 Awarded，成交供应商/中标人 -> supplierName。
+- 如果表格行里只有包号和厂家，但正文公共部分明确写了采购编号、采购方、分标编号或分标名称，可以从正文公共部分继承这些字段。
+- 不要把“采购编号/采购项目编号”和“分标编号”混淆。采购编号/项目编号放 projectCode，分标编号/标段编号放 lotNo。
+- 不要把“分标名称”和“分标编号”混淆。名称放 lotName/packageName，编号放 lotNo/packageNo。
+- packageNo 必须保留原文写法，包括“包”“第...包”等前缀。原文是“包1”时不要返回裸数字“1”。
+- 除非附件文件名里的值也出现在正文或附件内容里，否则不要把附件文件名前缀当成事实。
+- 流标、废标、失败行不要作为中标/候选明细返回，除非该行明确给出了中标或推荐厂家。
+- 采购方、代理机构、联系人、银行账户、服务费收取单位、投诉受理单位都不是厂家。
+- “采购代理服务费”“代理服务费”“服务费金额”放到 procurementAgencyServiceFeeAmount，不能放到 awardAmount。
+- 金额如果单位是“万元”，返回 JSON 前必须换算为“元”。未知金额、折扣率、费率、百分比返回 null。
+- evidenceText 必须是公告正文或附件文本中的简短原文片段。候选人公示优先包含公开的评审情况、排名或推荐上下文。
+- 优先返回完整可信的记录，不要为了凑数量返回大量不确定碎片。如果没有厂家，返回空 records 数组。
+- 下方“规则解析参考结果”只作为参考；如果它漏掉 PDF/表格行，或把正文公共字段混错，你需要根据原文纠正。
+- 如果“审核人员修正提示”和规则解析参考结果冲突，并且公告原文支持审核人员修正提示，则优先按审核人员修正提示提取。
+- 公告正文 HTML 对 Word/HTML 表格（例如 MsoNormalTable）优先级最高。附件可能包含公开结果表；需要结合附件提取文本和附件元数据识别明细。
 
-Reviewer correction prompt:
+审核人员修正提示：
 {{reviewerPrompt}}
 
-Notice metadata:
-title: {{request.Title}}
-noticeType: {{request.NoticeType}}
-sourceUrl: {{request.SourceUrl}}
-publishTime: {{request.PublishTime?.ToString("O", CultureInfo.InvariantCulture) ?? ""}}
+公告元数据：
+标题：{{request.Title}}
+公告类型提示：{{request.NoticeType}}
+发布时间：{{request.PublishTime?.ToString("O", CultureInfo.InvariantCulture) ?? ""}}
 
-Deterministic extraction reference:
+规则解析参考结果：
 {{deterministicJson}}
 
-Public source materials:
+公开来源材料：
 {{Truncate(sourceBundle, maxInputCharacters)}}
 """;
+    }
+
+    private static string FormatEndpointForLog(string endpoint)
+    {
+        return Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
+            ? $"{uri.Host}{uri.AbsolutePath}"
+            : endpoint;
     }
 
     private static string BuildExpectedFields(string noticeType, string title)
@@ -178,26 +227,26 @@ Public source materials:
         if (ContainsAny(signal, "CandidateAnnouncement", "中标候选人", "成交候选人", "推荐"))
         {
             return """
-  - CandidateAnnouncement/推荐候选人公示: return one record per candidate row with projectCode, lotNo, lotName, packageNo, packageName, rank, supplierName, awardAmount when final quote is public, outcomeType Candidate, evidenceText with public 评审情况/ranking context.
+  - 公告类型为 CandidateAnnouncement（推荐候选人公示）时：每一行候选人返回一条记录；需要尽量包含 projectCode、lotNo、lotName、packageNo、packageName、rank、supplierName；公开最终报价放 awardAmount；outcomeType 用 Candidate；evidenceText 包含公开评审情况、排名或推荐上下文。
 """;
         }
 
         if (ContainsAny(signal, "AwardAnnouncement", "ResultAnnouncement", "中标结果", "成交结果", "结果公告"))
         {
             return """
-  - AwardAnnouncement/ResultAnnouncement/中标成交结果公告: return one record per awarded supplier row with projectCode, lotNo, lotName, packageNo, packageName if present, supplierName, outcomeType Awarded, awardAmount when public, procurementAgencyServiceFeeAmount when public, and evidenceText.
+  - 公告类型为 AwardAnnouncement 或 ResultAnnouncement（中标/成交结果公告）时：每一行中标/成交厂家返回一条记录；需要尽量包含 projectCode、lotNo、lotName、packageNo、packageName、supplierName；outcomeType 用 Awarded；公开成交金额放 awardAmount；公开代理服务费放 procurementAgencyServiceFeeAmount；evidenceText 保留原文证据。
 """;
         }
 
         if (ContainsAny(signal, "ProcurementAnnouncement", "TenderAnnouncement", "采购公告", "招标公告"))
         {
             return """
-  - Procurement/Tender announcements normally do not have public winning suppliers. Return an empty records array unless the source explicitly contains awarded/candidate supplier rows.
+  - 公告类型为 ProcurementAnnouncement 或 TenderAnnouncement（采购/招标公告）时：通常没有中标/候选厂家。除非原文明确包含中标、成交或候选厂家行，否则返回空 records 数组。
 """;
         }
 
         return """
-  - Other/unknown notice type: return records only for explicit public awarded/candidate supplier rows; otherwise return an empty records array.
+  - 其他或未知公告类型：只在原文明确出现公开中标/成交/候选厂家行时返回记录，否则返回空 records 数组。
 """;
     }
 
@@ -220,11 +269,11 @@ Public source materials:
             var attachment = attachments[i];
             builder.AppendLine();
             builder.AppendLine($"附件 {i + 1}");
-            builder.AppendLine($"fileName: {attachment.FileName}");
-            builder.AppendLine($"fileType: {attachment.FileType}");
-            builder.AppendLine($"fileUrl: {attachment.FileUrl}");
-            builder.AppendLine($"fileSize: {attachment.FileSize?.ToString(CultureInfo.InvariantCulture) ?? string.Empty}");
-            AppendSection(builder, "extractedText", attachment.Text);
+            builder.AppendLine($"文件名：{attachment.FileName}");
+            builder.AppendLine($"文件类型：{attachment.FileType}");
+            builder.AppendLine($"文件地址：{attachment.FileUrl}");
+            builder.AppendLine($"文件大小：{attachment.FileSize?.ToString(CultureInfo.InvariantCulture) ?? string.Empty}");
+            AppendSection(builder, "附件提取文本", attachment.Text);
         }
 
         return builder.ToString();

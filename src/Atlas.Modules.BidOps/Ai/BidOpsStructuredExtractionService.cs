@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
@@ -78,7 +79,7 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
                 new
                 {
                     role = "system",
-                    content = "You extract public procurement notices into strict JSON. Do not invent values. Use empty strings or null when unknown."
+                    content = "你负责从公开招投标/采购公告中提取结构化 JSON。不要编造字段；无法从公告或附件确认的内容用空字符串或 null。只返回 JSON。"
                 },
                 new
                 {
@@ -87,19 +88,63 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
                 }
             }
         };
+        var requestJson = JsonSerializer.Serialize(requestBody, JsonOptions);
+        var stopwatch = Stopwatch.StartNew();
+        _logger.LogInformation(
+            "BidOps structured AI request started. provider={Provider}, model={Model}, endpoint={Endpoint}, noticeTypeHint={NoticeTypeHint}, titleLength={TitleLength}, promptChars={PromptChars}, attachmentCount={AttachmentCount}.",
+            settings.Provider,
+            settings.Model,
+            FormatEndpointForLog(settings.Endpoint),
+            request.NoticeType,
+            request.Title.Length,
+            prompt.Length,
+            request.Attachments.Count);
+        _logger.LogInformation(
+            "BidOps structured AI request body before DeepSeek call. requestBody={RequestBody}",
+            requestJson);
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, settings.Endpoint)
         {
-            Content = new StringContent(JsonSerializer.Serialize(requestBody, JsonOptions), Encoding.UTF8, "application/json")
+            Content = new StringContent(requestJson, Encoding.UTF8, "application/json")
         };
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
 
         using var response = await _httpClient.SendAsync(httpRequest, ct);
-        response.EnsureSuccessStatusCode();
         var responseText = await response.Content.ReadAsStringAsync(ct);
+        stopwatch.Stop();
+        _logger.LogInformation(
+            "BidOps structured AI raw DeepSeek response. statusCode={StatusCode}, responseBody={ResponseBody}",
+            (int)response.StatusCode,
+            responseText);
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning(
+                "BidOps structured AI request failed. provider={Provider}, model={Model}, endpoint={Endpoint}, statusCode={StatusCode}, elapsedMs={ElapsedMs}, responseChars={ResponseChars}.",
+                settings.Provider,
+                settings.Model,
+                FormatEndpointForLog(settings.Endpoint),
+                (int)response.StatusCode,
+                stopwatch.ElapsedMilliseconds,
+                responseText.Length);
+            response.EnsureSuccessStatusCode();
+        }
+
         var content = ExtractAssistantContent(responseText);
         var extracted = ParseAiJson(content, fallback);
-        return EnsureUsable(extracted, fallback);
+        var usable = EnsureUsable(extracted, fallback);
+        _logger.LogInformation(
+            "BidOps structured AI request completed. provider={Provider}, model={Model}, endpoint={Endpoint}, statusCode={StatusCode}, elapsedMs={ElapsedMs}, responseChars={ResponseChars}, assistantChars={AssistantChars}, noticeType={NoticeType}, packageCount={PackageCount}, requirementCount={RequirementCount}.",
+            settings.Provider,
+            settings.Model,
+            FormatEndpointForLog(settings.Endpoint),
+            (int)response.StatusCode,
+            stopwatch.ElapsedMilliseconds,
+            responseText.Length,
+            content.Length,
+            usable.NoticeType,
+            usable.Packages.Count,
+            usable.Packages.Sum(x => x.Requirements.Count));
+        return usable;
     }
 
     private static string BuildPrompt(
@@ -109,7 +154,7 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
     {
         var fallbackJson = JsonSerializer.Serialize(fallback, JsonOptions);
         return $$"""
-Return one JSON object with this exact shape:
+请只返回一个 JSON 对象，结构必须严格符合下面的形状：
 {
   "noticeType": "TenderAnnouncement|ProcurementAnnouncement|CandidateAnnouncement|AwardAnnouncement|ChangeAnnouncement|Other",
   "projectName": "",
@@ -154,31 +199,37 @@ Return one JSON object with this exact shape:
   ]
 }
 
-Rules:
-- Use only facts present in the public notice text.
-- Keep original Chinese names and requirement text.
-- Do not invent buyer, agency, budget, package, or dates.
-- If package data is absent, return one package with empty packageNo and packageName equal to projectName.
-- Include qualification, deadline, bid document, warranty, performance, and rejection-risk requirements when present.
-- Decide which fields to prioritize from noticeType/title/content:
-  - TenderAnnouncement or ProcurementAnnouncement: return notice-level project/buyer/agency/dates plus packages and requirements.
-  - CandidateAnnouncement: return notice-level fields plus package rows when visible; candidate supplier rows are handled by the outcome extractor, so do not invent them in requirements.
-  - AwardAnnouncement or ResultAnnouncement: return notice-level projectCode/buyer/agency/publishTime and package identity fields when visible; winner rows are handled by the outcome extractor.
-  - CorrectionAnnouncement/ChangeAnnouncement: return changed notice-level fields and any affected package/deadline fields that are explicitly present.
-- Announcement body HTML is authoritative for inline tables such as Word/MsoNormalTable. Use attachment extracted text when packages or requirements are in PDF/Word/Excel/ZIP attachments.
-- Fallback deterministic extraction for reference: {{fallbackJson}}
+规则：
+- 只能使用公开公告正文、公告 HTML、附件提取文本中明确出现的事实。
+- 中文项目名、采购方、代理机构、分标/包件名称、资格要求等必须保持原文写法。
+- 不要编造采购方、代理机构、预算、包件、日期或资格要求；无法确认时用空字符串或 null。
+- 如果没有明确包件表格，返回一个包件：packageNo 为空，packageName 使用 projectName。
+- 如公告中出现资格、截止时间、标书、质保、履约、否决/废标风险等要求，需要写入 requirements。
+- 根据公告类型、标题和内容判断字段重点：
+  - TenderAnnouncement 或 ProcurementAnnouncement：提取公告级项目、采购方、代理机构、时间字段，以及包件和要求。
+  - CandidateAnnouncement：提取公告级字段和可见包件字段；候选厂家明细由中标/候选明细解析器处理，不要把厂家行编造成 requirements。
+  - AwardAnnouncement 或 ResultAnnouncement：提取公告级 projectCode、buyerName、agencyName、publishTime，以及可见的分标/包件身份字段；中标厂家行由中标/候选明细解析器处理。
+  - CorrectionAnnouncement 或 ChangeAnnouncement：只提取正文明确变更的公告级字段，以及受影响的包件/截止时间字段。
+- 公告正文 HTML 对 Word/HTML 表格（例如 MsoNormalTable）优先级最高。包件或资格要求在 PDF/Word/Excel/ZIP 附件中时，使用附件提取文本。
+- 下面是规则解析参考结果，只作为参考；如果公开原文更准确，以公开原文为准：{{fallbackJson}}
 
-Notice title:
+公告标题：
 {{request.Title}}
 
-Notice metadata:
-noticeType hint: {{request.NoticeType}}
-sourceUrl: {{request.SourceUrl}}
-publishTime: {{request.PublishTime?.ToString("O", CultureInfo.InvariantCulture) ?? ""}}
+公告元数据：
+公告类型提示：{{request.NoticeType}}
+发布时间：{{request.PublishTime?.ToString("O", CultureInfo.InvariantCulture) ?? ""}}
 
-Public source materials:
+公开来源材料：
 {{sourceBundle}}
 """;
+    }
+
+    private static string FormatEndpointForLog(string endpoint)
+    {
+        return Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
+            ? $"{uri.Host}{uri.AbsolutePath}"
+            : endpoint;
     }
 
     private static string BuildDeterministicSourceText(BidOpsNoticeAiExtractionRequest request)
@@ -212,11 +263,11 @@ Public source materials:
             var attachment = request.Attachments[i];
             builder.AppendLine();
             builder.AppendLine($"附件 {i + 1}");
-            builder.AppendLine($"fileName: {attachment.FileName}");
-            builder.AppendLine($"fileType: {attachment.FileType}");
-            builder.AppendLine($"fileUrl: {attachment.FileUrl}");
-            builder.AppendLine($"fileSize: {attachment.FileSize?.ToString(CultureInfo.InvariantCulture) ?? string.Empty}");
-            AppendSection(builder, "extractedText", attachment.Text);
+            builder.AppendLine($"文件名：{attachment.FileName}");
+            builder.AppendLine($"文件类型：{attachment.FileType}");
+            builder.AppendLine($"文件地址：{attachment.FileUrl}");
+            builder.AppendLine($"文件大小：{attachment.FileSize?.ToString(CultureInfo.InvariantCulture) ?? string.Empty}");
+            AppendSection(builder, "附件提取文本", attachment.Text);
         }
 
         return builder.ToString();

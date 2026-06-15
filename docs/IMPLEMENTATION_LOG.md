@@ -1,5 +1,23 @@
 # Implementation Log
 
+## 2026-06-15 BidOps DeepSeek Chinese Prompts And Request Logging
+
+Completed:
+
+- Rewrote the DeepSeek/OpenAI-compatible structured notice prompt in Chinese while keeping JSON schema field names and enum values unchanged.
+- Rewrote the DeepSeek/OpenAI-compatible outcome supplier prompt in Chinese, including candidate/result field mapping, reviewer correction handling, package-number preservation, amount-unit handling, and attachment/table guidance.
+- Changed attachment metadata labels in AI source bundles from English to Chinese.
+- Removed the public notice detail URL from DeepSeek prompt material; prompts now pass announcement body HTML plus attachment URLs, metadata, and extracted text.
+- Added AI request start, failure, and completion logs for structured notice extraction and outcome supplier extraction. Logs include provider/model/endpoint host path, prompt and response sizes, status code, elapsed time, attachment counts, parsed result counts, the full JSON request body sent to DeepSeek, and the full raw DeepSeek response body. Authorization/API keys are still excluded.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierAiExtractionService_ExtractsDeepSeekJsonRecords|BidOpsStructuredExtractionService_SendsHtmlAndAttachmentsToDeepSeek" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1` succeeded: 2 passed, including assertions that logs contain the full request body and full raw response body while excluding the API key.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\BidOpsDeepSeekFullLogs\"` succeeded with 0 warnings after rerunning outside a transient local `obj` file lock.
+- `git diff --check` succeeded.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps -n` returned no matches.
+- Secret scan for common API key/token patterns returned no matches.
+
 ## 2026-06-15 BidOps PR Conflict Resolution
 
 Completed:
