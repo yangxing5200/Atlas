@@ -374,6 +374,12 @@ export const bidOpsRoutes: RouteRecordRaw[] = [
     meta: { title: 'BidOps 后台任务', permissionsAny: [BIDOPS_PERMISSIONS.CRAWL_READ] },
   },
   {
+    path: '/bidops/operations/jobs/:id',
+    name: 'BidOpsOperationsJobDetail',
+    component: () => import('@/modules/operations/pages/BackgroundJobDetailPage.vue'),
+    meta: { title: 'BidOps 后台任务详情', permissionsAny: [BIDOPS_PERMISSIONS.CRAWL_READ] },
+  },
+  {
     path: '/bidops/operations/channels',
     name: 'BidOpsOperationsChannels',
     component: () => import('./pages/operations/BidOpsChannelHealthPage.vue'),

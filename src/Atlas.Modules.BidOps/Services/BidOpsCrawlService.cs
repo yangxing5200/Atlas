@@ -232,16 +232,21 @@ public sealed class BidOpsCrawlService : IBidOpsCrawlService
         var tenant = RequireTenant();
         var userId = RequireUser();
         var urlHash = _hasher.HashUrl(uri.ToString());
+        var deduplicationKey = request.ForceRefresh
+            ? $"bidops:manual-url-refresh:{tenant}:{urlHash}:{Guid.NewGuid():N}"
+            : $"bidops:manual-url:{tenant}:{urlHash}";
 
         var result = await _jobs.EnqueueAsync(
             new EnqueueBackgroundJobRequest<ManualUrlImportJobPayload>
             {
                 JobType = BidOpsBackgroundJobTypes.ManualUrlImport,
                 Queue = BidOpsBackgroundJobQueues.BidOps,
-                JobName = "BidOps manual public URL import",
+                JobName = request.ForceRefresh
+                    ? "BidOps manual public URL refresh import"
+                    : "BidOps manual public URL import",
                 TenantId = tenant,
                 StoreId = _identity.StoreId,
-                DeduplicationKey = $"bidops:manual-url:{tenant}:{urlHash}",
+                DeduplicationKey = deduplicationKey,
                 MaxAttempts = 3,
                 Payload = new ManualUrlImportJobPayload(
                     tenant,
@@ -253,7 +258,8 @@ public sealed class BidOpsCrawlService : IBidOpsCrawlService
                     uri.ToString(),
                     request.Title,
                     request.NoticeType,
-                    request.TextContent)
+                    request.TextContent,
+                    request.ForceRefresh)
             },
             ct);
 

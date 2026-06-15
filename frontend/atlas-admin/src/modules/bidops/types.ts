@@ -10,6 +10,10 @@ export interface RawNoticeSearchQuery extends BidOpsPagedQuery {
   status?: RawNoticeStatus
 }
 
+export interface NoticeSearchQuery extends BidOpsPagedQuery {
+  noticeType?: string
+}
+
 export interface CrawlRunLogSearchQuery extends BidOpsPagedQuery {
   sourceId?: BidOpsId
   channelId?: BidOpsId
@@ -20,6 +24,7 @@ export interface CrawlRunLogSearchQuery extends BidOpsPagedQuery {
 
 export interface ReviewTaskSearchQuery extends BidOpsPagedQuery {
   status?: ReviewTaskStatus
+  noticeType?: string
 }
 
 export type ProcessingFailureSearchQuery = BidOpsPagedQuery
@@ -110,6 +115,8 @@ export interface RawNoticeDto {
   textContent?: string
   status: RawNoticeStatus
   lastError: string
+  createdAt: string
+  updatedAt?: string | null
 }
 
 export interface RawNoticePipelineDto {
@@ -189,6 +196,7 @@ export interface ReviewTaskDto {
   requirementCount: number
   rejectRiskCount: number
   createdAt: string
+  updatedAt?: string | null
   reviewedAt?: string | null
 }
 
@@ -252,8 +260,25 @@ export interface ReviewTaskDetailDto {
   task: ReviewTaskDto
   rawNotice?: RawNoticeDto | null
   notice?: NoticeStagingDto | null
+  buyer?: ReviewBuyerInfoDto | null
+  outcomeSuppliers: OutcomeSupplierRecordDto[]
   packages: PackageStagingDto[]
   attachments: RawAttachmentDto[]
+}
+
+export interface ReviewBuyerInfoDto {
+  buyerId?: BidOpsId | null
+  buyerName: string
+  exists: boolean
+  willCreateOnApproval: boolean
+  projectName: string
+  projectCode: string
+  noticeTitle: string
+  sourceUrl: string
+  region: string
+  publishTime?: string | null
+  budgetAmount?: number | null
+  packageCount: number
 }
 
 export interface NoticeDto {
@@ -269,6 +294,8 @@ export interface NoticeDto {
   publishTime?: string | null
   bidDeadline?: string | null
   status: string
+  createdAt: string
+  updatedAt?: string | null
 }
 
 export interface TenderPackageDto {
@@ -473,6 +500,7 @@ export interface OutcomeSupplierRecordDto {
   rawNoticeId: BidOpsId
   noticeId?: BidOpsId | null
   tenderPackageId?: BidOpsId | null
+  buyerId?: BidOpsId | null
   supplierId?: BidOpsId | null
   sourceUrl: string
   noticeTitle: string
@@ -491,6 +519,7 @@ export interface OutcomeSupplierRecordDto {
   outcomeType: string
   rank?: number | null
   awardAmount?: number | null
+  procurementAgencyServiceFeeAmount?: number | null
   currency: string
   evidenceText: string
   extractionConfidence: number
@@ -526,6 +555,7 @@ export interface PackageHistoricalSupplierLeadDto {
   outcomeType: string
   rank?: number | null
   awardAmount?: number | null
+  procurementAgencyServiceFeeAmount?: number | null
   currency: string
   projectName: string
   projectCode: string
@@ -861,6 +891,13 @@ export interface ImportPublicUrlRequest {
   title?: string | null
   noticeType?: string | null
   textContent?: string | null
+  forceRefresh?: boolean
+}
+
+export interface BackfillRawNoticeAttachmentsRequest {
+  maxItems?: number
+  includeAlreadyProcessed?: boolean
+  forceReparse?: boolean
 }
 
 export interface BackfillRawNoticeAttachmentsRequest {
@@ -875,6 +912,27 @@ export interface ReparseRawNoticeRequest {
 
 export interface ReviewDecisionRequest {
   remark?: string | null
+}
+
+export interface ReviewOutcomeAiReparseRequest {
+  prompt: string
+}
+
+export interface ReviewOutcomeSupplierRecordEditRequest {
+  projectName?: string | null
+  projectCode?: string | null
+  buyerName?: string | null
+  lotNo?: string | null
+  lotName?: string | null
+  packageNo?: string | null
+  packageName?: string | null
+  category?: string | null
+  supplierName?: string | null
+  outcomeType?: string | null
+  rank?: number | null
+  awardAmount?: number | null
+  procurementAgencyServiceFeeAmount?: number | null
+  evidenceText?: string | null
 }
 
 export interface CreateOpportunityRequest {

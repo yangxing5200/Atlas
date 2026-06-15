@@ -3,7 +3,9 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Close, Refresh } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
+import { bidOpsOperationsApi } from '@/api/bidops/operations.api'
 import { backgroundJobsApi } from '@/api/operations/backgroundJobs.api'
+import BidOpsJobParsedResultPanel from '@/modules/bidops/components/BidOpsJobParsedResultPanel.vue'
 import PageContainer from '@/shared/components/PageContainer.vue'
 import { formatDateTime } from '@/shared/utils/date'
 import JobStatusTag from '../components/JobStatusTag.vue'
@@ -15,6 +17,14 @@ const router = useRouter()
 const loading = ref(false)
 const job = ref<BackgroundJobDetailDto | null>(null)
 const jobId = computed(() => String(route.params.id || ''))
+const bidOpsMode = computed(() => route.path.startsWith('/bidops/operations/jobs'))
+const isBidOpsJob = computed(() => {
+  const value = job.value
+  return Boolean(value && (value.queue === 'bidops' || value.jobType?.startsWith('bidops.')))
+})
+const pageTitle = computed(() => (bidOpsMode.value ? 'BidOps 后台任务详情' : '后台任务详情'))
+const formattedPayload = computed(() => formatJsonText(job.value?.payload))
+const formattedResult = computed(() => formatJsonText(job.value?.result))
 
 async function loadData() {
   loading.value = true
@@ -30,7 +40,9 @@ async function loadData() {
 async function retryJob() {
   if (!job.value) return
   await ElMessageBox.confirm('将创建新的后台任务，原任务历史不会被覆盖。', '确认重试', { type: 'warning' })
-  const result = await backgroundJobsApi.retry(String(job.value.id))
+  const result = bidOpsMode.value
+    ? await bidOpsOperationsApi.retryJob(String(job.value.id))
+    : await backgroundJobsApi.retry(String(job.value.id))
   ElMessage.success(`已创建重试任务：${result.newJobId}`)
   await loadData()
 }
@@ -40,16 +52,34 @@ async function cancelJob() {
   await ElMessageBox.confirm('Running 任务不会被强制终止，仅 Pending / Failed / Dead 可取消。', '确认取消', {
     type: 'warning',
   })
-  const result = await backgroundJobsApi.cancel(String(job.value.id))
+  const result = bidOpsMode.value
+    ? await bidOpsOperationsApi.cancelJob(String(job.value.id))
+    : await backgroundJobsApi.cancel(String(job.value.id))
   ElMessage.success(result.message)
   await loadData()
+}
+
+function formatJsonText(value?: string | null) {
+  if (!value?.trim()) return '-'
+
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2)
+  } catch {
+    return decodeUnicodeEscapes(value)
+  }
+}
+
+function decodeUnicodeEscapes(value: string) {
+  return value.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) =>
+    String.fromCharCode(Number.parseInt(hex, 16)),
+  )
 }
 
 onMounted(loadData)
 </script>
 
 <template>
-  <PageContainer title="后台任务详情" :description="`JobId ${jobId}`">
+  <PageContainer :title="pageTitle" :description="`JobId ${jobId}`">
     <template #actions>
       <el-button :icon="ArrowLeft" @click="router.back()">返回</el-button>
       <el-button :icon="Refresh" :loading="loading" @click="loadData">刷新</el-button>
@@ -101,11 +131,15 @@ onMounted(loadData)
         </el-tab-pane>
 
         <el-tab-pane label="Payload">
-          <pre class="code-panel">{{ job.payload || '-' }}</pre>
+          <pre class="code-panel">{{ formattedPayload }}</pre>
         </el-tab-pane>
 
         <el-tab-pane label="结果">
-          <pre class="code-panel">{{ job.result || '-' }}</pre>
+          <pre class="code-panel">{{ formattedResult }}</pre>
+        </el-tab-pane>
+
+        <el-tab-pane v-if="isBidOpsJob" label="解析结果">
+          <BidOpsJobParsedResultPanel :job="job" />
         </el-tab-pane>
 
         <el-tab-pane label="错误">

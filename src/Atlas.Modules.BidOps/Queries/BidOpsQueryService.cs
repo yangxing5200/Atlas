@@ -2,12 +2,16 @@ using System.Text;
 using Atlas.Core.Authorization;
 using Atlas.Data.Abstractions;
 using Atlas.Models.Tenant.Responses;
+using Atlas.Modules.BidOps.Ai;
 using Atlas.Modules.BidOps.Documents;
 using Atlas.Modules.BidOps.Entities;
+using Atlas.Modules.BidOps.Entities.Buyers;
 using Atlas.Modules.BidOps.Entities.Crawling;
+using Atlas.Modules.BidOps.Entities.Outcomes;
 using Atlas.Modules.BidOps.Entities.Staging;
 using Atlas.Modules.BidOps.Entities.Tendering;
 using Atlas.Modules.BidOps.Models;
+using Atlas.Modules.BidOps.Services;
 using Microsoft.Extensions.Logging;
 
 namespace Atlas.Modules.BidOps.Queries;
@@ -18,6 +22,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
     private const int MaxPageSize = 200;
     private const int RawTextContentMaxCharacters = 120_000;
     private const int AttachmentTextContentMaxCharacters = 120_000;
+    private const int OutcomePreviewTextMaxCharacters = 300_000;
     private const string PipelineStatusCompleted = "Completed";
     private const string PipelineStatusPending = "Pending";
     private const string PipelineStatusFailed = "Failed";
@@ -32,6 +37,8 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
     private readonly IRepository<NoticeStaging> _noticeStaging;
     private readonly IRepository<PackageStaging> _packageStaging;
     private readonly IRepository<RequirementStaging> _requirementStaging;
+    private readonly IRepository<Buyer> _buyers;
+    private readonly IRepository<OutcomeSupplierRecord> _outcomeRecords;
     private readonly IRepository<Notice> _notices;
     private readonly IRepository<TenderPackage> _packages;
     private readonly IRepository<RequirementItem> _requirements;
@@ -48,6 +55,8 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         IRepository<NoticeStaging> noticeStaging,
         IRepository<PackageStaging> packageStaging,
         IRepository<RequirementStaging> requirementStaging,
+        IRepository<Buyer> buyers,
+        IRepository<OutcomeSupplierRecord> outcomeRecords,
         IRepository<Notice> notices,
         IRepository<TenderPackage> packages,
         IRepository<RequirementItem> requirements,
@@ -63,6 +72,8 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         _noticeStaging = noticeStaging ?? throw new ArgumentNullException(nameof(noticeStaging));
         _packageStaging = packageStaging ?? throw new ArgumentNullException(nameof(packageStaging));
         _requirementStaging = requirementStaging ?? throw new ArgumentNullException(nameof(requirementStaging));
+        _buyers = buyers ?? throw new ArgumentNullException(nameof(buyers));
+        _outcomeRecords = outcomeRecords ?? throw new ArgumentNullException(nameof(outcomeRecords));
         _notices = notices ?? throw new ArgumentNullException(nameof(notices));
         _packages = packages ?? throw new ArgumentNullException(nameof(packages));
         _requirements = requirements ?? throw new ArgumentNullException(nameof(requirements));
@@ -235,7 +246,9 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
                 ContentHash = x.ContentHash,
                 TextPreview = x.TextPreview,
                 Status = x.Status,
-                LastError = x.LastError
+                LastError = x.LastError,
+                CreatedAt = x.CreatedAt,
+                UpdatedAt = x.UpdatedAt
             }, ct);
 
         return new PagedResult<RawNoticeDto>(total, items, pageIndex, pageSize);
@@ -389,6 +402,19 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         if (query.Status.HasValue)
             builder = builder.Where(x => x.Status == query.Status.Value);
 
+        if (!string.IsNullOrWhiteSpace(query.NoticeType))
+        {
+            var noticeType = query.NoticeType.Trim();
+            var noticeQuery = await _noticeStaging.QueryDataScopeAsync(BidOpsDataResources.ReviewTask, AtlasDataScopeType.AllTenant, ct);
+            var noticeStagingIds = await noticeQuery
+                .Where(x => x.NoticeType == noticeType)
+                .SelectToListAsync(x => x.Id, ct);
+
+            builder = noticeStagingIds.Count == 0
+                ? builder.Where(x => false)
+                : builder.Where(x => x.BizType == "NoticeStaging" && noticeStagingIds.Contains(x.BizId));
+        }
+
         var total = await builder.CountAsync(ct);
         var tasks = await builder
             .OrderByDescending(x => x.CreatedAt)
@@ -500,6 +526,13 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         IReadOnlyList<RawAttachmentDto> attachments = raw == null
             ? Array.Empty<RawAttachmentDto>()
             : await ListRawAttachmentsCoreAsync(raw.Id, ct);
+        var outcomeRecords = raw == null
+            ? []
+            : await ListOutcomeSupplierRecordsForReviewAsync(raw.Id, ct);
+        if (outcomeRecords.Count == 0 && raw != null)
+            outcomeRecords = await BuildOutcomeSupplierPreviewRecordsAsync(raw, ct);
+
+        var buyer = await BuildReviewBuyerInfoAsync(notice, raw, packageDtos.Count, outcomeRecords, ct);
 
         var taskDto = Map(task);
         if (notice != null)
@@ -510,6 +543,8 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             Task = taskDto,
             RawNotice = rawDto,
             Notice = notice == null ? null : Map(notice),
+            Buyer = buyer,
+            OutcomeSuppliers = outcomeRecords.Select(MapOutcomeRecord).ToList(),
             Packages = packageDtos,
             Attachments = attachments.ToList()
         };
@@ -617,6 +652,205 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
                 raw.TextContentStorageKey);
             return BidOpsRawNoticeTextFormatter.ToDisplayText(raw.TextPreview);
         }
+    }
+
+    private async Task<List<OutcomeSupplierRecord>> ListOutcomeSupplierRecordsForReviewAsync(
+        long rawNoticeId,
+        CancellationToken ct)
+    {
+        var builder = await _outcomeRecords.QueryDataScopeAsync(BidOpsDataResources.OutcomeSupplierRecord, AtlasDataScopeType.AllTenant, ct);
+        var records = await builder
+            .Where(x => x.RawNoticeId == rawNoticeId)
+            .ToListAsync(ct);
+        return records
+            .OrderBy(x => x.PackageNo)
+            .ThenBy(x => x.LotNo)
+            .ThenBy(x => x.SupplierName)
+            .ToList();
+    }
+
+    private async Task<List<OutcomeSupplierRecord>> BuildOutcomeSupplierPreviewRecordsAsync(
+        RawNotice raw,
+        CancellationToken ct)
+    {
+        var text = await ReadRawSourceTextForOutcomePreviewAsync(raw, ct);
+        if (!BidOpsOutcomeSupplierTextParser.LooksLikeOutcomeNotice(raw.Title, raw.NoticeType, text))
+            return [];
+
+        var extracts = BidOpsOutcomeSupplierExtractBuilder.Extract(
+            raw.Title,
+            raw.NoticeType,
+            raw.DetailUrl,
+            raw.PublishTime,
+            text,
+            raw.Id);
+        if (extracts.Count == 0)
+            return [];
+
+        var records = new List<OutcomeSupplierRecord>();
+        foreach (var extract in extracts)
+        {
+            var supplierName = Truncate(BidOpsTextQuality.CleanExtractedValue(extract.SupplierName), 300);
+            var supplierNameNormalized = Truncate(BidOpsOutcomeSupplierTextParser.NormalizeSupplierName(supplierName), 191);
+            if (string.IsNullOrWhiteSpace(supplierName) || string.IsNullOrWhiteSpace(supplierNameNormalized))
+                continue;
+
+            records.Add(new OutcomeSupplierRecord
+            {
+                TenantId = raw.TenantId,
+                RawNoticeId = raw.Id,
+                SourceUrl = Truncate(raw.DetailUrl, 1500),
+                NoticeTitle = Truncate(raw.Title, 500),
+                NoticeType = Truncate(raw.NoticeType, 64),
+                ProjectName = Truncate(FirstMeaningful(extract.ProjectName, raw.Title), 500),
+                ProjectCode = Truncate(extract.ProjectCode, 128),
+                BuyerName = Truncate(extract.BuyerName, 300),
+                PublishTime = raw.PublishTime,
+                LotNo = Truncate(extract.LotNo, 128),
+                LotName = Truncate(extract.LotName, 300),
+                PackageNo = Truncate(extract.PackageNo, 128),
+                PackageName = Truncate(FirstMeaningful(extract.PackageName, extract.LotName, raw.Title), 500),
+                Category = Truncate(extract.Category, 128),
+                SupplierName = supplierName,
+                SupplierNameNormalized = supplierNameNormalized,
+                OutcomeType = NormalizeOutcomeType(extract.OutcomeType),
+                Rank = extract.Rank,
+                AwardAmount = extract.AwardAmount,
+                ProcurementAgencyServiceFeeAmount = extract.ProcurementAgencyServiceFeeAmount,
+                Currency = "CNY",
+                EvidenceText = Truncate(extract.EvidenceText, 2000),
+                ExtractionConfidence = ClampConfidence(extract.Confidence),
+                CreatedAt = raw.FetchTime
+            });
+        }
+
+        return records
+            .OrderBy(x => x.PackageNo)
+            .ThenBy(x => x.LotNo)
+            .ThenBy(x => x.SupplierName)
+            .ToList();
+    }
+
+    private async Task<string> ReadRawSourceTextForOutcomePreviewAsync(RawNotice raw, CancellationToken ct)
+    {
+        var builder = new StringBuilder();
+
+        AppendOutcomePreviewText(
+            builder,
+            await TryReadStoredTextForOutcomePreviewAsync(raw.TextContentStorageKey, raw.TextPreview, raw.Id, ct));
+        AppendOutcomePreviewText(
+            builder,
+            await TryReadStoredTextForOutcomePreviewAsync(raw.HtmlSnapshotStorageKey, string.Empty, raw.Id, ct));
+
+        var attachmentBuilder = await _rawAttachments.QueryDataScopeAsync(BidOpsDataResources.RawNotice, AtlasDataScopeType.AllTenant, ct);
+        var attachments = await attachmentBuilder
+            .Where(x => x.RawNoticeId == raw.Id &&
+                        x.TextExtractStatus == TextExtractStatus.Succeeded &&
+                        x.TextContentStorageKey != string.Empty)
+            .OrderBy(x => x.Id)
+            .ToListAsync(ct);
+
+        foreach (var attachment in attachments)
+        {
+            var attachmentText = await TryReadStoredTextForOutcomePreviewAsync(
+                attachment.TextContentStorageKey,
+                string.Empty,
+                raw.Id,
+                ct);
+            if (string.IsNullOrWhiteSpace(attachmentText))
+                continue;
+
+            AppendOutcomePreviewText(builder, $"Attachment: {attachment.FileName}");
+            AppendOutcomePreviewText(builder, attachmentText);
+            if (builder.Length >= OutcomePreviewTextMaxCharacters)
+                break;
+        }
+
+        return builder.ToString();
+    }
+
+    private async Task<string> TryReadStoredTextForOutcomePreviewAsync(
+        string storageKey,
+        string fallback,
+        long rawNoticeId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(storageKey))
+            return fallback;
+
+        try
+        {
+            await using var stream = await _fileStore.OpenReadAsync(storageKey, ct);
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            var text = await reader.ReadToEndAsync(ct);
+            return string.IsNullOrWhiteSpace(text) ? fallback : text;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to read BidOps outcome preview text for RawNoticeId {RawNoticeId} from {StorageKey}.",
+                rawNoticeId,
+                storageKey);
+            return fallback;
+        }
+    }
+
+    private static void AppendOutcomePreviewText(StringBuilder builder, string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || builder.Length >= OutcomePreviewTextMaxCharacters)
+            return;
+
+        if (builder.Length > 0)
+            builder.AppendLine();
+
+        var remaining = OutcomePreviewTextMaxCharacters - builder.Length;
+        if (text.Length > remaining)
+            text = text[..remaining];
+
+        builder.AppendLine(text);
+    }
+
+    private async Task<ReviewBuyerInfoDto?> BuildReviewBuyerInfoAsync(
+        NoticeStaging? notice,
+        RawNotice? raw,
+        int packageCount,
+        IReadOnlyList<OutcomeSupplierRecord> outcomeRecords,
+        CancellationToken ct)
+    {
+        var buyerName = FirstMeaningful(
+            notice?.BuyerName,
+            outcomeRecords.Select(x => x.BuyerName).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)));
+        if (string.IsNullOrWhiteSpace(buyerName))
+            return null;
+
+        var normalized = BidOpsOrganizationNameNormalizer.NormalizeForMatch(buyerName);
+        Buyer? buyer = null;
+        if (!string.IsNullOrWhiteSpace(normalized))
+        {
+            var buyerQuery = await _buyers.QueryDataScopeAsync(BidOpsDataResources.Buyer, AtlasDataScopeType.AllTenant, ct);
+            buyer = await buyerQuery.Where(x => x.NameNormalized == normalized).FirstOrDefaultAsync(ct);
+        }
+
+        var latestOutcome = outcomeRecords
+            .OrderByDescending(x => x.PublishTime ?? x.CreatedAt)
+            .FirstOrDefault();
+
+        return new ReviewBuyerInfoDto
+        {
+            BuyerId = buyer?.Id,
+            BuyerName = buyer?.Name ?? buyerName,
+            Exists = buyer != null,
+            WillCreateOnApproval = buyer == null && normalized.Length >= 4,
+            ProjectName = FirstMeaningful(notice?.ProjectName, latestOutcome?.ProjectName, raw?.Title),
+            ProjectCode = FirstMeaningful(notice?.ProjectCode, latestOutcome?.ProjectCode),
+            NoticeTitle = FirstMeaningful(raw?.Title, latestOutcome?.NoticeTitle),
+            SourceUrl = FirstMeaningful(raw?.DetailUrl, latestOutcome?.SourceUrl),
+            Region = FirstMeaningful(notice?.Region, latestOutcome?.Region),
+            PublishTime = notice?.PublishTime ?? latestOutcome?.PublishTime ?? raw?.PublishTime,
+            BudgetAmount = notice?.BudgetAmount,
+            PackageCount = packageCount
+        };
     }
 
     private async Task<IReadOnlyList<RawAttachmentDto>> ListRawAttachmentsCoreAsync(long rawNoticeId, CancellationToken ct)
@@ -947,14 +1181,24 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         };
     }
 
-    public async Task<PagedResult<NoticeDto>> SearchNoticesAsync(BidOpsPagedQuery query, CancellationToken ct = default)
+    public async Task<PagedResult<NoticeDto>> SearchNoticesAsync(NoticeSearchQuery query, CancellationToken ct = default)
     {
         var (pageIndex, pageSize) = NormalizePaging(query);
         var builder = await _notices.QueryDataScopeAsync(BidOpsDataResources.Notice, AtlasDataScopeType.AllTenant, ct);
         if (!string.IsNullOrWhiteSpace(query.Keyword))
         {
             var keyword = query.Keyword.Trim();
-            builder = builder.Where(x => x.Title.Contains(keyword) || x.ProjectName.Contains(keyword) || x.ProjectCode.Contains(keyword));
+            builder = builder.Where(x =>
+                x.Title.Contains(keyword) ||
+                x.ProjectName.Contains(keyword) ||
+                x.ProjectCode.Contains(keyword) ||
+                x.BuyerName.Contains(keyword));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.NoticeType))
+        {
+            var noticeType = query.NoticeType.Trim();
+            builder = builder.Where(x => x.NoticeType == noticeType);
         }
 
         var total = await builder.CountAsync(ct);
@@ -975,7 +1219,9 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
                 BudgetAmount = x.BudgetAmount,
                 PublishTime = x.PublishTime,
                 BidDeadline = x.BidDeadline,
-                Status = x.Status
+                Status = x.Status,
+                CreatedAt = x.CreatedAt,
+                UpdatedAt = x.UpdatedAt
             }, ct);
 
         return new PagedResult<NoticeDto>(total, items, pageIndex, pageSize);
@@ -1220,7 +1466,9 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             ContentHash = raw.ContentHash,
             TextPreview = BidOpsRawNoticeTextFormatter.ToDisplayText(raw.TextPreview),
             Status = raw.Status,
-            LastError = raw.LastError
+            LastError = raw.LastError,
+            CreatedAt = raw.CreatedAt,
+            UpdatedAt = raw.UpdatedAt
         };
     }
 
@@ -1255,6 +1503,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             Decision = task.Decision,
             Remark = task.Remark,
             CreatedAt = task.CreatedAt,
+            UpdatedAt = task.UpdatedAt,
             ReviewedAt = task.ReviewedAt
         };
     }
@@ -1279,5 +1528,75 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             AiConfidence = notice.AiConfidence,
             ReviewStatus = notice.ReviewStatus
         };
+    }
+
+    private static OutcomeSupplierRecordDto MapOutcomeRecord(OutcomeSupplierRecord record)
+    {
+        return new OutcomeSupplierRecordDto
+        {
+            Id = record.Id,
+            RawNoticeId = record.RawNoticeId,
+            NoticeId = record.NoticeId,
+            TenderPackageId = record.TenderPackageId,
+            BuyerId = record.BuyerId,
+            SupplierId = record.SupplierId,
+            SourceUrl = record.SourceUrl,
+            NoticeTitle = record.NoticeTitle,
+            NoticeType = record.NoticeType,
+            ProjectName = record.ProjectName,
+            ProjectCode = record.ProjectCode,
+            BuyerName = record.BuyerName,
+            Region = record.Region,
+            PublishTime = record.PublishTime,
+            LotNo = record.LotNo,
+            LotName = record.LotName,
+            PackageNo = record.PackageNo,
+            PackageName = record.PackageName,
+            Category = record.Category,
+            SupplierName = record.SupplierName,
+            OutcomeType = record.OutcomeType,
+            Rank = record.Rank,
+            AwardAmount = record.AwardAmount,
+            ProcurementAgencyServiceFeeAmount = record.ProcurementAgencyServiceFeeAmount,
+            Currency = record.Currency,
+            EvidenceText = record.EvidenceText,
+            ExtractionConfidence = record.ExtractionConfidence,
+            CreatedAt = record.CreatedAt
+        };
+    }
+
+    private static string NormalizeOutcomeType(string value)
+    {
+        return value switch
+        {
+            BidOpsOutcomeTypes.Awarded => BidOpsOutcomeTypes.Awarded,
+            BidOpsOutcomeTypes.Shortlisted => BidOpsOutcomeTypes.Shortlisted,
+            _ => BidOpsOutcomeTypes.Candidate
+        };
+    }
+
+    private static decimal ClampConfidence(decimal value)
+    {
+        if (value < 0m)
+            return 0m;
+        return value > 1m ? 1m : value;
+    }
+
+    private static string FirstMeaningful(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+            if (!string.IsNullOrWhiteSpace(cleaned) && !BidOpsTextQuality.IsUnknownMarker(cleaned))
+                return cleaned;
+        }
+
+        return string.Empty;
+    }
+
+    private static string Truncate(string? value, int maxLength)
+    {
+        var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+        return cleaned.Length <= maxLength ? cleaned : cleaned[..maxLength];
     }
 }

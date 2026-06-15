@@ -10,6 +10,8 @@ public sealed class OutcomeSupplierRecord : BidOpsTenantEntity
 
     public long? TenderPackageId { get; set; }
 
+    public long? BuyerId { get; set; }
+
     public long? SupplierId { get; set; }
 
     public string SourceUrl { get; set; } = string.Empty;
@@ -47,6 +49,8 @@ public sealed class OutcomeSupplierRecord : BidOpsTenantEntity
     public int? Rank { get; set; }
 
     public decimal? AwardAmount { get; set; }
+
+    public decimal? ProcurementAgencyServiceFeeAmount { get; set; }
 
     public string Currency { get; set; } = "CNY";
 

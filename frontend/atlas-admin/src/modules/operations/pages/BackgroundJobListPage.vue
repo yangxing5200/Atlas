@@ -167,6 +167,10 @@ function canCancel(row: BackgroundJobListItemDto) {
   return !['Running', 'Succeeded', 'Canceled', '1', '2', '5'].includes(String(row.statusName || row.status))
 }
 
+function jobDetailPath(id: string | number) {
+  return bidOpsMode.value ? `/bidops/operations/jobs/${id}` : `/ops/jobs/${id}`
+}
+
 onMounted(reload)
 </script>
 
@@ -237,7 +241,7 @@ onMounted(reload)
       <el-table-column prop="lastErrorPreview" label="错误信息" min-width="240" show-overflow-tooltip />
       <el-table-column label="操作" width="230" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" :icon="View" @click="router.push(`/ops/jobs/${row.id}`)">详情</el-button>
+          <el-button size="small" :icon="View" @click="router.push(jobDetailPath(row.id))">详情</el-button>
           <el-button size="small" :icon="Refresh" :disabled="!canRetry(row)" @click="retryJob(row)">重试</el-button>
           <el-button size="small" :icon="Close" :disabled="!canCancel(row)" @click="cancelJob(row)">取消</el-button>
         </template>

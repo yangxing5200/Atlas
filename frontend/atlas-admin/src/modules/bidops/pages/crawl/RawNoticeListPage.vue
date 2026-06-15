@@ -87,6 +87,9 @@ async function backfillHistoricalAttachments() {
       <el-table-column label="采集时间" width="170">
         <template #default="{ row }">{{ formatDateTime(row.fetchTime) }}</template>
       </el-table-column>
+      <el-table-column label="最后更新时间" width="170">
+        <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
+      </el-table-column>
       <el-table-column label="状态" width="130">
         <template #default="{ row }"><BidOpsStatusTag :value="row.status" kind="rawNotice" /></template>
       </el-table-column>

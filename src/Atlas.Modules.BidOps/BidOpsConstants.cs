@@ -51,6 +51,8 @@ public static class BidOpsDataResources
     public const string Notice = "bidops.notice";
     public const string TenderPackage = "bidops.tender-package";
     public const string Opportunity = "bidops.opportunity";
+    public const string Buyer = "bidops.buyer";
+    public const string BuyerProcurement = "bidops.buyer-procurement";
     public const string Supplier = "bidops.supplier";
     public const string SupplierEvidence = "bidops.supplier-evidence";
     public const string OutcomeSupplierRecord = "bidops.outcome-supplier-record";

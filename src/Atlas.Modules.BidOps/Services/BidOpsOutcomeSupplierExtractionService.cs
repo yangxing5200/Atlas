@@ -9,7 +9,6 @@ using Atlas.Modules.BidOps.Entities;
 using Atlas.Modules.BidOps.Entities.Crawling;
 using Atlas.Modules.BidOps.Entities.Outcomes;
 using Atlas.Modules.BidOps.Entities.Staging;
-using Atlas.Modules.BidOps.Entities.Suppliers;
 using Atlas.Modules.BidOps.Entities.Tendering;
 using Atlas.Modules.BidOps.Models;
 using Microsoft.EntityFrameworkCore;
@@ -25,9 +24,10 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
     private readonly IRepository<TenderPackage> _packages;
     private readonly IRepository<NoticeStaging> _noticeStaging;
     private readonly IRepository<PackageStaging> _packageStaging;
-    private readonly IRepository<Supplier> _suppliers;
     private readonly IRepository<OutcomeSupplierRecord> _records;
     private readonly IBidOpsFileStore _fileStore;
+    private readonly IBidOpsOutcomeSupplierAiExtractionService _aiExtraction;
+    private readonly IBidOpsOrganizationMasterDataService _organizationMasterData;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IIdGenerator _idGenerator;
     private readonly ILogger<BidOpsOutcomeSupplierExtractionService> _logger;
@@ -39,9 +39,10 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         IRepository<TenderPackage> packages,
         IRepository<NoticeStaging> noticeStaging,
         IRepository<PackageStaging> packageStaging,
-        IRepository<Supplier> suppliers,
         IRepository<OutcomeSupplierRecord> records,
         IBidOpsFileStore fileStore,
+        IBidOpsOutcomeSupplierAiExtractionService aiExtraction,
+        IBidOpsOrganizationMasterDataService organizationMasterData,
         IUnitOfWork unitOfWork,
         IIdGenerator idGenerator,
         ILogger<BidOpsOutcomeSupplierExtractionService> logger)
@@ -52,9 +53,10 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         _packages = packages ?? throw new ArgumentNullException(nameof(packages));
         _noticeStaging = noticeStaging ?? throw new ArgumentNullException(nameof(noticeStaging));
         _packageStaging = packageStaging ?? throw new ArgumentNullException(nameof(packageStaging));
-        _suppliers = suppliers ?? throw new ArgumentNullException(nameof(suppliers));
         _records = records ?? throw new ArgumentNullException(nameof(records));
         _fileStore = fileStore ?? throw new ArgumentNullException(nameof(fileStore));
+        _aiExtraction = aiExtraction ?? throw new ArgumentNullException(nameof(aiExtraction));
+        _organizationMasterData = organizationMasterData ?? throw new ArgumentNullException(nameof(organizationMasterData));
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
         _idGenerator = idGenerator ?? throw new ArgumentNullException(nameof(idGenerator));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -64,15 +66,24 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         long rawNoticeId,
         CancellationToken ct = default)
     {
+        return await ExtractRawNoticeAsync(rawNoticeId, null, ct);
+    }
+
+    public async Task<OutcomeSupplierExtractionResultDto> ExtractRawNoticeAsync(
+        long rawNoticeId,
+        string? reviewerPrompt,
+        CancellationToken ct = default)
+    {
         var rawQuery = await _rawNotices.QueryAsync(ct);
         var raw = await rawQuery.Where(x => x.Id == rawNoticeId).FirstOrDefaultAsync(ct);
         if (raw == null)
             throw new AtlasException($"BidOps raw notice does not exist: {rawNoticeId}");
 
-        var text = await ReadRawTextAsync(raw, ct);
-        var isOutcomeNotice = BidOpsOutcomeSupplierTextParser.LooksLikeOutcomeNotice(raw.Title, raw.NoticeType, text);
+        var source = await BuildAiSourceAsync(raw, ct);
+        var sourceText = BuildCombinedSourceText(source);
+        var isOutcomeNotice = BidOpsOutcomeSupplierTextParser.LooksLikeOutcomeNotice(raw.Title, raw.NoticeType, sourceText);
         var extracts = isOutcomeNotice
-            ? BidOpsOutcomeSupplierTextParser.Extract(raw.Title, raw.NoticeType, text)
+            ? await BuildOutcomeExtractsAsync(raw, source, sourceText, reviewerPrompt, ct)
             : [];
 
         var existingQuery = await _records.QueryTrackingAsync(raw.TenantId, ct);
@@ -96,7 +107,6 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         }
 
         var context = await LoadNoticeContextAsync(raw, ct);
-        var supplierMap = await LoadSupplierMapAsync(raw.TenantId, ct);
         var now = DateTime.UtcNow;
         var records = new List<OutcomeSupplierRecord>();
 
@@ -127,13 +137,12 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
                 RawNoticeId = raw.Id,
                 NoticeId = context.NoticeId,
                 TenderPackageId = package.TenderPackageId,
-                SupplierId = supplierMap.GetValueOrDefault(supplierNameNormalized),
                 SourceUrl = Truncate(raw.DetailUrl, 1500),
                 NoticeTitle = Truncate(raw.Title, 500),
                 NoticeType = Truncate(raw.NoticeType, 64),
                 ProjectName = Truncate(FirstMeaningful(extract.ProjectName, context.ProjectName, raw.Title), 500),
                 ProjectCode = Truncate(FirstMeaningful(extract.ProjectCode, context.ProjectCode), 128),
-                BuyerName = Truncate(context.BuyerName, 300),
+                BuyerName = Truncate(FirstMeaningful(extract.BuyerName, context.BuyerName), 300),
                 Region = Truncate(context.Region, 128),
                 PublishTime = context.PublishTime ?? raw.PublishTime,
                 LotNo = Truncate(FirstMeaningful(extract.LotNo, package.LotNo), 128),
@@ -146,6 +155,7 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
                 OutcomeType = NormalizeOutcomeType(extract.OutcomeType),
                 Rank = extract.Rank,
                 AwardAmount = extract.AwardAmount,
+                ProcurementAgencyServiceFeeAmount = extract.ProcurementAgencyServiceFeeAmount,
                 Currency = "CNY",
                 EvidenceText = Truncate(extract.EvidenceText, 2000),
                 ExtractionConfidence = Math.Clamp(extract.Confidence, 0m, 1m),
@@ -156,8 +166,29 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
 
         if (records.Count > 0)
         {
+            var syncResult = await _organizationMasterData.SyncOutcomeOrganizationsAsync(raw.TenantId, records, ct);
             await _records.AddRangeAsync(records, raw.TenantId, ct);
             await _unitOfWork.SaveChangesAsync(raw.TenantId, ct);
+
+            _logger.LogInformation(
+                "BidOps outcome supplier extraction saved {SavedCount} records for raw notice {RawNoticeId}; buyer created={BuyerCreated}; supplier created={SupplierCreated}.",
+                records.Count,
+                raw.Id,
+                syncResult.BuyerCreatedCount,
+                syncResult.SupplierCreatedCount);
+
+            return new OutcomeSupplierExtractionResultDto
+            {
+                RawNoticeId = raw.Id,
+                IsOutcomeNotice = true,
+                ExtractedCount = extracts.Count,
+                SavedCount = records.Count,
+                BuyerCreatedCount = syncResult.BuyerCreatedCount,
+                BuyerUpdatedCount = syncResult.BuyerUpdatedCount,
+                SupplierCreatedCount = syncResult.SupplierCreatedCount,
+                SupplierUpdatedCount = syncResult.SupplierUpdatedCount,
+                Message = $"已保存 {records.Count} 条公开结果厂家线索，并同步采购方/厂家主数据。"
+            };
         }
 
         _logger.LogInformation(
@@ -175,18 +206,115 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         };
     }
 
-    private async Task<string> ReadRawTextAsync(RawNotice raw, CancellationToken ct)
+    private async Task<IReadOnlyList<BidOpsOutcomeSupplierExtract>> BuildOutcomeExtractsAsync(
+        RawNotice raw,
+        BidOpsNoticeAiExtractionRequest source,
+        string sourceText,
+        string? reviewerPrompt,
+        CancellationToken ct)
     {
-        var builder = new StringBuilder();
-        if (string.IsNullOrWhiteSpace(raw.TextContentStorageKey))
-        {
-            builder.AppendLine(raw.TextPreview);
-        }
-        else
-        {
-            var text = await TryReadFileAsync(raw.TextContentStorageKey, raw.Id, ct);
-            builder.AppendLine(string.IsNullOrWhiteSpace(text) ? raw.TextPreview : text);
-        }
+        var deterministic = BidOpsOutcomeSupplierExtractBuilder.Extract(
+            raw.Title,
+            raw.NoticeType,
+            raw.DetailUrl,
+            raw.PublishTime,
+            sourceText,
+            raw.Id);
+
+        var aiExtracts = await _aiExtraction.ExtractAsync(
+            new BidOpsOutcomeSupplierAiExtractionRequest(
+                raw.Title,
+                raw.NoticeType,
+                raw.DetailUrl,
+                raw.PublishTime,
+                source.Text,
+                deterministic,
+                reviewerPrompt,
+                source.Html,
+                source.Attachments),
+            ct);
+
+        return ChooseOutcomeExtractsForPersistence(deterministic, aiExtracts, reviewerPrompt);
+    }
+
+    private static IReadOnlyList<BidOpsOutcomeSupplierExtract> ChooseOutcomeExtractsForPersistence(
+        IReadOnlyList<BidOpsOutcomeSupplierExtract> deterministic,
+        IReadOnlyList<BidOpsOutcomeSupplierExtract> aiExtracts,
+        string? reviewerPrompt)
+    {
+        return !string.IsNullOrWhiteSpace(reviewerPrompt)
+            ? DedupeOutcomeExtracts(aiExtracts)
+            : MergeOutcomeExtracts(deterministic, aiExtracts);
+    }
+
+    private static IReadOnlyList<BidOpsOutcomeSupplierExtract> MergeOutcomeExtracts(
+        IReadOnlyList<BidOpsOutcomeSupplierExtract> deterministic,
+        IReadOnlyList<BidOpsOutcomeSupplierExtract> aiExtracts)
+    {
+        if (aiExtracts.Count == 0)
+            return deterministic;
+
+        return deterministic
+            .Select(x => (Extract: x, IsAi: false))
+            .Concat(aiExtracts.Select(x => (Extract: x, IsAi: true)))
+            .Where(x => !string.IsNullOrWhiteSpace(x.Extract.SupplierName))
+            .GroupBy(x => string.Join(
+                '\u001f',
+                BidOpsOutcomeSupplierTextParser.NormalizeSupplierName(x.Extract.SupplierName),
+                NormalizeCode(x.Extract.LotNo),
+                NormalizeCode(x.Extract.PackageNo),
+                NormalizeOutcomeType(x.Extract.OutcomeType),
+                x.Extract.Rank?.ToString() ?? string.Empty))
+            .Select(x => x
+                .OrderByDescending(item => item.IsAi)
+                .ThenByDescending(item => HasPackageIdentity(item.Extract))
+                .ThenByDescending(item => item.Extract.ProcurementAgencyServiceFeeAmount.HasValue)
+                .ThenByDescending(item => item.Extract.AwardAmount.HasValue)
+                .ThenByDescending(item => item.Extract.Confidence)
+                .First()
+                .Extract)
+            .ToList();
+    }
+
+    private static IReadOnlyList<BidOpsOutcomeSupplierExtract> DedupeOutcomeExtracts(
+        IReadOnlyList<BidOpsOutcomeSupplierExtract> extracts)
+    {
+        return extracts
+            .Where(x => !string.IsNullOrWhiteSpace(x.SupplierName))
+            .GroupBy(x => string.Join(
+                '\u001f',
+                BidOpsOutcomeSupplierTextParser.NormalizeSupplierName(x.SupplierName),
+                NormalizeCode(x.LotNo),
+                NormalizeCode(x.PackageNo),
+                NormalizeOutcomeType(x.OutcomeType),
+                x.Rank?.ToString() ?? string.Empty))
+            .Select(x => x
+                .OrderByDescending(HasPackageIdentity)
+                .ThenByDescending(item => item.ProcurementAgencyServiceFeeAmount.HasValue)
+                .ThenByDescending(item => item.AwardAmount.HasValue)
+                .ThenByDescending(item => item.Confidence)
+                .First())
+            .ToList();
+    }
+
+    private static bool HasPackageIdentity(BidOpsOutcomeSupplierExtract extract)
+    {
+        return !string.IsNullOrWhiteSpace(extract.PackageNo) ||
+               !string.IsNullOrWhiteSpace(extract.LotNo) ||
+               !string.IsNullOrWhiteSpace(extract.PackageName);
+    }
+
+    private async Task<BidOpsNoticeAiExtractionRequest> BuildAiSourceAsync(RawNotice raw, CancellationToken ct)
+    {
+        var text = string.IsNullOrWhiteSpace(raw.TextContentStorageKey)
+            ? raw.TextPreview
+            : await TryReadFileAsync(raw.TextContentStorageKey, raw.Id, ct);
+        if (string.IsNullOrWhiteSpace(text))
+            text = raw.TextPreview;
+
+        var html = string.IsNullOrWhiteSpace(raw.HtmlSnapshotStorageKey)
+            ? string.Empty
+            : await TryReadFileAsync(raw.HtmlSnapshotStorageKey, raw.Id, ct);
 
         var attachmentQuery = await _rawAttachments.QueryAsync(raw.TenantId, ct);
         var attachments = await attachmentQuery
@@ -195,18 +323,52 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
                         x.TextContentStorageKey != string.Empty)
             .ToListAsync(ct);
 
+        var attachmentInputs = new List<BidOpsAiAttachmentInput>();
         foreach (var attachment in attachments)
         {
             var attachmentText = await TryReadFileAsync(attachment.TextContentStorageKey, raw.Id, ct);
             if (string.IsNullOrWhiteSpace(attachmentText))
                 continue;
 
-            builder.AppendLine();
-            builder.AppendLine($"Attachment: {attachment.FileName}");
-            builder.AppendLine(attachmentText);
+            attachmentInputs.Add(new BidOpsAiAttachmentInput(
+                attachment.FileName,
+                attachment.FileType,
+                attachment.FileUrl,
+                attachment.FileSize,
+                attachmentText));
+        }
+
+        return new BidOpsNoticeAiExtractionRequest(
+            raw.Title,
+            raw.NoticeType,
+            raw.DetailUrl,
+            raw.PublishTime,
+            text,
+            html,
+            attachmentInputs);
+    }
+
+    private static string BuildCombinedSourceText(BidOpsNoticeAiExtractionRequest source)
+    {
+        var builder = new StringBuilder();
+        AppendSourceSection(builder, "Announcement Text", source.Text);
+        AppendSourceSection(builder, "Announcement HTML", source.Html);
+        foreach (var attachment in source.Attachments)
+        {
+            AppendSourceSection(builder, $"Attachment: {attachment.FileName}", attachment.Text);
         }
 
         return builder.ToString();
+    }
+
+    private static void AppendSourceSection(StringBuilder builder, string title, string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return;
+
+        builder.AppendLine();
+        builder.AppendLine($"## {title}");
+        builder.AppendLine(content.Trim());
     }
 
     private async Task<string> TryReadFileAsync(string storageKey, long rawNoticeId, CancellationToken ct)
@@ -267,21 +429,6 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
             staging.Region,
             staging.PublishTime,
             stagingPackages.Select(x => PackageSnapshot.FromStaging(x)).ToList());
-    }
-
-    private async Task<Dictionary<string, long>> LoadSupplierMapAsync(long tenantId, CancellationToken ct)
-    {
-        var supplierQuery = await _suppliers.QueryAsync(tenantId, ct);
-        var suppliers = await supplierQuery.ToListAsync(ct);
-        return suppliers
-            .Select(x => new
-            {
-                Name = BidOpsOutcomeSupplierTextParser.NormalizeSupplierName(x.Name),
-                x.Id
-            })
-            .Where(x => !string.IsNullOrWhiteSpace(x.Name))
-            .GroupBy(x => x.Name)
-            .ToDictionary(x => x.Key, x => x.First().Id);
     }
 
     private static string NormalizeOutcomeType(string value)

@@ -15,9 +15,13 @@ public sealed class BidOpsOutcomeSupplierExtract
 
     public decimal? AwardAmount { get; set; }
 
+    public decimal? ProcurementAgencyServiceFeeAmount { get; set; }
+
     public string ProjectName { get; set; } = string.Empty;
 
     public string ProjectCode { get; set; } = string.Empty;
+
+    public string BuyerName { get; set; } = string.Empty;
 
     public string LotNo { get; set; } = string.Empty;
 

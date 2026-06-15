@@ -14,6 +14,11 @@ public sealed class RawNoticeSearchQuery : BidOpsPagedQuery
     public RawNoticeStatus? Status { get; set; }
 }
 
+public sealed class NoticeSearchQuery : BidOpsPagedQuery
+{
+    public string? NoticeType { get; set; }
+}
+
 public sealed class CrawlRunLogSearchQuery : BidOpsPagedQuery
 {
     public long? SourceId { get; set; }
@@ -26,6 +31,8 @@ public sealed class CrawlRunLogSearchQuery : BidOpsPagedQuery
 public sealed class ReviewTaskSearchQuery : BidOpsPagedQuery
 {
     public ReviewTaskStatus? Status { get; set; }
+
+    public string? NoticeType { get; set; }
 }
 
 public sealed class ProcessingFailureSearchQuery : BidOpsPagedQuery
@@ -91,6 +98,7 @@ public sealed class ImportPublicUrlRequest
     public string? Title { get; set; }
     public string? NoticeType { get; set; }
     public string? TextContent { get; set; }
+    public bool ForceRefresh { get; set; }
 }
 
 public sealed class BackfillRawNoticeAttachmentsRequest
@@ -105,6 +113,42 @@ public sealed class BackfillRawNoticeAttachmentsRequest
 public sealed class ReviewDecisionRequest
 {
     public string? Remark { get; set; }
+}
+
+public sealed class ReviewOutcomeAiReparseRequest
+{
+    public string? Prompt { get; set; }
+}
+
+public sealed class ReviewOutcomeSupplierRecordEditRequest
+{
+    public string? ProjectName { get; set; }
+
+    public string? ProjectCode { get; set; }
+
+    public string? BuyerName { get; set; }
+
+    public string? LotNo { get; set; }
+
+    public string? LotName { get; set; }
+
+    public string? PackageNo { get; set; }
+
+    public string? PackageName { get; set; }
+
+    public string? Category { get; set; }
+
+    public string? SupplierName { get; set; }
+
+    public string? OutcomeType { get; set; }
+
+    public int? Rank { get; set; }
+
+    public decimal? AwardAmount { get; set; }
+
+    public decimal? ProcurementAgencyServiceFeeAmount { get; set; }
+
+    public string? EvidenceText { get; set; }
 }
 
 public sealed class ReparseRawNoticeRequest

@@ -224,6 +224,9 @@ onMounted(loadData)
             <el-table-column label="金额" width="120">
               <template #default="{ row }">{{ formatMoney(row.awardAmount) }}</template>
             </el-table-column>
+            <el-table-column label="代理服务费" width="130">
+              <template #default="{ row }">{{ formatMoney(row.procurementAgencyServiceFeeAmount) }}</template>
+            </el-table-column>
             <el-table-column label="发布时间" width="170">
               <template #default="{ row }">{{ formatDate(row.publishTime) }}</template>
             </el-table-column>

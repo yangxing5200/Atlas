@@ -11,14 +11,18 @@ import { formatMoney } from '@/shared/utils/money'
 import BidOpsStatusTag from '../../components/BidOpsStatusTag.vue'
 import DeadlineCountdown from '../../components/DeadlineCountdown.vue'
 import type { NoticeDto } from '../../types'
-import { formatNoticeType } from '../../utils/display'
+import { formatNoticeType, noticeTypeOptions } from '../../utils/display'
 
 const router = useRouter()
-const table = useTableQuery<NoticeDto, { keyword: string; pageIndex: number; pageSize: number }>(noticesApi.search, {
-  keyword: '',
-  pageIndex: 1,
-  pageSize: 20,
-})
+const table = useTableQuery<NoticeDto, { keyword: string; noticeType?: string; pageIndex: number; pageSize: number }>(
+  (params) => noticesApi.search({ ...params, noticeType: params.noticeType || undefined }),
+  {
+    keyword: '',
+    noticeType: '',
+    pageIndex: 1,
+    pageSize: 20,
+  },
+)
 </script>
 
 <template>
@@ -26,6 +30,11 @@ const table = useTableQuery<NoticeDto, { keyword: string; pageIndex: number; pag
     <SearchForm @search="table.search" @reset="table.reset()">
       <el-form-item label="关键词">
         <el-input v-model="table.query.keyword" clearable placeholder="标题 / 项目 / 采购人" />
+      </el-form-item>
+      <el-form-item label="公告类型">
+        <el-select v-model="table.query.noticeType" clearable filterable placeholder="全部" style="width: 210px">
+          <el-option v-for="item in noticeTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
+        </el-select>
       </el-form-item>
     </SearchForm>
 
@@ -41,6 +50,7 @@ const table = useTableQuery<NoticeDto, { keyword: string; pageIndex: number; pag
       <el-table-column label="预算金额" width="150"><template #default="{ row }">{{ formatMoney(row.budgetAmount) }}</template></el-table-column>
       <el-table-column label="发布时间" width="170"><template #default="{ row }">{{ formatDateTime(row.publishTime) }}</template></el-table-column>
       <el-table-column label="投标截止" width="170"><template #default="{ row }">{{ formatDateTime(row.bidDeadline) }}</template></el-table-column>
+      <el-table-column label="最后更新时间" width="170"><template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template></el-table-column>
       <el-table-column label="倒计时" width="110"><template #default="{ row }"><DeadlineCountdown :value="row.bidDeadline" /></template></el-table-column>
       <el-table-column label="状态" width="130"><template #default="{ row }"><BidOpsStatusTag :value="row.status" /></template></el-table-column>
       <el-table-column label="操作" width="140" fixed="right">

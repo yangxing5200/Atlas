@@ -23,6 +23,7 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
     private readonly IRepository<CrawlRunLog> _logs;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IBidOpsRawIngestionService _ingestion;
+    private readonly IReadOnlyList<IBidOpsCrawlAdapter> _adapters;
     private readonly IIdGenerator _idGenerator;
     private readonly ILogger<StateGridEcpCrawler> _logger;
     private readonly int _maxNoticesPerScan;
@@ -34,6 +35,7 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         IRepository<CrawlRunLog> logs,
         IUnitOfWork unitOfWork,
         IBidOpsRawIngestionService ingestion,
+        IEnumerable<IBidOpsCrawlAdapter> adapters,
         IIdGenerator idGenerator,
         IConfiguration configuration,
         ILogger<StateGridEcpCrawler> logger)
@@ -44,6 +46,7 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         _logs = logs ?? throw new ArgumentNullException(nameof(logs));
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
         _ingestion = ingestion ?? throw new ArgumentNullException(nameof(ingestion));
+        _adapters = adapters?.ToArray() ?? throw new ArgumentNullException(nameof(adapters));
         _idGenerator = idGenerator ?? throw new ArgumentNullException(nameof(idGenerator));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _maxNoticesPerScan = Math.Clamp(
@@ -64,6 +67,7 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
 
         var source = await GetSourceAsync(channel.SourceId, ct);
         EnsureCanRun(source, channel);
+        EnsureAdapterCanRun(source);
         EnsureRateLimit(source, channel);
 
         channel.LastScanTime = DateTime.UtcNow;
@@ -90,13 +94,13 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         long? channelId,
         string? noticeType,
         long? backgroundJobId,
+        bool forceRefresh = false,
         CancellationToken ct = default)
     {
-        if (!StateGridEcpWcmParser.TryParsePortalDetailUrl(detailUrl, out var doctype, out var noticeId, out var menuId))
-            return null;
-
         if (!Uri.TryCreate(detailUrl.Trim(), UriKind.Absolute, out var detailUri) ||
-            !detailUri.Host.EndsWith("sgcc.com.cn", StringComparison.OrdinalIgnoreCase))
+            !detailUri.Host.EndsWith("sgcc.com.cn", StringComparison.OrdinalIgnoreCase) ||
+            !_adapters.Any(x => x.CanImportDetail(detailUri)) ||
+            !StateGridEcpWcmParser.TryParsePortalDetailUrl(detailUri.ToString(), out var doctype, out var noticeId, out var menuId))
         {
             return null;
         }
@@ -105,10 +109,12 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         if (channel == null)
         {
             EnsureSourceCanRun(source);
+            EnsureAdapterCanRun(source);
         }
         else
         {
             EnsureCanRun(source, channel);
+            EnsureAdapterCanRun(source);
         }
 
         EnsureAllowedStateGridUri(source, detailUri);
@@ -136,7 +142,8 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
                 document.Text,
                 document.Html,
                 document.PublishTime,
-                MapAttachments(document.Attachments)),
+                MapAttachments(document.Attachments),
+                forceRefresh),
             backgroundJobId,
             OperationName,
             ct);
@@ -146,7 +153,7 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
             channel?.Id,
             backgroundJobId,
             "Succeeded",
-            $"State Grid public detail import completed. doctype={doctype}, noticeId={noticeId}, attachments={document.Attachments.Count}.",
+            $"State Grid public detail import completed. doctype={doctype}, noticeId={noticeId}, attachments={document.Attachments.Count}, forceRefresh={forceRefresh}.",
             ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
@@ -551,6 +558,12 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
 
         if (!channel.Enabled)
             throw new AtlasException($"BidOps crawl channel is paused: {channel.Code}");
+    }
+
+    private void EnsureAdapterCanRun(CrawlSource source)
+    {
+        if (!_adapters.Any(x => x.CanHandle(source)))
+            throw new AtlasException($"No BidOps crawl adapter can handle source '{source.Code}'.");
     }
 
     private static void EnsureSourceCanRun(CrawlSource source)

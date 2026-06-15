@@ -1,3 +1,5 @@
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using Atlas.BackgroundTasks;
 using Atlas.Core.Services;
 using Atlas.Modules.BidOps.Models;
@@ -8,6 +10,11 @@ namespace Atlas.Modules.BidOps.BackgroundJobs;
 
 public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
     private readonly IExecutionIdentityAccessor _identityAccessor;
     private readonly IBidOpsOutcomeSupplierExtractionService _extraction;
     private readonly ILogger<OutcomeSupplierExtractJobHandler> _logger;
@@ -31,13 +38,25 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
         var payload = context.GetPayload<OutcomeSupplierExtractJobPayload>();
         using var identity = BidOpsJobIdentity.Begin(_identityAccessor, payload);
 
-        var result = await _extraction.ExtractRawNoticeAsync(payload.RawNoticeId, ct);
+        var result = await _extraction.ExtractRawNoticeAsync(payload.RawNoticeId, payload.ReviewerPrompt, ct);
         _logger.LogInformation(
-            "BidOps outcome supplier extract job saved {SavedCount} records for raw notice {RawNoticeId}.",
+            "BidOps outcome supplier extract job saved {SavedCount} records for raw notice {RawNoticeId}; reviewerPrompt={HasReviewerPrompt}.",
             result.SavedCount,
-            payload.RawNoticeId);
+            payload.RawNoticeId,
+            !string.IsNullOrWhiteSpace(payload.ReviewerPrompt));
 
-        return BackgroundJobExecutionResult.Success(
-            $"rawNoticeId={payload.RawNoticeId}; outcomeSupplierRecords={result.SavedCount}");
+        return BackgroundJobExecutionResult.Success(JsonSerializer.Serialize(new
+        {
+            rawNoticeId = payload.RawNoticeId,
+            result.IsOutcomeNotice,
+            result.ExtractedCount,
+            result.SavedCount,
+            result.BuyerCreatedCount,
+            result.BuyerUpdatedCount,
+            result.SupplierCreatedCount,
+            result.SupplierUpdatedCount,
+            result.Message,
+            reviewerPrompt = !string.IsNullOrWhiteSpace(payload.ReviewerPrompt)
+        }, JsonOptions));
     }
 }

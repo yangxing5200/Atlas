@@ -41,10 +41,30 @@ public sealed record BidOpsRequirementExtract(
     string AiExplanation,
     decimal Confidence);
 
+public sealed record BidOpsAiAttachmentInput(
+    string FileName,
+    string FileType,
+    string FileUrl,
+    long? FileSize,
+    string Text);
+
+public sealed record BidOpsNoticeAiExtractionRequest(
+    string Title,
+    string NoticeType,
+    string SourceUrl,
+    DateTime? PublishTime,
+    string Text,
+    string Html,
+    IReadOnlyList<BidOpsAiAttachmentInput> Attachments);
+
 public interface IBidOpsAiExtractionService
 {
     Task<BidOpsNoticeExtract> ExtractAsync(
         string title,
         string text,
+        CancellationToken cancellationToken = default);
+
+    Task<BidOpsNoticeExtract> ExtractAsync(
+        BidOpsNoticeAiExtractionRequest request,
         CancellationToken cancellationToken = default);
 }

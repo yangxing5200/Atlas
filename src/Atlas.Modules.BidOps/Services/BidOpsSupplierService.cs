@@ -180,7 +180,7 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
         var summary = new SupplierAnalysisSummaryDto
         {
             GeneratedAtUtc = now,
-            SupplierSourceDescription = "厂家主档来自 BidOps 厂家能力库；公开中标/候选公示会单独形成厂家线索，不会自动创建或污染厂家主档。",
+            SupplierSourceDescription = "厂家主档来自 BidOps 厂家能力库；公开中标/候选公示会保守同步采购方/厂家主数据，但不会自动写入厂家能力或资质证明。",
             OutcomeExtractionStatus = "已接入公开结果公示厂家线索抽取：线索保留来源公告、证据文本和包件快照，用于历史中标厂家分析与人工跟进判断。",
             TotalSuppliers = suppliers.Count,
             ActiveSuppliers = suppliers.Count(x => x.Status == BidOpsSupplierStatuses.Active),
@@ -842,6 +842,7 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
             RawNoticeId = record.RawNoticeId,
             NoticeId = record.NoticeId,
             TenderPackageId = record.TenderPackageId,
+            BuyerId = record.BuyerId,
             SupplierId = record.SupplierId,
             SourceUrl = record.SourceUrl,
             NoticeTitle = record.NoticeTitle,
@@ -860,6 +861,7 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
             OutcomeType = record.OutcomeType,
             Rank = record.Rank,
             AwardAmount = record.AwardAmount,
+            ProcurementAgencyServiceFeeAmount = record.ProcurementAgencyServiceFeeAmount,
             Currency = record.Currency,
             EvidenceText = record.EvidenceText,
             ExtractionConfidence = record.ExtractionConfidence,
@@ -999,6 +1001,7 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
             OutcomeType = record.OutcomeType,
             Rank = record.Rank,
             AwardAmount = record.AwardAmount,
+            ProcurementAgencyServiceFeeAmount = record.ProcurementAgencyServiceFeeAmount,
             Currency = record.Currency,
             ProjectName = record.ProjectName,
             ProjectCode = record.ProjectCode,

@@ -81,6 +81,7 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
             command.Attachments,
             backgroundJobId,
             "ManualUrlImport",
+            command.ForceRefresh,
             ct);
 
         return rawId;
@@ -122,6 +123,7 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
             command.Attachments,
             backgroundJobId,
             string.IsNullOrWhiteSpace(operation) ? "PublicCrawler" : operation.Trim(),
+            command.ForceRefresh,
             ct);
     }
 
@@ -173,6 +175,7 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
             Array.Empty<RawAttachmentCandidate>(),
             backgroundJobId,
             "MockCrawl",
+            forceRefresh: false,
             ct);
 
         channel.LastSuccessTime = DateTime.UtcNow;
@@ -194,6 +197,7 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
         IReadOnlyList<RawAttachmentCandidate>? attachments,
         long? backgroundJobId,
         string operation,
+        bool forceRefresh,
         CancellationToken ct)
     {
         var urlHash = _hasher.HashUrl(detailUrl);
@@ -203,7 +207,11 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
             ct);
         if (existing != null)
         {
-            if (!string.Equals(existing.ContentHash, contentHash, StringComparison.OrdinalIgnoreCase))
+            if (forceRefresh && existing.Status == RawNoticeStatus.Approved)
+                throw new AtlasException("Approved BidOps raw notices cannot be force-refreshed in MVP.");
+
+            var contentChanged = !string.Equals(existing.ContentHash, contentHash, StringComparison.OrdinalIgnoreCase);
+            if (contentChanged || forceRefresh)
             {
                 var changedHtmlInfo = await SaveTextAsync(html, "notice.html", "text/html", ct);
                 var changedTextInfo = await SaveTextAsync(text, "notice.txt", "text/plain", ct);
@@ -219,9 +227,20 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
                 existing.TextContentStorageKey = changedTextInfo.StorageKey;
                 existing.TextPreview = Trim(text, TextPreviewMaxLength);
                 existing.Status = RawNoticeStatus.ParseQueued;
-                existing.LastError = "Public notice content changed; staging review is required.";
+                existing.LastError = contentChanged
+                    ? "Public notice content changed; staging review is required."
+                    : "Public notice was force-refreshed; staging review is required.";
 
-                await AddLogAsync(sourceId, channelId, backgroundJobId, operation, "Changed", $"Raw notice content changed: {existing.Id}", ct);
+                await AddLogAsync(
+                    sourceId,
+                    channelId,
+                    backgroundJobId,
+                    operation,
+                    contentChanged ? "Changed" : "Refreshed",
+                    contentChanged
+                        ? $"Raw notice content changed: {existing.Id}"
+                        : $"Raw notice force-refreshed: {existing.Id}",
+                    ct);
             }
             else
             {

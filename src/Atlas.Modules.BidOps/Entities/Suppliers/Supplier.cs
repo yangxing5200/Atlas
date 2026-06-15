@@ -25,6 +25,22 @@ public sealed class Supplier : BidOpsTenantEntity
     public decimal? QualityScore { get; set; }
 
     public string Remark { get; set; } = string.Empty;
+
+    public long? CreatedFromRawNoticeId { get; set; }
+
+    public long? CreatedFromNoticeId { get; set; }
+
+    public string CreatedFromNoticeTitle { get; set; } = string.Empty;
+
+    public string CreatedFromSourceUrl { get; set; } = string.Empty;
+
+    public long? LastOutcomeRawNoticeId { get; set; }
+
+    public long? LastOutcomeNoticeId { get; set; }
+
+    public string LastOutcomeNoticeTitle { get; set; } = string.Empty;
+
+    public DateTime? LastOutcomeAtUtc { get; set; }
 }
 
 public static class BidOpsSupplierStatuses

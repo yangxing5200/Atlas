@@ -57,4 +57,46 @@ public sealed class ReviewTasksController : ControllerBase
         await _review.IgnoreAsync(id, request, ct);
         return NoContent();
     }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpPost("{id:long}/outcome-ai-reparse")]
+    public async Task<ActionResult<EnqueueJobDto>> OutcomeAiReparseAsync(
+        long id,
+        [FromBody] ReviewOutcomeAiReparseRequest request,
+        CancellationToken ct)
+    {
+        return Accepted(await _review.EnqueueOutcomeAiReparseAsync(id, request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpPost("{id:long}/outcome-suppliers")]
+    public async Task<ActionResult<OutcomeSupplierRecordDto>> AddOutcomeSupplierAsync(
+        long id,
+        [FromBody] ReviewOutcomeSupplierRecordEditRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _review.AddOutcomeSupplierRecordAsync(id, request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpPut("{id:long}/outcome-suppliers/{recordId:long}")]
+    public async Task<ActionResult<OutcomeSupplierRecordDto>> UpdateOutcomeSupplierAsync(
+        long id,
+        long recordId,
+        [FromBody] ReviewOutcomeSupplierRecordEditRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _review.UpdateOutcomeSupplierRecordAsync(id, recordId, request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpDelete("{id:long}/outcome-suppliers/{recordId:long}")]
+    public async Task<IActionResult> DeleteOutcomeSupplierAsync(
+        long id,
+        long recordId,
+        CancellationToken ct)
+    {
+        await _review.DeleteOutcomeSupplierRecordAsync(id, recordId, ct);
+        return NoContent();
+    }
 }

@@ -1,4 +1,5 @@
 using Atlas.Modules.BidOps.Entities;
+using Atlas.Modules.BidOps.Entities.Buyers;
 using Atlas.Modules.BidOps.Entities.Crawling;
 using Atlas.Modules.BidOps.Entities.Matching;
 using Atlas.Modules.BidOps.Entities.Opportunities;
@@ -334,9 +335,39 @@ public sealed class SupplierConfiguration : IEntityTypeConfiguration<Supplier>
         builder.Property(x => x.Status).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
         builder.Property(x => x.QualityScore).HasPrecision(6, 2);
         builder.Property(x => x.Remark).HasColumnType("varchar(1000)").HasMaxLength(1000);
+        builder.Property(x => x.CreatedFromNoticeTitle).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.Property(x => x.CreatedFromSourceUrl).HasColumnType("varchar(1500)").HasMaxLength(1500);
+        builder.Property(x => x.LastOutcomeNoticeTitle).HasColumnType("varchar(500)").HasMaxLength(500);
         builder.HasIndex(x => new { x.TenantId, x.SupplierNo }).IsUnique();
         builder.HasIndex(x => new { x.TenantId, x.UnifiedSocialCreditCode });
         builder.HasIndex(x => new { x.TenantId, x.Status, x.CreatedAt });
+        builder.HasIndex(x => new { x.TenantId, x.CreatedFromRawNoticeId });
+        builder.HasIndex(x => new { x.TenantId, x.LastOutcomeNoticeId });
+    }
+}
+
+public sealed class BuyerConfiguration : IEntityTypeConfiguration<Buyer>
+{
+    public void Configure(EntityTypeBuilder<Buyer> builder)
+    {
+        builder.ToTable("bidops_buyer");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.BuyerNo).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Name).HasColumnType("varchar(300)").HasMaxLength(300).IsRequired();
+        builder.Property(x => x.NameNormalized).HasColumnType("varchar(191)").HasMaxLength(191).IsRequired();
+        builder.Property(x => x.UnifiedSocialCreditCode).HasColumnType("varchar(64)").HasMaxLength(64);
+        builder.Property(x => x.Region).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.SourceUrl).HasColumnType("varchar(1500)").HasMaxLength(1500);
+        builder.Property(x => x.LastProjectCode).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.LastProjectName).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.Property(x => x.LastNoticeTitle).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.Property(x => x.Status).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Remark).HasColumnType("varchar(1000)").HasMaxLength(1000);
+        builder.HasIndex(x => new { x.TenantId, x.BuyerNo }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.NameNormalized }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.UnifiedSocialCreditCode });
+        builder.HasIndex(x => new { x.TenantId, x.Status, x.CreatedAt });
+        builder.HasIndex(x => new { x.TenantId, x.LastSeenAtUtc });
     }
 }
 
@@ -353,6 +384,29 @@ public sealed class SupplierContactConfiguration : IEntityTypeConfiguration<Supp
         builder.Property(x => x.Remark).HasColumnType("varchar(500)").HasMaxLength(500);
         builder.HasIndex(x => new { x.TenantId, x.SupplierId, x.IsPrimary });
         builder.HasIndex(x => new { x.TenantId, x.SupplierId, x.Name });
+    }
+}
+
+public sealed class BuyerProcurementRecordConfiguration : IEntityTypeConfiguration<BuyerProcurementRecord>
+{
+    public void Configure(EntityTypeBuilder<BuyerProcurementRecord> builder)
+    {
+        builder.ToTable("bidops_buyer_procurement_record");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.SourceUrl).HasColumnType("varchar(1500)").HasMaxLength(1500);
+        builder.Property(x => x.NoticeTitle).HasColumnType("varchar(500)").HasMaxLength(500).IsRequired();
+        builder.Property(x => x.NoticeType).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.ProjectName).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.Property(x => x.ProjectCode).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.Region).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.BudgetAmount).HasPrecision(18, 2);
+        builder.Property(x => x.SourceHash).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Remark).HasColumnType("varchar(1000)").HasMaxLength(1000);
+        builder.HasIndex(x => new { x.TenantId, x.BuyerId, x.PublishTime });
+        builder.HasIndex(x => new { x.TenantId, x.RawNoticeId });
+        builder.HasIndex(x => new { x.TenantId, x.NoticeId });
+        builder.HasIndex(x => new { x.TenantId, x.ProjectCode });
+        builder.HasIndex(x => new { x.TenantId, x.SourceHash }).IsUnique();
     }
 }
 
@@ -416,6 +470,7 @@ public sealed class OutcomeSupplierRecordConfiguration : IEntityTypeConfiguratio
         builder.Property(x => x.SupplierNameNormalized).HasColumnType("varchar(191)").HasMaxLength(191).IsRequired();
         builder.Property(x => x.OutcomeType).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
         builder.Property(x => x.AwardAmount).HasPrecision(18, 2);
+        builder.Property(x => x.ProcurementAgencyServiceFeeAmount).HasPrecision(18, 2);
         builder.Property(x => x.Currency).HasColumnType("varchar(16)").HasMaxLength(16);
         builder.Property(x => x.EvidenceText).HasColumnType("varchar(2000)").HasMaxLength(2000);
         builder.Property(x => x.ExtractionConfidence).HasPrecision(5, 4);
@@ -429,6 +484,8 @@ public sealed class OutcomeSupplierRecordConfiguration : IEntityTypeConfiguratio
             .HasDatabaseName("IX_bidops_outcome_record_Tenant_RawNotice");
         builder.HasIndex(x => new { x.TenantId, x.TenderPackageId })
             .HasDatabaseName("IX_bidops_outcome_record_Tenant_Package");
+        builder.HasIndex(x => new { x.TenantId, x.BuyerId })
+            .HasDatabaseName("IX_bidops_outcome_record_Tenant_Buyer");
         builder.HasIndex(x => new { x.TenantId, x.SupplierId })
             .HasDatabaseName("IX_bidops_outcome_record_Tenant_Supplier");
         builder.HasIndex(x => new { x.TenantId, x.SupplierNameNormalized })

@@ -20,5 +20,6 @@ public interface IStateGridEcpCrawler
         long? channelId,
         string? noticeType,
         long? backgroundJobId,
+        bool forceRefresh = false,
         CancellationToken ct = default);
 }

@@ -1,5 +1,198 @@
 # Implementation Log
 
+## 2026-06-15 BidOps PR Conflict Resolution
+
+Completed:
+
+- Merged `origin/main` into `codex/bidops-ecp-attachments-outcomes` to resolve PR #35 merge conflicts.
+- Kept the BidOps `forceRefresh` manual re-import flow, force parse run ids, SGCC crawl adapter validation, public SGCC host validation, and WCM raw HTML body preservation.
+- Removed duplicate auto-merged definitions for raw attachment backfill request, payload, and enqueue service method.
+- Preserved both script-based and manual local Worker startup guidance in the BidOps runbook.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\BidOpsMerge\"` succeeded with 0 warnings.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsModuleTests|BidOpsReverseClosureTests" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1` succeeded: 94 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\WebApiMerge\"` succeeded with 0 warnings.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\WorkerMerge\"` succeeded with 0 warnings after rerunning outside a transient local `obj` file lock.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps -n` returned no matches.
+
+## 2026-06-15 BidOps Review Outcome Editing And DeepSeek Replacement
+
+Completed:
+
+- Changed reviewer-prompted DeepSeek outcome reparse so DeepSeek rows replace current outcome/candidate rows instead of being merged with deterministic historical rows.
+- Added review-task APIs to add, update, and delete outcome supplier lead rows before approval, guarded by the existing review approval permission and blocked for approved/formal Raw notices.
+- Added review-detail manual editing UI for award/candidate/generic outcome rows. Preview rows without a persisted id can be saved as new editable rows; persisted rows can be edited or deleted.
+- Kept money storage as CNY yuan while the review edit form accepts the main final quote/award amount in 万元 to match the candidate/award review tables.
+- Updated background job result serialization and job detail rendering so Chinese prompt/result text is displayed as Chinese instead of unicode escape sequences, including a fallback decoder for older non-JSON job text.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_ReviewerPromptUsesAiRowsAsReplacement|OutcomeSupplierExtractJobHandler_ReturnsJsonResultSummary|ReviewTasksController_DeclaresOutcomeAiReparseContract" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1` succeeded: 3 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\BidOps\"` succeeded; the first parallel run hit a transient local `obj` file lock warning.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\WebApi\"` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\Worker\"` succeeded after rerunning outside a parallel local `obj` file lock.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps -n` returned no matches.
+- Browser smoke confirmed approved review tasks hide manual edit actions, pending review tasks show `新增明细` and `编辑`, and the manual detail dialog exposes amount-in-万元, agency service fee, and evidence fields.
+- `.\scripts\restart-webapi.ps1` and `.\scripts\restart-worker.ps1` restarted the local WebApi and Worker. WebApi is reachable on `http://localhost:5260`; Worker resumed processing background jobs.
+
+## 2026-06-14 BidOps Local Worker DeepSeek Configuration
+
+Completed:
+
+- Enabled `BidOps:Ai` in `src/Atlas.Worker/appsettings.BidOpsLocal.json` so local Worker reparse jobs can call the configured DeepSeek/OpenAI-compatible provider.
+- Removed the empty local `BidOps:Ai:ApiKey` override from `BidOpsLocal`; a base config value or `DEEPSEEK_API_KEY` can now be seen by the Worker instead of being shadowed by an empty string.
+- Added `scripts/restart-worker.ps1` to stop existing local Worker processes and restart `Atlas.Worker` with `DOTNET_ENVIRONMENT=BidOpsLocal` / `ASPNETCORE_ENVIRONMENT=BidOpsLocal`, writing logs to `var\logs\worker-local.log`.
+
+Verification:
+
+- `src\Atlas.Worker\appsettings.BidOpsLocal.json` parsed successfully as JSON.
+- `scripts\restart-worker.ps1` passed PowerShell parser syntax validation.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\BidOps\"` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\Worker\"` succeeded.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps -n` returned no matches.
+- `.\scripts\restart-worker.ps1` stopped the old local Worker process and restarted Worker with `Hosting environment: BidOpsLocal`; the new log contains no RabbitMQ connection failure.
+- The restarted Worker called `POST https://api.deepseek.com/chat/completions` and received HTTP 200. The outcome supplier extract job saved 5 records for RawNotice `323981944922705920`, with buyer created=1 and supplier created=4.
+
+## 2026-06-14 BidOps DeepSeek Job Result Drilldown
+
+Completed:
+
+- Added a BidOps parsed-result panel to background job detail pages. It derives `RawNoticeId` from the job payload/result/deduplication key, then loads the Raw notice pipeline, review staging detail, package rows, and persisted outcome supplier rows from the database.
+- Added `/bidops/operations/jobs/:id` so BidOps task list entries and review-page DeepSeek/reparse job ids can open a BidOps-scoped job detail page.
+- Made the review detail DeepSeek reparse job id and Raw reparse job id clickable, leading directly to the job detail and its parsed-result tab.
+- Changed structured parse and outcome supplier extract job success results to compact JSON summaries containing RawNoticeId, review task id, saved row counts, and buyer/supplier sync counts.
+- Preserved snowflake id precision in the parsed-result panel by extracting RawNoticeId from raw payload/result strings before falling back to JSON parsing.
+- Kept persistence behavior unchanged: Worker jobs write Staging/Outcome rows first, and formal business import remains gated by human review approval.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "StructuredParseJobHandler_ReturnsJsonResultSummary|OutcomeSupplierExtractJobHandler_ReturnsJsonResultSummary|StructuredParseJobHandler_ExtractsOutcomeSuppliersWhenNoticeParsingFails" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 3 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded with one transient file-lock retry warning from the local machine.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\WebApi\"` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\Worker\"` succeeded.
+- Browser smoke opened `/bidops/operations/jobs`, filtered `bidops.outcome.supplier-extract`, opened a BidOps job detail, switched to `解析结果`, and confirmed exact RawNoticeId display, pipeline data, staging notice fields, and no console errors.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps -n` returned no matches.
+- `git diff --check` succeeded with only the existing line-ending normalization warning for `AtlasTenantDbContextModelSnapshot.cs`.
+
+## 2026-06-14 BidOps Review Outcome AI Adjustment
+
+Completed:
+
+- Added a review-task endpoint to enqueue DeepSeek outcome/candidate detail re-extraction with a reviewer-provided correction prompt.
+- Extended the outcome supplier extraction job payload and AI prompt so Worker-side extraction can use reviewer corrections while still rebuilding only the current Raw notice's outcome lead rows.
+- Extended DeepSeek structured and outcome extraction inputs to include the stored announcement body HTML plus extracted attachment content and attachment metadata, instead of sending only flattened text.
+- Updated DeepSeek prompts so required fields are selected by notice type: procurement/tender notices focus on packages and requirements, candidate notices focus on candidate/package identity fields, and award/result notices focus on awarded supplier rows and package identity fields.
+- Updated the review detail page to show candidate notices as a flat business list with `采购编号`, `分标编号`, `分标名称`, `包号`, `包名称`, `排名`, `推荐的成交候选人`, `最终报价（万元）`, and `评审情况`.
+- Updated award/result detail rows to show `采购编号`, `分标编号`, `分标名称`, `包号`, `中标状态`, and `成交供应商`.
+- Added a DeepSeek correction textbox above outcome lists so reviewers can iteratively submit a better prompt, refresh the rebuilt rows, and approve only after the staging data looks right.
+- Added a review-detail `重新解析` action that enqueues the existing RawNotice reparse pipeline from the audit page when content/body fields need to be extracted again.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierAiExtractionService_ExtractsDeepSeekJsonRecords|ReviewTasksController_DeclaresOutcomeAiReparseContract|StructuredParseJobHandler_ExtractsOutcomeSuppliersWhenNoticeParsingFails|BidOpsModule_RegistersServicesAndBackgroundHandlers" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 4 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierAiExtractionService_ExtractsDeepSeekJsonRecords|BidOpsStructuredExtractionService_SendsHtmlAndAttachmentsToDeepSeek|StructuredParseJobHandler_ExtractsOutcomeSuppliersWhenNoticeParsingFails" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 3 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false -p:OutDir="$env:TEMP\AtlasVerify\WebApi\"` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false -p:OutDir="$env:TEMP\AtlasVerify\Worker\"` succeeded.
+- Browser smoke opened a local candidate review task and confirmed the DeepSeek adjustment panel plus candidate columns including `推荐的成交候选人`, `最终报价（万元）`, and `评审情况`.
+- Browser smoke opened a local award review task and confirmed the DeepSeek adjustment panel plus award columns `采购编号`, `分标编号`, `分标名称`, `包号`, `中标状态`, and `成交供应商`; no console errors were reported.
+- Browser smoke opened a pending award review task and confirmed the review-detail `重新解析` action is visible next to the page title; no console errors were reported.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps` returned no matches.
+- `git diff --check` succeeded with only the existing line-ending normalization warning for `AtlasTenantDbContextModelSnapshot.cs`.
+
+## 2026-06-14 BidOps Review Detail Organization Linking
+
+Completed:
+
+- Extended review detail APIs and DTOs to return the parsed buyer plus outcome supplier rows for the Raw notice under review.
+- Updated the review detail page to show `采购方与厂家`, including whether the buyer/supplier already exists or will be created/linked after approval.
+- Added a read-only review-detail fallback that parses outcome supplier preview rows from stored Raw notice text/HTML and extracted attachment text when no persisted outcome rows exist yet.
+- Added `BuyerProcurementRecord` and registered it as `bidops_buyer_procurement_record` so approved notices record buyer purchase history by source-backed notice/package snapshots.
+- Extended review approval to sync approved notice context into outcome supplier records, upsert buyer/supplier master records, link `BuyerId`/`SupplierId`, and create/update buyer procurement history inside the same transaction.
+- Hardened the Worker structured-parse job so outcome supplier extraction still runs when generic notice staging parsing fails on public result/candidate announcements.
+- Hardened review approval so it runs outcome supplier extraction before approval when the Raw notice has no persisted outcome rows yet.
+- Added `forceRefresh` manual import support so Raw detail can re-fetch a public announcement, refresh stored Raw text/HTML, force attachment text extraction, and enqueue a fresh structured parse.
+- State Grid WCM imports now preserve original `CONT` HTML in the Raw HTML snapshot when available, including Word-style `MsoNormal` tables.
+- Enhanced award table parsing so tables without project/procurement code or lot columns can use surrounding正文 regex fallback for `采购编号`/`招标编号` and nearby `分标编号`/`分标名称`.
+- Added supplier traceability fields for the announcement that created the supplier shell and the latest related public outcome announcement.
+- Updated local setup and tenant migrations for the new supplier traceability columns and buyer procurement table.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet build src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsAwardEvidenceParser_FillsProjectAndLotFromBodyWhenTableOmitsColumns|BidOpsAwardEvidenceParser_ExtractsStateGridHtmlAwardTable|StateGridEcpWcmParser_PreservesWinHtmlTablesForOutcomeExtraction" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 3 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsModuleTests|BidOpsReverseClosureTests" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 85 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "StructuredParseJobHandler_ExtractsOutcomeSuppliersWhenNoticeParsingFails|BidOpsAwardEvidenceParser_ExtractsStateGridHtmlAwardTable|StateGridEcpWcmParser_PreservesWinHtmlTablesForOutcomeExtraction" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 3 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 58 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false -p:OutDir="$env:TEMP\AtlasVerify\WebApi\"` succeeded; one local PDB file-lock retry warning cleared.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false -p:OutDir="$env:TEMP\AtlasVerify\Worker\"` succeeded after rerun; the first parallel run hit a transient local `obj` file lock.
+- A temporary C# smoke against State Grid public WCM `index/getNoticeWin` for `2606128522123684` extracted 93 award rows from the real `CONT` HTML table; the first row included lot `SG2674-9001-13028`, lot name `变电站土建施工`, package `包1`, project unit `国网四川省电力公司`, and winner `中国电建集团江西省水电工程局有限公司`.
+- Browser smoke opened `http://localhost:5173/bidops/review/tasks` and was redirected to the local login page. No credentials were submitted during this verification pass.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps` returned no matches.
+- `git diff --check` succeeded; Git reported only the existing line-ending normalization warning for `AtlasTenantDbContextModelSnapshot.cs`.
+
+## 2026-06-14 BidOps Reverse Closure State Grid Award HTML Table Fix
+
+Completed:
+
+- Added deterministic HTML table extraction to `BidOpsEvidenceTableParser` so State Grid WCM `CONT` tables are parsed in addition to Markdown and whitespace tables.
+- Extended reverse closure DTO output with award `ProjectUnit` and `LotName`, and closure-level `ProjectUnit` and `LotName`.
+- Updated award evidence parsing to read `项目单位`, `分标名称`, `分标编号`, `包号`, and `中标人` from State Grid award-result tables, including nested-span package values such as `包1`.
+- Tightened project-code cleanup so HTML text like `招标编号：0711-26OTL04213025）` returns `0711-26OTL04213025`.
+- Prevented same-package cross-linking across different lots by requiring `LotNo + PackageNo` to match when both sides have a lot number.
+- Updated the BidOps runbook for the State Grid WCM award table fields.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsReverseClosureTests --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 26 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false -p:OutDir="$env:TEMP\AtlasVerify\WebApi\"` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false -p:OutDir="$env:TEMP\AtlasVerify\Worker\"` succeeded.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps` returned no matches.
+- `git diff --check` succeeded.
+- A temporary .NET 8 parser smoke against the live State Grid WCM response for `2606128522123684` extracted 93 award rows. The first row included project code `0711-26OTL04213025`, lot `SG2674-9001-13028`, lot name `变电站土建施工`, package `包1`, project unit `国网四川省电力公司`, and winner `中国电建集团江西省水电工程局有限公司`.
+
+## 2026-06-13 BidOps Reverse Lifecycle Closure Debug
+
+Completed:
+
+- Added DTO-only reverse lifecycle closure models: `AwardEvidence`, `CandidateEvidence`, `TenderPackageEvidence`, `LifecyclePackageClosure`, notice match refs, and source evidence refs.
+- Added deterministic evidence parsing under `src/Atlas.Modules.BidOps/Ai/Evidence`:
+  - package number normalization for `包1` / `包01` / `包一` / `分包1` / `分包编号1` / `标包1`.
+  - money normalization for yuan and ten-thousand-yuan forms while excluding percentages, rates, and score cells.
+  - award evidence parsing for full award tables, sparse package/supplier tables, and paragraph-style `包1：XXX公司`.
+  - candidate evidence parsing for full ranking tables, compact ranking tables, horizontal Top3 tables, and fill-down package/lot cells.
+  - tender package evidence parsing for procurement scope, budget/max-price, and qualification tables.
+- Added `BidOpsReverseLifecycleClosureService` to read RawNotice and extracted attachment text through repositories and `IBidOpsFileStore`, match candidate/tender notices, and output suggested lifecycle package closures with match reasons, missing fields, confidence, and manual-review flags.
+- Added debug APIs:
+  - `POST /api/bidops/lifecycle/debug/reverse-close-url`
+  - `POST /api/bidops/lifecycle/debug/reverse-close-raw-notice/{rawNoticeId}`
+- Kept WebApi enqueue/query-only for external crawling: when the URL RawNotice is missing, the debug API enqueues the existing manual import job and returns a warning instead of fetching SGCC synchronously.
+- Added development-only `tools/Atlas.LocalSetup reset-bidops-derived-data`, dry-run by default with `--confirm` required for deletes, protecting RawNotice, RawAttachment, CrawlSource, CrawlChannel, CrawlRunLog, attachment files, and supplier master data.
+- Updated BidOps runbook and decisions.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded after replacing dynamic delete SQL with parameterized DbCommand execution.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReverseClosureTests|BidOpsModule_RegistersServicesAndBackgroundHandlers" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 25 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BidOpsModuleTests --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 52 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false -p:OutDir="$env:TEMP\AtlasVerify\WebApi\"` succeeded with 1 transient copy retry warning from an already-running local process holding `Atlas.Infrastructure.Caching` obj output.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false -p:OutDir="$env:TEMP\AtlasVerify\Worker\"` succeeded.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps` returned no matches.
+- `git diff --check` succeeded.
+- Default-output WebApi/Worker builds were also attempted and failed only because existing local `Atlas.WebApi` and `Atlas.Worker` processes locked their normal `bin\Debug\net8.0` DLL outputs; the isolated-output builds above verified compilation without stopping those processes.
+
 ## 2026-06-13 BidOps Outcome Supplier Award Amount Extraction
 
 Completed:
@@ -1077,3 +1270,102 @@ Verification:
 - `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only the existing non-fatal Rollup annotation and chunk-size warnings.
 - Authenticated API smoke for `GET /api/bidops/suppliers/outcome-records?hasAwardAmount=true&sortBy=AwardAmountDesc&pageIndex=1&pageSize=5` returned `total=64` and `nullAmountOnPage=0`; sample rows included `国锋建筑设计有限公司` at `1536447.00` yuan and `山西蓝血科技有限公司` at `1462800.00` yuan.
 - Browser smoke on `http://localhost:5173/bidops/suppliers/analysis` confirmed the page displays `带金额结果线索`, the amount column, and formatted values such as `¥13,637,000.00` and `¥1,536,447.00`.
+
+## 2026-06-14 BidOps Crawl Adapter And Organization Master Data
+
+Completed:
+
+- Added `IBidOpsCrawlAdapter` and `StateGridEcpCrawlAdapter` so source-specific public crawl capabilities can be declared outside the crawler implementation. The SGCC adapter now participates in source/detail URL validation and declares inline HTML table support plus public attachment types including PDF, Office, Excel, and ZIP/RAR metadata.
+- Added `bidops_buyer` tenant entity/configuration, `BuyerId` on `OutcomeSupplierRecord`, DTO exposure, and tenant migration `v0.2.9-bidops-buyer-master-data`.
+- Added `IBidOpsOrganizationMasterDataService` to upsert buyer and supplier master records by normalized organization name from public outcome/candidate records. Existing records are linked and lightly refreshed instead of duplicated.
+- Enhanced outcome supplier extraction to combine existing text parsing with the award evidence/table parser, so SGCC中标公告 HTML tables can populate project unit, lot number/name, package number/name, awarded supplier, and amount evidence.
+- Updated local setup to create/protect buyer master data and to add `BuyerId` to local outcome-lead tables idempotently.
+- Updated decisions and runbook to document adapter boundaries, Worker-side attachment processing, and the conservative master-data upsert policy.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet build src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsModuleTests|BidOpsReverseClosureTests" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 82 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false -p:OutDir="$env:TEMP\AtlasVerify\WebApi\"` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false -p:OutDir="$env:TEMP\AtlasVerify\Worker\"` succeeded.
+- `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps` returned no matches.
+- `git diff --check` succeeded; Git reported only the existing line-ending normalization warning for `AtlasTenantDbContextModelSnapshot.cs`.
+
+## 2026-06-14 BidOps DeepSeek Re-Extraction
+
+Completed:
+
+- Added shared BidOps AI HTTP settings that support `Provider=DeepSeek`, default `BaseUrl=https://api.deepseek.com`, default model `deepseek-v4-flash`, `MaxOutputTokens`, per-use switches, and `DEEPSEEK_API_KEY` fallback without hardcoding credentials.
+- Updated structured notice extraction to use the shared OpenAI-compatible settings, preserving deterministic fallback when AI is disabled or fails.
+- Added `IBidOpsOutcomeSupplierAiExtractionService` and a DeepSeek/OpenAI-compatible implementation for public result/candidate notices. It sends strict JSON-mode prompts over Raw text plus extracted attachment text, asks DeepSeek to correct table/PDF/common-body-field cases, and returns supplier lead candidates only.
+- Real DeepSeek smoke caught that the model may normalize `包1` to `1`; the outcome AI prompt and post-processing now preserve or restore package prefixes from evidence text before persistence.
+- Kept outcome persistence Worker-owned: each RawNotice extraction still deletes/rebuilds only that RawNotice's `OutcomeSupplierRecord` rows, then syncs buyer/supplier master data through the existing conservative organization service.
+- Added `ProcurementAgencyServiceFeeAmount` to `OutcomeSupplierRecord`, DTOs, EF configuration, tenant migration `v0.2.11-bidops-outcome-service-fee`, LocalSetup create/repair SQL, review detail, supplier analysis, and package historical supplier lead UI.
+- Confirmed existing RawNotice `重解析` remains the re-extraction entry: WebApi enqueues, Worker force-runs attachment text extraction, structured parse, and outcome supplier extraction; approved/formal Raw notices remain protected.
+
+Verification:
+
+- `dotnet ef migrations add v0.2.11-bidops-outcome-service-fee --project src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj --startup-project src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj --context AtlasTenantDbContext --output-dir Migrations` succeeded after setting `ATLAS_TENANT_ENTITY_CONFIGURATION_ASSEMBLIES=Atlas.Modules.BidOps`; EF printed only existing model warnings.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded with 0 warnings.
+- `dotnet build src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded with 0 warnings.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsModuleTests|BidOpsReverseClosureTests" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 86 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps` returned no matches.
+- `git diff --check` succeeded; Git reported only the existing line-ending normalization warning for `AtlasTenantDbContextModelSnapshot.cs`.
+
+## 2026-06-14 BidOps Review Detail Structured Modules
+
+Completed:
+
+- Updated the BidOps review detail page to detect the display notice kind for award-result, candidate-result, procurement, and fallback notices from staged notice metadata plus Raw notice text.
+- `中标/成交结果公告` now shows a dedicated `中标/成交明细` table over outcome supplier lead rows, including supplier, result type, lot/package context, award amount, agency service fee, supplier link state, and evidence snippet.
+- `推荐中标候选人公示` now shows `候选人明细` grouped by package context and a separate `对应包件明细` module with parsed package fields and requirement rows, even when candidate lead extraction is empty.
+- `采购公告` now shows `采购公告明细` as a package summary table plus per-package detail modules with requirement tables, instead of leaving package/requirement data only as generic parsed text.
+- Kept the generic package list and generic outcome lead table for unknown notice kinds only, so known notice types have clearer review surfaces while fallback behavior remains available.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only the existing non-fatal Rollup annotation notices and chunk-size warning.
+- Browser smoke on `http://localhost:5173/bidops/review/tasks/323982173575188502` confirmed a real candidate notice displays `候选人明细`, `对应包件明细`, requirement rows, and `采购方` with no browser console errors.
+
+## 2026-06-14 BidOps Wrapped PDF Outcome Table Extraction
+
+Completed:
+
+- Added a deterministic wrapped PDF/plain-text outcome table parser for SGCC result and candidate notices where PDF text extraction splits headers, lot numbers, lot names, suppliers, package numbers, and amount cells across many lines.
+- Updated outcome supplier extraction routing so candidate notices use candidate-oriented evidence parsing and wrapped-table parsing, while award/result notices use award-oriented parsing. Candidate announcements no longer get persisted as `Awarded` only because the table header contains `推荐中标人`.
+- Extracted wrapped-table fields into `OutcomeSupplierRecord` leads: supplier name, outcome type, candidate rank, lot number, lot name, package number, evidence text, and award/final-quote amount. Header units such as `万元` are normalized to yuan; percentages and discount rates are ignored as money.
+- The review detail `候选人明细` and `中标/成交明细` modules now have deterministic backend records to display after RawNotice re-extraction. Existing historical Raw notices still need the `重解析` path to rebuild their outcome supplier records.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplier" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 13 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded with 0 warnings.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsModuleTests|BidOpsReverseClosureTests" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 88 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false -p:OutDir="$env:TEMP\AtlasVerify\WebApi\"` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false -p:OutDir="$env:TEMP\AtlasVerify\Worker\"` succeeded.
+- Default WebApi and Worker output builds were blocked by running local processes locking `bin\Debug` files: `Atlas.WebApi` PID 19652 and `Atlas.Worker` PID 12812. The code was verified with temp output directories; the local services must be restarted before the new extraction code is active.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps` returned no matches.
+
+## 2026-06-14 BidOps Notice List Filters And Updated Time
+
+Completed:
+
+- Added `NoticeType` to the review-task search query and wired the待审核池 frontend to filter by公告类型 using the shared notice type options.
+- Added a dedicated formal notice search query with `NoticeType`, and updated the正式公告库 page to support公告类型 filtering.
+- Exposed `CreatedAt` and `UpdatedAt` on Raw notice, review task, and formal notice DTOs, then displayed `最后更新时间` on原始公告、待审核池、正式公告库列表 and Raw/审核详情 metadata sections.
+- Kept storage unchanged because BidOps entities already inherit Atlas `BaseEntity.CreatedAt/UpdatedAt`; this step only exposes and displays the existing audit fields.
+- Added a lightweight contract test covering the new notice search query, review notice type filter, and updated-time DTO fields.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsNoticeListContracts|BidOpsModuleTests" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 62 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded after rerunning outside the parallel test/build lock.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false -p:OutDir="$env:TEMP\AtlasVerify\WebApi\"` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false -p:OutDir="$env:TEMP\AtlasVerify\Worker\"` succeeded.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps` returned no matches.
+- `git diff --check` succeeded; Git reported only the existing line-ending normalization warning for `AtlasTenantDbContextModelSnapshot.cs`.
