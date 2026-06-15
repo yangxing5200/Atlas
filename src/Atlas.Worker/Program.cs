@@ -1,8 +1,14 @@
 using Atlas.Consumers.Orders;
 using Atlas.Extensions.DependencyInjection;
+using Atlas.Infrastructure.Logging.Extensions;
 using Atlas.Modules.BidOps;
+using Serilog;
 
 var builder = Host.CreateApplicationBuilder(args);
+
+builder.Services.AddAtlasLogging(builder.Configuration);
+builder.Logging.ClearProviders();
+builder.Services.AddSerilog(Log.Logger, dispose: true);
 
 builder.Services.AddAtlasWorker(
     builder.Configuration,
@@ -13,4 +19,12 @@ builder.Services.AddAtlasWorker(
     });
 
 var app = builder.Build();
-await app.RunAsync();
+
+try
+{
+    await app.RunAsync();
+}
+finally
+{
+    Log.CloseAndFlush();
+}

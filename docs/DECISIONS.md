@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-06-15 Worker Timestamped Logging
+
+- `Atlas.Worker` now registers the existing Atlas Serilog logging pipeline instead of relying on the default .NET console logger. Default console output is explicitly cleared so redirected Worker logs do not fall back to timestampless default formatting.
+- Worker application logs use dedicated file paths (`atlas-worker-.log`, `atlas-worker-errors-.log`, and `worker-audit-.log`) to avoid mixing long-running background job diagnostics with WebApi logs.
+- The Atlas console sink uses a full local timestamp (`yyyy-MM-dd HH:mm:ss.fff zzz`) because local Worker restart scripts redirect console output to `var/logs/worker-local.log`.
+- The Serilog `Environment` enrichment checks `ASPNETCORE_ENVIRONMENT` first and then `DOTNET_ENVIRONMENT`, matching Worker hosts that are commonly configured with `DOTNET_ENVIRONMENT`.
+
 ## 2026-06-15 BidOps DeepSeek Chinese Prompts And Request Logging
 
 - DeepSeek/OpenAI-compatible prompts use Chinese natural-language instructions because the source notices, reviewer correction text, and expected reviewer workflow are Chinese. JSON field names and enum values remain English to preserve the existing internal parsing contract.
