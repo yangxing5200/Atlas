@@ -16,6 +16,8 @@ public sealed class BackgroundJobSearchQuery
     public bool? DeadOnly { get; set; }
     public bool? StaleRunningOnly { get; set; }
     public bool? WaitingRetryOnly { get; set; }
+    public DateTime? CreatedFrom { get; set; }
+    public DateTime? CreatedTo { get; set; }
     public DateTime? CreatedFromUtc { get; set; }
     public DateTime? CreatedToUtc { get; set; }
     public int PageIndex { get; set; } = 1;
@@ -26,6 +28,7 @@ public class BackgroundJobListItemDto
 {
     public long Id { get; set; }
     public string JobType { get; set; } = string.Empty;
+    public string JobTypeName { get; set; } = string.Empty;
     public string Queue { get; set; } = string.Empty;
     public string JobName { get; set; } = string.Empty;
     public string? DeduplicationKey { get; set; }
@@ -35,6 +38,11 @@ public class BackgroundJobListItemDto
     public string StatusName { get; set; } = string.Empty;
     public int Priority { get; set; }
     public DateTime CreatedAt { get; set; }
+    public DateTime AvailableAt { get; set; }
+    public DateTime? StartedAt { get; set; }
+    public DateTime? LockedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public DateTime? NextAttemptAt { get; set; }
     public DateTime AvailableAtUtc { get; set; }
     public DateTime? StartedAtUtc { get; set; }
     public DateTime? LockedAtUtc { get; set; }
@@ -43,6 +51,10 @@ public class BackgroundJobListItemDto
     public int AttemptCount { get; set; }
     public int MaxAttempts { get; set; }
     public DateTime? NextAttemptAtUtc { get; set; }
+    public bool IsCancellationRequested { get; set; }
+    public DateTime? CancellationRequestedAt { get; set; }
+    public string? CancellationRequestedBy { get; set; }
+    public string? CancellationReason { get; set; }
     public string LastErrorPreview { get; set; } = string.Empty;
     public string ResultPreview { get; set; } = string.Empty;
     public string PayloadPreview { get; set; } = string.Empty;
@@ -70,6 +82,7 @@ public sealed class BackgroundJobStatusCountDto
 public sealed class BackgroundJobDimensionCountDto
 {
     public string Name { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
     public int Count { get; set; }
 }
 
@@ -84,6 +97,8 @@ public sealed class BackgroundJobSummaryDto
     public int Canceled { get; set; }
     public int StaleRunning { get; set; }
     public int WaitingRetry { get; set; }
+    public DateTime? OldestPendingAt { get; set; }
+    public DateTime? RecentErrorAt { get; set; }
     public DateTime? OldestPendingAtUtc { get; set; }
     public DateTime? RecentErrorAtUtc { get; set; }
     public List<BackgroundJobStatusCountDto> StatusCounts { get; set; } = [];
@@ -96,6 +111,7 @@ public sealed class BackgroundJobRetryResultDto
     public long OriginalJobId { get; set; }
     public long NewJobId { get; set; }
     public string JobType { get; set; } = string.Empty;
+    public string JobTypeName { get; set; } = string.Empty;
     public string Queue { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
 }
@@ -110,6 +126,7 @@ public sealed class BackgroundJobCancelResultDto
     public long JobId { get; set; }
     public BackgroundJobStatus Status { get; set; }
     public string StatusName { get; set; } = string.Empty;
+    public bool IsCancellationRequested { get; set; }
     public string Message { get; set; } = string.Empty;
 }
 
@@ -134,7 +151,10 @@ public sealed class BackgroundWorkerHeartbeatDto
     public bool RecurringTaskRunnerEnabled { get; set; }
     public long? CurrentJobId { get; set; }
     public string? CurrentJobType { get; set; }
+    public string? CurrentJobTypeName { get; set; }
     public string? CurrentQueue { get; set; }
+    public DateTime StartedAt { get; set; }
+    public DateTime LastSeenAt { get; set; }
     public DateTime StartedAtUtc { get; set; }
     public DateTime LastSeenAtUtc { get; set; }
     public bool IsOnline { get; set; }

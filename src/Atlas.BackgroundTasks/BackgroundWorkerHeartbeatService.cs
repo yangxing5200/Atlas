@@ -23,7 +23,7 @@ public sealed class BackgroundWorkerHeartbeatService : BackgroundService
     private readonly RecurringTaskRunnerOptions _recurringOptions;
     private readonly IConfiguration _configuration;
     private readonly ILogger<BackgroundWorkerHeartbeatService> _logger;
-    private DateTime _lastFailureLogAtUtc = DateTime.MinValue;
+    private DateTime _lastFailureLogAt = DateTime.MinValue;
 
     public BackgroundWorkerHeartbeatService(
         IServiceScopeFactory scopeFactory,
@@ -69,7 +69,7 @@ public sealed class BackgroundWorkerHeartbeatService : BackgroundService
             var db = scope.ServiceProvider.GetRequiredService<AtlasGlobalDbContext>();
             var ids = scope.ServiceProvider.GetRequiredService<IIdGenerator>();
             var snapshot = _state.Snapshot();
-            var now = DateTime.UtcNow;
+            var now = DateTime.Now;
 
             var heartbeat = await db.BackgroundWorkerHeartbeats
                 .FirstOrDefaultAsync(x => x.WorkerId == snapshot.WorkerId, ct);
@@ -105,11 +105,11 @@ public sealed class BackgroundWorkerHeartbeatService : BackgroundService
         }
         catch (Exception ex)
         {
-            var now = DateTime.UtcNow;
-            if (now - _lastFailureLogAtUtc < FailureLogInterval)
+            var now = DateTime.Now;
+            if (now - _lastFailureLogAt < FailureLogInterval)
                 return;
 
-            _lastFailureLogAtUtc = now;
+            _lastFailureLogAt = now;
             _logger.LogWarning(ex, "Background worker heartbeat update failed.");
         }
     }

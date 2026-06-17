@@ -3181,6 +3181,9 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
                         .HasPrecision(5, 4)
                         .HasColumnType("decimal(5,4)");
 
+                    b.Property<int>("ExtractionOrder")
+                        .HasColumnType("int");
+
                     b.Property<string>("LotName")
                         .IsRequired()
                         .HasMaxLength(300)
@@ -3335,6 +3338,9 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
 
                     b.HasIndex("TenantId", "RawNoticeId")
                         .HasDatabaseName("IX_bidops_outcome_record_Tenant_RawNotice");
+
+                    b.HasIndex("TenantId", "RawNoticeId", "ExtractionOrder")
+                        .HasDatabaseName("IX_bidops_outcome_record_Tenant_RawNotice_Order");
 
                     b.HasIndex("TenantId", "SourceHash")
                         .IsUnique()

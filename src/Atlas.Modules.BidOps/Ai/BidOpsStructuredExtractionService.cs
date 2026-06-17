@@ -14,20 +14,24 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         PropertyNameCaseInsensitive = true
     };
 
     private readonly HttpClient _httpClient;
     private readonly IConfiguration _configuration;
+    private readonly IBidOpsAiCallDiagnostics _diagnostics;
     private readonly ILogger<BidOpsStructuredExtractionService> _logger;
 
     public BidOpsStructuredExtractionService(
         HttpClient httpClient,
         IConfiguration configuration,
+        IBidOpsAiCallDiagnostics diagnostics,
         ILogger<BidOpsStructuredExtractionService> logger)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -48,7 +52,10 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
         var sourceText = BuildDeterministicSourceText(request);
         var deterministic = BidOpsDeterministicNoticeParser.Extract(request.Title, sourceText);
         if (!BidOpsAiHttpSettingsFactory.TryCreate(_configuration, BidOpsAiUse.NoticeStaging, out var settings))
+        {
+            LogUnavailableSettings();
             return deterministic;
+        }
 
         try
         {
@@ -61,6 +68,23 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
         }
     }
 
+    private void LogUnavailableSettings()
+    {
+        var diagnostics = BidOpsAiHttpSettingsFactory.Diagnose(_configuration, BidOpsAiUse.NoticeStaging);
+        var level = diagnostics.Enabled && diagnostics.UseEnabled ? LogLevel.Warning : LogLevel.Debug;
+        _logger.Log(
+            level,
+            "BidOps structured AI request skipped because AI HTTP settings are unavailable. enabled={Enabled}, useEnabled={UseEnabled}, provider={Provider}, supportedProvider={SupportedProvider}, apiKeySource={ApiKeySource}, hasApiKey={HasApiKey}, hasModel={HasModel}, hasEndpoint={HasEndpoint}.",
+            diagnostics.Enabled,
+            diagnostics.UseEnabled,
+            diagnostics.Provider,
+            diagnostics.SupportedProvider,
+            diagnostics.ApiKeySource,
+            diagnostics.HasApiKey,
+            diagnostics.HasModel,
+            diagnostics.HasEndpoint);
+    }
+
     private async Task<BidOpsNoticeExtract> ExtractWithOpenAiCompatibleAsync(
         BidOpsNoticeAiExtractionRequest request,
         BidOpsNoticeExtract fallback,
@@ -68,18 +92,17 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
         CancellationToken ct)
     {
         var prompt = BuildPrompt(request, Truncate(BuildSourceBundle(request), settings.MaxInputCharacters), fallback);
-        var requestBody = new
+        var requestBody = new Dictionary<string, object?>
         {
-            model = settings.Model,
-            temperature = 0,
-            max_tokens = settings.MaxOutputTokens,
-            response_format = new { type = "json_object" },
-            messages = new object[]
+            ["model"] = settings.Model,
+            ["temperature"] = 0,
+            ["response_format"] = new { type = "json_object" },
+            ["messages"] = new object[]
             {
                 new
                 {
                     role = "system",
-                    content = "你负责从公开招投标/采购公告中提取结构化 JSON。不要编造字段；无法从公告或附件确认的内容用空字符串或 null。只返回 JSON。"
+                    content = "你负责从公开招投标/采购公告中提取结构化 JSON。必须只返回一个 JSON 对象：第一个字符必须是 {，最后一个字符必须是 }。不要输出推理过程、分析、解释、摘要、Markdown、代码块或任何 JSON 之外的文字。不要编造字段；无法从公告或附件确认的内容用空字符串或 null。"
                 },
                 new
                 {
@@ -88,6 +111,9 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
                 }
             }
         };
+        if (settings.MaxOutputTokens.HasValue)
+            requestBody["max_tokens"] = settings.MaxOutputTokens.Value;
+
         var requestJson = JsonSerializer.Serialize(requestBody, JsonOptions);
         var stopwatch = Stopwatch.StartNew();
         _logger.LogInformation(
@@ -112,10 +138,24 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
         using var response = await _httpClient.SendAsync(httpRequest, ct);
         var responseText = await response.Content.ReadAsStringAsync(ct);
         stopwatch.Stop();
+        var content = BidOpsAiJsonLogging.ExtractAssistantContentOrRaw(responseText);
+        var finishReason = BidOpsAiJsonLogging.ExtractFinishReason(responseText);
+        _diagnostics.Record(new BidOpsAiCallDiagnosticEntry(
+            BidOpsAiUse.NoticeStaging.ToString(),
+            settings.Provider,
+            settings.Model,
+            FormatEndpointForLog(settings.Endpoint),
+            (int)response.StatusCode,
+            stopwatch.ElapsedMilliseconds,
+            responseText.Length,
+            content.Length,
+            finishReason,
+            responseText,
+            content));
         _logger.LogInformation(
             "BidOps structured AI raw DeepSeek response. statusCode={StatusCode}, responseBody={ResponseBody}",
             (int)response.StatusCode,
-            responseText);
+            BidOpsAiJsonLogging.FormatJsonForLog(responseText));
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogWarning(
@@ -129,7 +169,20 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
             response.EnsureSuccessStatusCode();
         }
 
-        var content = ExtractAssistantContent(responseText);
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            _logger.LogWarning(
+                "BidOps structured AI response had empty assistant content; deterministic extraction was used. provider={Provider}, model={Model}, endpoint={Endpoint}, statusCode={StatusCode}, elapsedMs={ElapsedMs}, responseChars={ResponseChars}, finishReason={FinishReason}.",
+                settings.Provider,
+                settings.Model,
+                FormatEndpointForLog(settings.Endpoint),
+                (int)response.StatusCode,
+                stopwatch.ElapsedMilliseconds,
+                responseText.Length,
+                finishReason);
+            return fallback;
+        }
+
         var extracted = ParseAiJson(content, fallback);
         var usable = EnsureUsable(extracted, fallback);
         _logger.LogInformation(
@@ -154,7 +207,10 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
     {
         var fallbackJson = JsonSerializer.Serialize(fallback, JsonOptions);
         return $$"""
-请只返回一个 JSON 对象，结构必须严格符合下面的形状：
+输出限制：
+- 只返回一个 JSON 对象；第一个字符必须是 {，最后一个字符必须是 }。
+- 不要输出推理过程、分析、解释、摘要、Markdown、代码块、前缀或后缀文字。
+- JSON 结构必须严格符合下面的形状：
 {
   "noticeType": "TenderAnnouncement|ProcurementAnnouncement|CandidateAnnouncement|AwardAnnouncement|ChangeAnnouncement|Other",
   "projectName": "",
@@ -278,25 +334,6 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
         builder.AppendLine();
         builder.AppendLine($"## {title}");
         builder.AppendLine(string.IsNullOrWhiteSpace(content) ? "(empty)" : content.Trim());
-    }
-
-    private static string ExtractAssistantContent(string responseText)
-    {
-        using var document = JsonDocument.Parse(responseText);
-        var root = document.RootElement;
-        if (root.TryGetProperty("choices", out var choices) &&
-            choices.ValueKind == JsonValueKind.Array &&
-            choices.GetArrayLength() > 0)
-        {
-            var first = choices[0];
-            if (first.TryGetProperty("message", out var message) &&
-                message.TryGetProperty("content", out var content))
-            {
-                return content.GetString() ?? string.Empty;
-            }
-        }
-
-        return responseText;
     }
 
     private static BidOpsNoticeExtract ParseAiJson(

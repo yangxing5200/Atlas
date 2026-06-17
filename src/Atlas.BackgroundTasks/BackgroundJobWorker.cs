@@ -79,7 +79,7 @@ public sealed class BackgroundJobWorker : BackgroundService
             .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
 
         var queues = GetEnabledQueues();
-        var now = DateTime.UtcNow;
+        var now = DateTime.Now;
         var staleLockedBefore = now.AddSeconds(-Math.Max(30, _options.ProcessingTimeoutSeconds));
         var batchSize = Math.Max(1, _options.BatchSize);
 
@@ -110,6 +110,8 @@ public sealed class BackgroundJobWorker : BackgroundService
             // 领取成功后重新加载，确保当前 DbContext 中的实体状态与数据库锁定结果一致。
             await db.Entry(job).ReloadAsync(ct);
             _heartbeatState.SetCurrentJob(job.Id, job.JobType, job.Queue);
+            using var jobCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var cancellationWatcher = WatchCancellationRequestsAsync(job.Id, jobCts, ct);
 
             using var activity = AtlasTelemetry.ActivitySource.StartActivity(
                 "atlas.background_job.execute",
@@ -121,20 +123,29 @@ public sealed class BackgroundJobWorker : BackgroundService
 
             try
             {
+                if (job.CancellationRequestedAt.HasValue || job.Status == BackgroundJobStatus.Canceled)
+                {
+                    await MarkCanceledAsync(db, job, ct);
+                    processed++;
+                    continue;
+                }
+
                 if (!handlers.TryGetValue(job.JobType, out var handler))
                     throw new InvalidOperationException($"No background job handler registered for job type '{job.JobType}'.");
 
-                var result = await handler.HandleAsync(new BackgroundJobExecutionContext(job), ct);
+                var result = await handler.HandleAsync(new BackgroundJobExecutionContext(job), jobCts.Token);
                 if (!result.Succeeded)
                     throw new InvalidOperationException(result.Result ?? $"Background job {job.Id} returned a failed result.");
 
                 job.Status = BackgroundJobStatus.Succeeded;
-                job.CompletedAtUtc = DateTime.UtcNow;
+                job.CompletedAtUtc = DateTime.Now;
                 job.LockedAtUtc = null;
                 job.LockedBy = null;
                 job.LastError = null;
                 job.NextAttemptAtUtc = null;
-                job.Result = Truncate(result.Result ?? "Succeeded", 4000);
+                job.Result = Truncate(
+                    result.Result ?? "Succeeded",
+                    NormalizeResultMaxCharacters(result.MaxResultCharacters));
                 await db.SaveChangesAsync(ct);
                 activity?.SetStatus(ActivityStatusCode.Ok);
                 processed++;
@@ -142,6 +153,18 @@ public sealed class BackgroundJobWorker : BackgroundService
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 throw;
+            }
+            catch (OperationCanceledException) when (jobCts.IsCancellationRequested)
+            {
+                activity?.SetStatus(ActivityStatusCode.Ok, "Canceled by operator.");
+                await MarkCanceledAsync(db, job, ct);
+                processed++;
+            }
+            catch (Exception) when (jobCts.IsCancellationRequested)
+            {
+                activity?.SetStatus(ActivityStatusCode.Ok, "Canceled by operator.");
+                await MarkCanceledAsync(db, job, ct);
+                processed++;
             }
             catch (Exception ex)
             {
@@ -151,6 +174,10 @@ public sealed class BackgroundJobWorker : BackgroundService
             }
             finally
             {
+                if (!jobCts.IsCancellationRequested)
+                    await jobCts.CancelAsync();
+
+                await ObserveCancellationWatcherAsync(cancellationWatcher, ct);
                 _heartbeatState.ClearCurrentJob(job.Id);
             }
         }
@@ -197,6 +224,102 @@ public sealed class BackgroundJobWorker : BackgroundService
         return updated == 1;
     }
 
+    private async Task WatchCancellationRequestsAsync(
+        long jobId,
+        CancellationTokenSource jobCts,
+        CancellationToken workerCt)
+    {
+        using var watchCts = CancellationTokenSource.CreateLinkedTokenSource(jobCts.Token, workerCt);
+        var watchToken = watchCts.Token;
+        var interval = TimeSpan.FromSeconds(Math.Max(1, _options.CancellationCheckIntervalSeconds));
+
+        while (!watchToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(interval, watchToken);
+            }
+            catch (OperationCanceledException) when (watchToken.IsCancellationRequested)
+            {
+                break;
+            }
+
+            if (watchToken.IsCancellationRequested)
+                break;
+
+            try
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<AtlasGlobalDbContext>();
+                var cancellationRequested = await db.BackgroundJobs
+                    .AsNoTracking()
+                    .Where(x => x.Id == jobId)
+                    .Select(x => x.CancellationRequestedAt.HasValue || x.Status == BackgroundJobStatus.Canceled)
+                    .FirstOrDefaultAsync(workerCt);
+
+                if (!cancellationRequested)
+                    continue;
+
+                _logger.LogInformation("Cancellation requested for background job {JobId}.", jobId);
+                await jobCts.CancelAsync();
+                return;
+            }
+            catch (OperationCanceledException) when (workerCt.IsCancellationRequested || jobCts.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to check cancellation request for background job {JobId}.", jobId);
+            }
+        }
+    }
+
+    private static async Task ObserveCancellationWatcherAsync(Task watcher, CancellationToken workerCt)
+    {
+        try
+        {
+            await watcher;
+        }
+        catch (OperationCanceledException) when (workerCt.IsCancellationRequested)
+        {
+        }
+    }
+
+    private static async Task MarkCanceledAsync(
+        AtlasGlobalDbContext db,
+        BackgroundJob job,
+        CancellationToken ct)
+    {
+        var cancellation = await db.BackgroundJobs
+            .AsNoTracking()
+            .Where(x => x.Id == job.Id)
+            .Select(x => new
+            {
+                x.CancellationRequestedAt,
+                x.CancellationRequestedBy,
+                x.CancellationReason
+            })
+            .FirstOrDefaultAsync(ct);
+
+        var now = DateTime.Now;
+        job.Status = BackgroundJobStatus.Canceled;
+        job.CompletedAtUtc = now;
+        job.LockedAtUtc = null;
+        job.LockedBy = null;
+        job.LastError = null;
+        job.NextAttemptAtUtc = null;
+        job.CancellationRequestedAt = cancellation?.CancellationRequestedAt ?? job.CancellationRequestedAt ?? now;
+        job.CancellationRequestedBy = cancellation?.CancellationRequestedBy ?? job.CancellationRequestedBy;
+        job.CancellationReason = cancellation?.CancellationReason ?? job.CancellationReason;
+        job.Result = string.IsNullOrWhiteSpace(job.CancellationReason)
+            ? "Canceled by operator."
+            : $"Canceled by operator. Reason: {job.CancellationReason}";
+        job.UpdatedAt = now;
+
+        await db.SaveChangesAsync(ct);
+    }
+
     private async Task MarkFailedAsync(
         AtlasGlobalDbContext db,
         BackgroundJob job,
@@ -211,7 +334,7 @@ public sealed class BackgroundJobWorker : BackgroundService
         {
             // 达到最大重试次数后进入 Dead 状态，后续需要人工或维护任务介入。
             job.Status = BackgroundJobStatus.Dead;
-            job.CompletedAtUtc = DateTime.UtcNow;
+            job.CompletedAtUtc = DateTime.Now;
             job.NextAttemptAtUtc = null;
             job.Result = "Failed permanently.";
         }
@@ -219,7 +342,7 @@ public sealed class BackgroundJobWorker : BackgroundService
         {
             job.Status = BackgroundJobStatus.Failed;
             // 指数退避减少故障依赖持续异常时的数据库和外部服务压力。
-            job.NextAttemptAtUtc = DateTime.UtcNow.Add(GetRetryDelay(job.AttemptCount));
+            job.NextAttemptAtUtc = DateTime.Now.Add(GetRetryDelay(job.AttemptCount));
         }
 
         await db.SaveChangesAsync(ct);
@@ -255,5 +378,10 @@ public sealed class BackgroundJobWorker : BackgroundService
     private static string Truncate(string value, int maxLength)
     {
         return value.Length <= maxLength ? value : value[..maxLength];
+    }
+
+    private static int NormalizeResultMaxCharacters(int? maxCharacters)
+    {
+        return Math.Max(1, maxCharacters ?? BackgroundJobResultStorageLimits.DefaultMaxCharacters);
     }
 }

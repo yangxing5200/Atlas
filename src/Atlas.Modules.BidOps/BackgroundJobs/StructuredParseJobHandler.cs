@@ -2,6 +2,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using Atlas.BackgroundTasks;
 using Atlas.Core.Services;
+using Atlas.Modules.BidOps.Ai;
 using Atlas.Modules.BidOps.Models;
 using Atlas.Modules.BidOps.Services;
 using Microsoft.Extensions.Logging;
@@ -18,17 +19,20 @@ public sealed class StructuredParseJobHandler : IBackgroundJobHandler
     private readonly IExecutionIdentityAccessor _identityAccessor;
     private readonly IBidOpsAiParsingService _parsing;
     private readonly IBidOpsOutcomeSupplierExtractionService _outcomeSupplierExtraction;
+    private readonly IBidOpsAiCallDiagnostics _diagnostics;
     private readonly ILogger<StructuredParseJobHandler> _logger;
 
     public StructuredParseJobHandler(
         IExecutionIdentityAccessor identityAccessor,
         IBidOpsAiParsingService parsing,
         IBidOpsOutcomeSupplierExtractionService outcomeSupplierExtraction,
+        IBidOpsAiCallDiagnostics diagnostics,
         ILogger<StructuredParseJobHandler> logger)
     {
         _identityAccessor = identityAccessor ?? throw new ArgumentNullException(nameof(identityAccessor));
         _parsing = parsing ?? throw new ArgumentNullException(nameof(parsing));
         _outcomeSupplierExtraction = outcomeSupplierExtraction ?? throw new ArgumentNullException(nameof(outcomeSupplierExtraction));
+        _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -62,8 +66,9 @@ public sealed class StructuredParseJobHandler : IBackgroundJobHandler
         {
             rawNoticeId = payload.RawNoticeId,
             reviewTaskId,
-            outcomeSupplierExtraction = outcome
-        }, JsonOptions));
+            outcomeSupplierExtraction = outcome,
+            deepSeekResponses = _diagnostics.Entries
+        }, JsonOptions), BackgroundJobResultStorageLimits.AiDiagnosticsMaxCharacters);
     }
 
     private async Task<OutcomeSupplierExtractionResultDto?> TryExtractOutcomeSuppliersAsync(

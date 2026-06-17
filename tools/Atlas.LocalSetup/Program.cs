@@ -116,6 +116,9 @@ switch (command)
     case "seed-production":
         await SeedProductionAsync(globalConnection);
         break;
+    case "ensure-background-job-cancellation":
+        await EnsureBackgroundJobCancellationAsync(globalConnection);
+        break;
     case "seed-bidops-state-grid":
         await SeedBidOpsStateGridAsync(globalConnection, tenantConnection);
         break;
@@ -159,7 +162,7 @@ switch (command)
         break;
     default:
         throw new InvalidOperationException(
-            $"Unknown command '{command}'. Use: init-global, create-tenant-db, seed-demo, seed-local, seed-production, seed-bidops-state-grid, bidops-status, ensure-bidops-opportunities, ensure-bidops-suppliers, ensure-bidops-matching, ensure-bidops-pursuits, ensure-bidops-outcomes, repair-bidops-data-quality, reset-bidops-derived-data, approve-bidops-pending, cancel-bidops-crawl-jobs, reset-demo.");
+            $"Unknown command '{command}'. Use: init-global, create-tenant-db, seed-demo, seed-local, seed-production, ensure-background-job-cancellation, seed-bidops-state-grid, bidops-status, ensure-bidops-opportunities, ensure-bidops-suppliers, ensure-bidops-matching, ensure-bidops-pursuits, ensure-bidops-outcomes, repair-bidops-data-quality, reset-bidops-derived-data, approve-bidops-pending, cancel-bidops-crawl-jobs, reset-demo.");
 }
 
 static async Task InitGlobalAsync(string globalConnection)
@@ -174,6 +177,38 @@ static async Task CreateTenantDatabaseAsync(string tenantConnection)
     await using var tenantDb = CreateTenantDbContext(tenantConnection);
     await tenantDb.Database.EnsureCreatedAsync();
     Console.WriteLine("Tenant database is ready.");
+}
+
+static async Task EnsureBackgroundJobCancellationAsync(string globalConnection)
+{
+    await using var globalDb = CreateGlobalDbContext(globalConnection);
+    await AddColumnIfMissingAsync(
+        globalDb,
+        "BackgroundJobs",
+        "CancellationRequestedAt",
+        "ALTER TABLE `BackgroundJobs` ADD COLUMN `CancellationRequestedAt` datetime(6) NULL;");
+    await AddColumnIfMissingAsync(
+        globalDb,
+        "BackgroundJobs",
+        "CancellationRequestedBy",
+        "ALTER TABLE `BackgroundJobs` ADD COLUMN `CancellationRequestedBy` varchar(200) CHARACTER SET utf8mb4 NULL;");
+    await AddColumnIfMissingAsync(
+        globalDb,
+        "BackgroundJobs",
+        "CancellationReason",
+        "ALTER TABLE `BackgroundJobs` ADD COLUMN `CancellationReason` text CHARACTER SET utf8mb4 NULL;");
+    await CreateIndexIfMissingAsync(
+        globalDb,
+        "BackgroundJobs",
+        "IX_BackgroundJobs_CancellationRequested",
+        "CREATE INDEX `IX_BackgroundJobs_CancellationRequested` ON `BackgroundJobs` (`Status`, `CancellationRequestedAt`);");
+    await AlterColumnIfExistsAsync(
+        globalDb,
+        "BackgroundJobs",
+        "Result",
+        "ALTER TABLE `BackgroundJobs` MODIFY COLUMN `Result` mediumtext CHARACTER SET utf8mb4 NULL;");
+
+    Console.WriteLine("BackgroundJobs cancellation columns and diagnostic result storage are ready.");
 }
 
 static async Task SeedDemoAsync(string globalConnection, string tenantConnection)
@@ -881,6 +916,7 @@ CREATE TABLE IF NOT EXISTS `bidops_outcome_supplier_record` (
   `Rank` int NULL,
   `AwardAmount` decimal(18,2) NULL,
   `ProcurementAgencyServiceFeeAmount` decimal(18,2) NULL,
+  `ExtractionOrder` int NOT NULL DEFAULT 0,
   `Currency` varchar(16) CHARACTER SET utf8mb4 NOT NULL,
   `EvidenceText` varchar(2000) CHARACTER SET utf8mb4 NOT NULL,
   `ExtractionConfidence` decimal(5,4) NOT NULL,
@@ -904,6 +940,18 @@ CREATE TABLE IF NOT EXISTS `bidops_outcome_supplier_record` (
         "ProcurementAgencyServiceFeeAmount",
         "ALTER TABLE `bidops_outcome_supplier_record` ADD COLUMN `ProcurementAgencyServiceFeeAmount` decimal(18,2) NULL AFTER `AwardAmount`;");
 
+    var addedExtractionOrderColumn = await AddColumnIfMissingAsync(
+        tenantDb,
+        "bidops_outcome_supplier_record",
+        "ExtractionOrder",
+        "ALTER TABLE `bidops_outcome_supplier_record` ADD COLUMN `ExtractionOrder` int NOT NULL DEFAULT 0 AFTER `ProcurementAgencyServiceFeeAmount`;");
+
+    if (addedExtractionOrderColumn)
+    {
+        var deletedRows = await tenantDb.Database.ExecuteSqlRawAsync("DELETE FROM `bidops_outcome_supplier_record`;");
+        Console.WriteLine($"Deleted {deletedRows} existing BidOps outcome supplier records because ExtractionOrder is now required.");
+    }
+
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant", "CREATE INDEX `IX_bidops_outcome_record_Tenant` ON `bidops_outcome_supplier_record` (`TenantId`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_CreatedAt", "CREATE INDEX `IX_bidops_outcome_record_Tenant_CreatedAt` ON `bidops_outcome_supplier_record` (`TenantId`, `CreatedAt`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_Category_Pub", "CREATE INDEX `IX_bidops_outcome_record_Tenant_Category_Pub` ON `bidops_outcome_supplier_record` (`TenantId`, `Category`, `PublishTime`);");
@@ -911,6 +959,7 @@ CREATE TABLE IF NOT EXISTS `bidops_outcome_supplier_record` (
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_PackageNo", "CREATE INDEX `IX_bidops_outcome_record_Tenant_PackageNo` ON `bidops_outcome_supplier_record` (`TenantId`, `PackageNo`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_ProjectCode", "CREATE INDEX `IX_bidops_outcome_record_Tenant_ProjectCode` ON `bidops_outcome_supplier_record` (`TenantId`, `ProjectCode`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_RawNotice", "CREATE INDEX `IX_bidops_outcome_record_Tenant_RawNotice` ON `bidops_outcome_supplier_record` (`TenantId`, `RawNoticeId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_RawNotice_Order", "CREATE INDEX `IX_bidops_outcome_record_Tenant_RawNotice_Order` ON `bidops_outcome_supplier_record` (`TenantId`, `RawNoticeId`, `ExtractionOrder`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_SourceHash", "CREATE UNIQUE INDEX `IX_bidops_outcome_record_Tenant_SourceHash` ON `bidops_outcome_supplier_record` (`TenantId`, `SourceHash`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_supplier_record_BuyerId", "CREATE INDEX `IX_bidops_outcome_supplier_record_BuyerId` ON `bidops_outcome_supplier_record` (`BuyerId`);");
     await CreateIndexIfMissingAsync(tenantDb, "bidops_outcome_supplier_record", "IX_bidops_outcome_record_Tenant_Buyer", "CREATE INDEX `IX_bidops_outcome_record_Tenant_Buyer` ON `bidops_outcome_supplier_record` (`TenantId`, `BuyerId`);");
@@ -929,12 +978,22 @@ static async Task CreateIndexIfMissingAsync(DbContext db, string tableName, stri
     await db.Database.ExecuteSqlRawAsync(createSql);
 }
 
-static async Task AddColumnIfMissingAsync(DbContext db, string tableName, string columnName, string alterSql)
+static async Task<bool> AddColumnIfMissingAsync(DbContext db, string tableName, string columnName, string alterSql)
 {
     if (!await TableExistsAsync(db, tableName) || await ColumnExistsAsync(db, tableName, columnName))
-        return;
+        return false;
 
     await db.Database.ExecuteSqlRawAsync(alterSql);
+    return true;
+}
+
+static async Task<bool> AlterColumnIfExistsAsync(DbContext db, string tableName, string columnName, string alterSql)
+{
+    if (!await TableExistsAsync(db, tableName) || !await ColumnExistsAsync(db, tableName, columnName))
+        return false;
+
+    await db.Database.ExecuteSqlRawAsync(alterSql);
+    return true;
 }
 
 static async Task<bool> ColumnExistsAsync(DbContext db, string tableName, string columnName)
@@ -2352,6 +2411,7 @@ Atlas.LocalSetup commands:
   seed-demo         Idempotently seed demo tenant, stores, users, products, and inventory.
   seed-local        Alias of seed-demo.
   seed-production   Create schema only; demo data is intentionally excluded.
+  ensure-background-job-cancellation Ensure local BackgroundJobs termination columns and diagnostic result storage exist.
   seed-bidops-state-grid Idempotently seed BidOps local runtime and enqueue public State Grid scan jobs.
   bidops-status     Print BidOps local job and data counts.
   ensure-bidops-opportunities Ensure local BidOps opportunity tables exist for smoke testing.

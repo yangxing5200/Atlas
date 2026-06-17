@@ -82,7 +82,16 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         var source = await BuildAiSourceAsync(raw, ct);
         var sourceText = BuildCombinedSourceText(source);
         var isOutcomeNotice = BidOpsOutcomeSupplierTextParser.LooksLikeOutcomeNotice(raw.Title, raw.NoticeType, sourceText);
-        var extracts = isOutcomeNotice
+        var hasReviewerPrompt = !string.IsNullOrWhiteSpace(reviewerPrompt);
+        var shouldAttemptExtraction = ShouldAttemptOutcomeExtraction(isOutcomeNotice, reviewerPrompt);
+        if (!isOutcomeNotice && hasReviewerPrompt)
+        {
+            _logger.LogInformation(
+                "BidOps outcome supplier extraction will call AI for raw notice {RawNoticeId} because reviewer provided a correction prompt, although automatic outcome detection did not match.",
+                raw.Id);
+        }
+
+        var extracts = shouldAttemptExtraction
             ? await BuildOutcomeExtractsAsync(raw, source, sourceText, reviewerPrompt, ct)
             : [];
 
@@ -99,16 +108,19 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
             return new OutcomeSupplierExtractionResultDto
             {
                 RawNoticeId = raw.Id,
-                IsOutcomeNotice = isOutcomeNotice,
+                IsOutcomeNotice = shouldAttemptExtraction,
                 ExtractedCount = 0,
                 SavedCount = 0,
-                Message = isOutcomeNotice ? "未识别到中标/候选厂家线索。" : "非结果/候选公示，已跳过厂家线索抽取。"
+                Message = shouldAttemptExtraction
+                    ? (hasReviewerPrompt ? "DeepSeek 未返回可保存的中标/候选厂家线索。" : "未识别到中标/候选厂家线索。")
+                    : "非结果/候选公示，已跳过厂家线索抽取。"
             };
         }
 
         var context = await LoadNoticeContextAsync(raw, ct);
         var now = DateTime.UtcNow;
         var records = new List<OutcomeSupplierRecord>();
+        var extractionOrder = 0;
 
         foreach (var extract in extracts)
         {
@@ -156,6 +168,7 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
                 Rank = extract.Rank,
                 AwardAmount = extract.AwardAmount,
                 ProcurementAgencyServiceFeeAmount = extract.ProcurementAgencyServiceFeeAmount,
+                ExtractionOrder = extractionOrder++,
                 Currency = "CNY",
                 EvidenceText = Truncate(extract.EvidenceText, 2000),
                 ExtractionConfidence = Math.Clamp(extract.Confidence, 0m, 1m),
@@ -237,14 +250,21 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         return ChooseOutcomeExtractsForPersistence(deterministic, aiExtracts, reviewerPrompt);
     }
 
+    private static bool ShouldAttemptOutcomeExtraction(bool looksLikeOutcomeNotice, string? reviewerPrompt)
+    {
+        return looksLikeOutcomeNotice || !string.IsNullOrWhiteSpace(reviewerPrompt);
+    }
+
     private static IReadOnlyList<BidOpsOutcomeSupplierExtract> ChooseOutcomeExtractsForPersistence(
         IReadOnlyList<BidOpsOutcomeSupplierExtract> deterministic,
         IReadOnlyList<BidOpsOutcomeSupplierExtract> aiExtracts,
         string? reviewerPrompt)
     {
-        return !string.IsNullOrWhiteSpace(reviewerPrompt)
+        var selected = !string.IsNullOrWhiteSpace(reviewerPrompt)
             ? DedupeOutcomeExtracts(aiExtracts)
             : MergeOutcomeExtracts(deterministic, aiExtracts);
+
+        return AssignExtractionOrder(selected);
     }
 
     private static IReadOnlyList<BidOpsOutcomeSupplierExtract> MergeOutcomeExtracts(
@@ -254,9 +274,9 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         if (aiExtracts.Count == 0)
             return deterministic;
 
-        return deterministic
-            .Select(x => (Extract: x, IsAi: false))
-            .Concat(aiExtracts.Select(x => (Extract: x, IsAi: true)))
+        return aiExtracts
+            .Select(x => (Extract: x, IsAi: true))
+            .Concat(deterministic.Select(x => (Extract: x, IsAi: false)))
             .Where(x => !string.IsNullOrWhiteSpace(x.Extract.SupplierName))
             .GroupBy(x => string.Join(
                 '\u001f',
@@ -274,6 +294,15 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
                 .First()
                 .Extract)
             .ToList();
+    }
+
+    private static IReadOnlyList<BidOpsOutcomeSupplierExtract> AssignExtractionOrder(
+        IReadOnlyList<BidOpsOutcomeSupplierExtract> extracts)
+    {
+        for (var i = 0; i < extracts.Count; i++)
+            extracts[i].ExtractionOrder = i;
+
+        return extracts;
     }
 
     private static IReadOnlyList<BidOpsOutcomeSupplierExtract> DedupeOutcomeExtracts(

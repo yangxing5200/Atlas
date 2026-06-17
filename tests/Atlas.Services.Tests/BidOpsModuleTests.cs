@@ -56,6 +56,7 @@ public sealed class BidOpsModuleTests
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsSupplierService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsOutcomeSupplierExtractionService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsOutcomeSupplierAiExtractionService));
+        Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsAiCallDiagnostics));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsOrganizationMasterDataService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsSupplierMaintenanceService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsMatchingService));
@@ -68,6 +69,20 @@ public sealed class BidOpsModuleTests
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsTextExtractor));
         Assert.True(services.Count(x => x.ServiceType == typeof(IBackgroundJobHandler)) >= 14);
         Assert.True(services.Count(x => x.ServiceType == typeof(IRecurringTask)) >= 4);
+    }
+
+    [Fact]
+    public void BidOpsModule_ConfiguresAiHttpClientsWithThirtyMinuteTimeout()
+    {
+        var services = new ServiceCollection();
+        var module = new BidOpsModule();
+        module.AddServices(new AtlasModuleContext(services, new ConfigurationBuilder().Build(), module));
+
+        using var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+
+        Assert.Equal(TimeSpan.FromMinutes(30), factory.CreateClient(nameof(IBidOpsAiExtractionService)).Timeout);
+        Assert.Equal(TimeSpan.FromMinutes(30), factory.CreateClient(nameof(IBidOpsOutcomeSupplierAiExtractionService)).Timeout);
     }
 
     [Fact]
@@ -131,14 +146,16 @@ public sealed class BidOpsModuleTests
                 ["BidOps:Ai:Provider"] = "DeepSeek",
                 ["BidOps:Ai:ApiKey"] = "test-key",
                 ["BidOps:Ai:BaseUrl"] = "https://api.deepseek.com",
-                ["BidOps:Ai:Model"] = "deepseek-v4-flash",
+                ["BidOps:Ai:Model"] = "deepseek-v4-pro",
                 ["BidOps:Ai:UseForOutcomeSuppliers"] = "true"
             })
             .Build();
         var logger = new CapturingLogger<BidOpsOutcomeSupplierAiExtractionService>();
+        var diagnostics = new BidOpsAiCallDiagnostics();
         var service = new BidOpsOutcomeSupplierAiExtractionService(
             new HttpClient(handler),
             configuration,
+            diagnostics,
             logger);
 
         var records = await service.ExtractAsync(
@@ -173,6 +190,10 @@ public sealed class BidOpsModuleTests
             .GetProperty("content")
             .GetString();
         Assert.Contains("公开中文采购中标/成交结果公告", capturedSystemPrompt!);
+        Assert.Contains("不要输出推理过程", capturedSystemPrompt!);
+        Assert.Contains("不要输出推理过程", capturedPrompt!);
+        Assert.Equal("deepseek-v4-pro", capturedDocument.RootElement.GetProperty("model").GetString());
+        Assert.False(capturedDocument.RootElement.TryGetProperty("max_tokens", out _));
         Assert.Contains("表格中的最终报价单位是万元", capturedPrompt!);
         Assert.Contains("MsoNormalTable", capturedPrompt!);
         Assert.Contains("成交结果公告.pdf", capturedPrompt!);
@@ -181,9 +202,20 @@ public sealed class BidOpsModuleTests
         var logs = string.Join('\n', logger.Messages);
         Assert.Contains("request body before DeepSeek call", logs);
         Assert.Contains(capturedBody!, logs);
+        Assert.Contains("公开中文采购中标/成交结果公告", capturedBody!);
+        Assert.DoesNotContain("\\u4", capturedBody!);
         Assert.Contains("raw DeepSeek response", logs);
-        Assert.Contains(responseJson, logs);
+        Assert.Contains("北京乙科技有限公司", logs);
+        Assert.DoesNotContain("\\u5317\\u4eac", logs, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("test-key", logs);
+        var diagnostic = Assert.Single(diagnostics.Entries);
+        Assert.Equal("OutcomeSuppliers", diagnostic.Use);
+        Assert.Equal("DeepSeek", diagnostic.Provider);
+        Assert.Equal("deepseek-v4-pro", diagnostic.Model);
+        Assert.Equal(responseJson, diagnostic.RawResponseBody);
+        Assert.Equal(assistantJson, diagnostic.AssistantContent);
+        Assert.Equal(responseJson.Length, diagnostic.ResponseCharacters);
+        Assert.Equal(assistantJson.Length, diagnostic.AssistantCharacters);
         Assert.Equal("北京乙科技有限公司", record.SupplierName);
         Assert.Equal(BidOpsOutcomeTypes.Awarded, record.OutcomeType);
         Assert.Equal(1234500m, record.AwardAmount);
@@ -191,6 +223,7 @@ public sealed class BidOpsModuleTests
         Assert.Equal("872610", record.ProjectCode);
         Assert.Equal("9001005-9999", record.LotNo);
         Assert.Equal("包1", record.PackageNo);
+        Assert.Equal(0, record.ExtractionOrder);
     }
 
     [Fact]
@@ -227,6 +260,236 @@ public sealed class BidOpsModuleTests
 
         var record = Assert.Single(selected);
         Assert.Equal("DeepSeek修正厂家有限公司", record.SupplierName);
+        Assert.Equal(0, record.ExtractionOrder);
+    }
+
+    [Fact]
+    public void BidOpsOutcomeSupplierExtractionService_ReviewerPromptPreservesAiAnnouncementOrder()
+    {
+        var ai = new List<BidOpsOutcomeSupplierExtract>
+        {
+            new()
+            {
+                SupplierName = "公告第一行厂家有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                PackageNo = "包2",
+                Confidence = 0.95m
+            },
+            new()
+            {
+                SupplierName = "公告第二行厂家有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                PackageNo = "包1",
+                Confidence = 0.95m
+            }
+        };
+        var method = typeof(BidOpsOutcomeSupplierExtractionService).GetMethod(
+            "ChooseOutcomeExtractsForPersistence",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        var selected = (IReadOnlyList<BidOpsOutcomeSupplierExtract>)method!.Invoke(
+            null,
+            new object?[] { Array.Empty<BidOpsOutcomeSupplierExtract>(), ai, "以公告顺序为准" })!;
+
+        Assert.Collection(
+            selected,
+            first =>
+            {
+                Assert.Equal("公告第一行厂家有限公司", first.SupplierName);
+                Assert.Equal(0, first.ExtractionOrder);
+            },
+            second =>
+            {
+                Assert.Equal("公告第二行厂家有限公司", second.SupplierName);
+                Assert.Equal(1, second.ExtractionOrder);
+            });
+    }
+
+    [Fact]
+    public void BidOpsOutcomeSupplierExtractionService_AutomaticMergePrioritizesAiAnnouncementOrder()
+    {
+        var deterministic = new List<BidOpsOutcomeSupplierExtract>
+        {
+            new()
+            {
+                SupplierName = "公告第二行厂家有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                PackageNo = "包1",
+                Confidence = 0.6m
+            },
+            new()
+            {
+                SupplierName = "确定性补充厂家有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                PackageNo = "包3",
+                Confidence = 0.7m
+            }
+        };
+        var ai = new List<BidOpsOutcomeSupplierExtract>
+        {
+            new()
+            {
+                SupplierName = "公告第一行厂家有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                PackageNo = "包2",
+                Confidence = 0.95m
+            },
+            new()
+            {
+                SupplierName = "公告第二行厂家有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                PackageNo = "包1",
+                AwardAmount = 120000m,
+                Confidence = 0.95m
+            }
+        };
+        var method = typeof(BidOpsOutcomeSupplierExtractionService).GetMethod(
+            "ChooseOutcomeExtractsForPersistence",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        var selected = (IReadOnlyList<BidOpsOutcomeSupplierExtract>)method!.Invoke(
+            null,
+            new object?[] { deterministic, ai, null })!;
+
+        Assert.Collection(
+            selected,
+            first =>
+            {
+                Assert.Equal("公告第一行厂家有限公司", first.SupplierName);
+                Assert.Equal(0, first.ExtractionOrder);
+            },
+            second =>
+            {
+                Assert.Equal("公告第二行厂家有限公司", second.SupplierName);
+                Assert.Equal(120000m, second.AwardAmount);
+                Assert.Equal(1, second.ExtractionOrder);
+            },
+            third =>
+            {
+                Assert.Equal("确定性补充厂家有限公司", third.SupplierName);
+                Assert.Equal(2, third.ExtractionOrder);
+            });
+    }
+
+    [Fact]
+    public void BidOpsOutcomeSupplierExtractionService_ReviewerPromptForcesAiAttempt()
+    {
+        var method = typeof(BidOpsOutcomeSupplierExtractionService).GetMethod(
+            "ShouldAttemptOutcomeExtraction",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        Assert.True((bool)method!.Invoke(null, new object?[] { false, "请按附件表格重新提取候选人" })!);
+        Assert.True((bool)method.Invoke(null, new object?[] { true, null })!);
+        Assert.False((bool)method.Invoke(null, new object?[] { false, null })!);
+    }
+
+    [Fact]
+    public async Task BidOpsOutcomeSupplierAiExtractionService_LogsUnavailableSettingsWithoutApiKey()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["BidOps:Ai:Enabled"] = "true",
+                ["BidOps:Ai:Provider"] = "DeepSeek",
+                ["BidOps:Ai:BaseUrl"] = "https://api.deepseek.com",
+                ["BidOps:Ai:Model"] = "deepseek-v4-pro",
+                ["BidOps:Ai:UseForOutcomeSuppliers"] = "true"
+            })
+            .Build();
+        var logger = new CapturingLogger<BidOpsOutcomeSupplierAiExtractionService>();
+        var diagnostics = new BidOpsAiCallDiagnostics();
+        var service = new BidOpsOutcomeSupplierAiExtractionService(
+            new HttpClient(new StubHttpMessageHandler((_, _) => throw new InvalidOperationException("HTTP should not be called."))),
+            configuration,
+            diagnostics,
+            logger);
+
+        var records = await service.ExtractAsync(
+            new BidOpsOutcomeSupplierAiExtractionRequest(
+                "国网测试成交结果公告",
+                "AwardAnnouncement",
+                string.Empty,
+                null,
+                "成交供应商：北京乙科技有限公司",
+                [],
+                "请重新提取",
+                string.Empty,
+                []));
+
+        Assert.Empty(records);
+        var logs = string.Join('\n', logger.Messages);
+        Assert.Contains("AI HTTP settings are unavailable", logs);
+        Assert.Contains("hasApiKey=False", logs);
+        Assert.Contains("apiKeySource=None", logs);
+        Assert.Empty(diagnostics.Entries);
+    }
+
+    [Fact]
+    public async Task BidOpsOutcomeSupplierAiExtractionService_HandlesEmptyDeepSeekContent()
+    {
+        var responseJson = JsonSerializer.Serialize(new
+        {
+            choices = new[]
+            {
+                new
+                {
+                    message = new
+                    {
+                        role = "assistant",
+                        content = string.Empty,
+                        reasoning_content = "模型只返回了推理内容，没有返回 JSON。"
+                    },
+                    finish_reason = "length"
+                }
+            }
+        });
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
+        }));
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["BidOps:Ai:Enabled"] = "true",
+                ["BidOps:Ai:Provider"] = "DeepSeek",
+                ["BidOps:Ai:ApiKey"] = "test-key",
+                ["BidOps:Ai:BaseUrl"] = "https://api.deepseek.com",
+                ["BidOps:Ai:Model"] = "deepseek-v4-pro",
+                ["BidOps:Ai:UseForOutcomeSuppliers"] = "true"
+            })
+            .Build();
+        var logger = new CapturingLogger<BidOpsOutcomeSupplierAiExtractionService>();
+        var diagnostics = new BidOpsAiCallDiagnostics();
+        var service = new BidOpsOutcomeSupplierAiExtractionService(
+            new HttpClient(handler),
+            configuration,
+            diagnostics,
+            logger);
+
+        var records = await service.ExtractAsync(
+            new BidOpsOutcomeSupplierAiExtractionRequest(
+                "国网测试成交候选人公示",
+                "CandidateAnnouncement",
+                string.Empty,
+                null,
+                "推荐成交候选人：北京乙科技有限公司",
+                [],
+                "请重新提取",
+                string.Empty,
+                []));
+
+        Assert.Empty(records);
+        var logs = string.Join('\n', logger.Messages);
+        Assert.Contains("empty assistant content", logs);
+        Assert.Contains("finishReason=length", logs);
+        Assert.DoesNotContain("AI extraction failed", logs);
+        var diagnostic = Assert.Single(diagnostics.Entries);
+        Assert.Equal(responseJson, diagnostic.RawResponseBody);
+        Assert.Equal(string.Empty, diagnostic.AssistantContent);
+        Assert.Equal("length", diagnostic.FinishReason);
     }
 
     [Fact]
@@ -294,14 +557,16 @@ public sealed class BidOpsModuleTests
                 ["BidOps:Ai:Provider"] = "DeepSeek",
                 ["BidOps:Ai:ApiKey"] = "test-key",
                 ["BidOps:Ai:BaseUrl"] = "https://api.deepseek.com",
-                ["BidOps:Ai:Model"] = "deepseek-v4-flash",
+                ["BidOps:Ai:Model"] = "deepseek-v4-pro",
                 ["BidOps:Ai:UseForNoticeStaging"] = "true"
             })
             .Build();
         var logger = new CapturingLogger<BidOpsStructuredExtractionService>();
+        var diagnostics = new BidOpsAiCallDiagnostics();
         var service = new BidOpsStructuredExtractionService(
             new HttpClient(handler),
             configuration,
+            diagnostics,
             logger);
 
         var extract = await service.ExtractAsync(
@@ -342,9 +607,16 @@ public sealed class BidOpsModuleTests
         var logs = string.Join('\n', logger.Messages);
         Assert.Contains("request body before DeepSeek call", logs);
         Assert.Contains(capturedBody!, logs);
+        Assert.Contains("公开招投标/采购公告", capturedBody!);
+        Assert.DoesNotContain("\\u4", capturedBody!);
         Assert.Contains("raw DeepSeek response", logs);
-        Assert.Contains(responseJson, logs);
+        Assert.Contains("国网测试采购单位", logs);
+        Assert.DoesNotContain("\\u56fd\\u7f51", logs, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("test-key", logs);
+        var diagnostic = Assert.Single(diagnostics.Entries);
+        Assert.Equal("NoticeStaging", diagnostic.Use);
+        Assert.Equal(responseJson, diagnostic.RawResponseBody);
+        Assert.Equal(assistantJson, diagnostic.AssistantContent);
         Assert.Equal("CG-2026-001", extract.ProjectCode);
         Assert.Equal("包1", Assert.Single(extract.Packages).PackageNo);
     }
@@ -372,6 +644,7 @@ public sealed class BidOpsModuleTests
             new ExecutionIdentityAccessor(),
             parsing.Object,
             extraction.Object,
+            new BidOpsAiCallDiagnostics(),
             NullLogger<StructuredParseJobHandler>.Instance);
         var payload = new StructuredParseJobPayload(300001, null, 42, "bidops", 123);
         var context = new BackgroundJobExecutionContext(new BackgroundJob
@@ -405,10 +678,25 @@ public sealed class BidOpsModuleTests
                 Message = "saved"
             });
 
+        var diagnostics = new BidOpsAiCallDiagnostics();
+        diagnostics.Record(new BidOpsAiCallDiagnosticEntry(
+            "NoticeStaging",
+            "DeepSeek",
+            "deepseek-v4-pro",
+            "api.deepseek.com/chat/completions",
+            200,
+            1234,
+            98,
+            42,
+            "stop",
+            "{\"choices\":[{\"message\":{\"content\":\"{\\\"ok\\\":true}\"}}]}",
+            "{\"ok\":true}"));
+
         var handler = new StructuredParseJobHandler(
             new ExecutionIdentityAccessor(),
             parsing.Object,
             extraction.Object,
+            diagnostics,
             NullLogger<StructuredParseJobHandler>.Instance);
         var payload = new StructuredParseJobPayload(300001, null, 42, "bidops", 123);
         var context = new BackgroundJobExecutionContext(new BackgroundJob
@@ -420,6 +708,7 @@ public sealed class BidOpsModuleTests
         var result = await handler.HandleAsync(context);
 
         Assert.True(result.Succeeded);
+        Assert.Equal(BackgroundJobResultStorageLimits.AiDiagnosticsMaxCharacters, result.MaxResultCharacters);
         using var document = JsonDocument.Parse(result.Result!);
         Assert.Equal(123, document.RootElement.GetProperty("rawNoticeId").GetInt64());
         Assert.Equal(456, document.RootElement.GetProperty("reviewTaskId").GetInt64());
@@ -427,6 +716,10 @@ public sealed class BidOpsModuleTests
             .GetProperty("outcomeSupplierExtraction")
             .GetProperty("savedCount")
             .GetInt32());
+        var deepSeekResponse = Assert.Single(document.RootElement.GetProperty("deepSeekResponses").EnumerateArray());
+        Assert.Equal("DeepSeek", deepSeekResponse.GetProperty("provider").GetString());
+        Assert.Contains("choices", deepSeekResponse.GetProperty("rawResponseBody").GetString());
+        Assert.Equal("{\"ok\":true}", deepSeekResponse.GetProperty("assistantContent").GetString());
     }
 
     [Fact]
@@ -446,9 +739,24 @@ public sealed class BidOpsModuleTests
                 Message = "已保存 3 条公开结果厂家线索。"
             });
 
+        var diagnostics = new BidOpsAiCallDiagnostics();
+        diagnostics.Record(new BidOpsAiCallDiagnosticEntry(
+            "OutcomeSuppliers",
+            "DeepSeek",
+            "deepseek-v4-pro",
+            "api.deepseek.com/chat/completions",
+            200,
+            1567,
+            120,
+            60,
+            "stop",
+            "{\"choices\":[{\"message\":{\"content\":\"{\\\"records\\\":[]}\"}}]}",
+            "{\"records\":[]}"));
+
         var handler = new OutcomeSupplierExtractJobHandler(
             new ExecutionIdentityAccessor(),
             extraction.Object,
+            diagnostics,
             NullLogger<OutcomeSupplierExtractJobHandler>.Instance);
         var payload = new OutcomeSupplierExtractJobPayload(300001, null, 42, "bidops", 123, "提示词");
         var context = new BackgroundJobExecutionContext(new BackgroundJob
@@ -460,12 +768,16 @@ public sealed class BidOpsModuleTests
         var result = await handler.HandleAsync(context);
 
         Assert.True(result.Succeeded);
+        Assert.Equal(BackgroundJobResultStorageLimits.AiDiagnosticsMaxCharacters, result.MaxResultCharacters);
         using var document = JsonDocument.Parse(result.Result!);
         Assert.Equal(123, document.RootElement.GetProperty("rawNoticeId").GetInt64());
         Assert.Equal(3, document.RootElement.GetProperty("savedCount").GetInt32());
         Assert.Equal(1, document.RootElement.GetProperty("buyerCreatedCount").GetInt32());
         Assert.Equal(2, document.RootElement.GetProperty("supplierUpdatedCount").GetInt32());
         Assert.True(document.RootElement.GetProperty("reviewerPrompt").GetBoolean());
+        var deepSeekResponse = Assert.Single(document.RootElement.GetProperty("deepSeekResponses").EnumerateArray());
+        Assert.Equal("OutcomeSuppliers", deepSeekResponse.GetProperty("use").GetString());
+        Assert.Equal("{\"records\":[]}", deepSeekResponse.GetProperty("assistantContent").GetString());
         Assert.Contains("已保存", result.Result);
         Assert.DoesNotContain("\\u", result.Result);
     }
@@ -683,6 +995,7 @@ public sealed class BidOpsModuleTests
         Assert.NotNull(typeof(ReviewOutcomeAiReparseRequest).GetProperty(nameof(ReviewOutcomeAiReparseRequest.Prompt)));
         Assert.NotNull(typeof(ReviewOutcomeSupplierRecordEditRequest).GetProperty(nameof(ReviewOutcomeSupplierRecordEditRequest.SupplierName)));
         Assert.NotNull(typeof(ReviewOutcomeSupplierRecordEditRequest).GetProperty(nameof(ReviewOutcomeSupplierRecordEditRequest.AwardAmount)));
+        Assert.NotNull(typeof(OutcomeSupplierRecordDto).GetProperty(nameof(OutcomeSupplierRecordDto.ExtractionOrder)));
         Assert.NotNull(typeof(OutcomeSupplierExtractJobPayload).GetProperty(nameof(OutcomeSupplierExtractJobPayload.ReviewerPrompt)));
     }
 

@@ -35,12 +35,28 @@ export const jobStatusOptions = [
   { label: '已取消', value: 'Canceled' },
 ]
 
-export function formatJobStatus(value?: BackgroundJobStatus | null, statusName?: string | null) {
+export function formatJobStatus(
+  value?: BackgroundJobStatus | null,
+  statusName?: string | null,
+  cancellationRequested?: boolean | null,
+) {
+  if (cancellationRequested) return '终止中'
+
   const key = statusName || (value === null || value === undefined ? '' : String(value))
   return statusLabels[key] || key || '-'
 }
 
-export function jobStatusTagType(value?: BackgroundJobStatus | null, statusName?: string | null) {
+export function formatJobType(jobType?: string | null, jobTypeName?: string | null) {
+  return jobTypeName?.trim() || jobType?.trim() || '-'
+}
+
+export function jobStatusTagType(
+  value?: BackgroundJobStatus | null,
+  statusName?: string | null,
+  cancellationRequested?: boolean | null,
+) {
+  if (cancellationRequested) return 'warning'
+
   const key = statusName || (value === null || value === undefined ? '' : String(value))
   if (key === '2' || key === 'Succeeded') return 'success'
   if (key === '1' || key === 'Running') return 'primary'

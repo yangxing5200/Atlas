@@ -72,16 +72,8 @@ const allRequirements = computed(() => packages.value.flatMap((pkg) => pkg.requi
 const rejectRiskCount = computed(() => allRequirements.value.filter((item) => item.isRejectRisk).length)
 const mandatoryCount = computed(() => allRequirements.value.filter((item) => item.isMandatory).length)
 const noticeKind = computed(() => detectNoticeKind())
-const awardRows = computed(() =>
-  outcomeSuppliers.value
-    .slice()
-    .sort((left, right) => compareOutcomeRows(left, right)),
-)
-const candidateRows = computed(() =>
-  outcomeSuppliers.value
-    .slice()
-    .sort((left, right) => compareOutcomeRows(left, right)),
-)
+const awardRows = computed(() => outcomeSuppliers.value.slice())
+const candidateRows = computed(() => outcomeSuppliers.value.slice())
 const procurementPackages = computed(() =>
   packages.value
     .slice()
@@ -249,21 +241,6 @@ function matchedPackageForOutcome(row: OutcomeSupplierRecordDto) {
     }
     return false
   })
-}
-
-function compareOutcomeRows(left: OutcomeSupplierRecordDto, right: OutcomeSupplierRecordDto) {
-  const packageCompare = compareText(outcomeSortKey(left), outcomeSortKey(right))
-  if (packageCompare !== 0) return packageCompare
-  return Number(left.rank || 999) - Number(right.rank || 999)
-}
-
-function outcomeSortKey(row: OutcomeSupplierRecordDto) {
-  return [
-    normalizeCode(row.lotNo),
-    normalizeCode(row.packageNo),
-    normalizeText(row.packageName),
-    normalizeText(row.supplierName),
-  ].join('|')
 }
 
 function packageSortKey(pkg: PackageStagingDto) {

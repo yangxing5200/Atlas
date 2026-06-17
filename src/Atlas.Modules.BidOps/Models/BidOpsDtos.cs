@@ -469,6 +469,7 @@ public sealed class OutcomeSupplierRecordDto
     public int? Rank { get; set; }
     public decimal? AwardAmount { get; set; }
     public decimal? ProcurementAgencyServiceFeeAmount { get; set; }
+    public int ExtractionOrder { get; set; }
     public string Currency { get; set; } = string.Empty;
     public string EvidenceText { get; set; } = string.Empty;
     public decimal ExtractionConfidence { get; set; }
@@ -777,4 +778,7 @@ public sealed record EnqueueJobDto(
     long JobId,
     string JobType,
     string Queue,
-    bool AlreadyExists);
+    bool AlreadyExists)
+{
+    public string JobTypeName => Atlas.BackgroundTasks.Operations.BackgroundJobDisplayNames.ForJobType(JobType);
+}

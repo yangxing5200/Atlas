@@ -17,7 +17,7 @@ import type {
   BackgroundJobStatus,
   BackgroundJobSummaryDto,
 } from '../types'
-import { formatDuration, jobStatusOptions } from '../utils/display'
+import { formatDuration, formatJobType, jobStatusOptions } from '../utils/display'
 
 interface JobTableQuery {
   keyword: string
@@ -66,6 +66,7 @@ const result = ref<BackgroundJobPagedResult>({
 const summary = ref<BackgroundJobSummaryDto | null>(null)
 const loading = ref(false)
 const summaryLoading = ref(false)
+const paginationTotal = computed(() => Number(result.value.total || 0))
 
 const metrics = computed(() => [
   { label: '待执行', value: summary.value?.pending ?? 0 },
@@ -149,9 +150,16 @@ async function retryJob(row: BackgroundJobListItemDto) {
 }
 
 async function cancelJob(row: BackgroundJobListItemDto) {
-  await ElMessageBox.confirm('仅 Pending / Failed / Dead 任务会被取消，Running 任务不会被强制终止。', '确认取消', {
-    type: 'warning',
-  })
+  const running = isRunning(row)
+  await ElMessageBox.confirm(
+    running
+      ? '将向 Worker 发送终止请求。任务会在当前处理器响应 CancellationToken 后结束，不会强杀进程。'
+      : '将取消未完成任务，任务历史不会被删除。',
+    running ? '确认终止' : '确认取消',
+    {
+      type: 'warning',
+    },
+  )
   const result = bidOpsMode.value
     ? await bidOpsOperationsApi.cancelJob(String(row.id))
     : await backgroundJobsApi.cancel(String(row.id))
@@ -159,12 +167,22 @@ async function cancelJob(row: BackgroundJobListItemDto) {
   await reload()
 }
 
+function isRunning(row: BackgroundJobListItemDto) {
+  return ['Running', '1'].includes(String(row.statusName || row.status))
+}
+
+function cancelActionText(row: BackgroundJobListItemDto) {
+  if (row.isCancellationRequested) return '终止中'
+  return isRunning(row) ? '终止' : '取消'
+}
+
 function canRetry(row: BackgroundJobListItemDto) {
   return !['Pending', 'Running', '0', '1'].includes(String(row.statusName || row.status))
 }
 
 function canCancel(row: BackgroundJobListItemDto) {
-  return !['Running', 'Succeeded', 'Canceled', '1', '2', '5'].includes(String(row.statusName || row.status))
+  if (row.isCancellationRequested) return false
+  return !['Succeeded', 'Canceled', '2', '5'].includes(String(row.statusName || row.status))
 }
 
 function jobDetailPath(id: string | number) {
@@ -189,13 +207,13 @@ onMounted(reload)
 
     <SearchForm @search="search" @reset="reset">
       <el-form-item label="关键词">
-        <el-input v-model="query.keyword" clearable placeholder="JobType / 名称 / 错误" />
+        <el-input v-model="query.keyword" clearable placeholder="任务类型 / 名称 / 错误" />
       </el-form-item>
       <el-form-item label="队列">
         <el-input v-model="query.queue" clearable :disabled="bidOpsMode" placeholder="default / bidops" />
       </el-form-item>
       <el-form-item label="类型">
-        <el-input v-model="query.jobType" clearable placeholder="bidops.ai.structured-parse" />
+        <el-input v-model="query.jobType" clearable placeholder="中文名或任务代码" />
       </el-form-item>
       <el-form-item label="状态">
         <el-select v-model="query.status" clearable placeholder="全部" style="width: 160px">
@@ -216,10 +234,16 @@ onMounted(reload)
     <DataTable :data="result.items" :loading="loading">
       <el-table-column label="状态" width="130">
         <template #default="{ row }">
-          <JobStatusTag :status="row.status" :status-name="row.statusName" />
+          <JobStatusTag
+            :status="row.status"
+            :status-name="row.statusName"
+            :cancellation-requested="row.isCancellationRequested"
+          />
         </template>
       </el-table-column>
-      <el-table-column prop="jobType" label="任务类型" min-width="260" show-overflow-tooltip />
+      <el-table-column label="任务类型" min-width="260" show-overflow-tooltip>
+        <template #default="{ row }">{{ formatJobType(row.jobType, row.jobTypeName) }}</template>
+      </el-table-column>
       <el-table-column prop="queue" label="队列" width="110" />
       <el-table-column prop="tenantId" label="租户" width="120" />
       <el-table-column label="重试" width="95">
@@ -235,7 +259,7 @@ onMounted(reload)
         <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
       </el-table-column>
       <el-table-column label="下次重试" width="170">
-        <template #default="{ row }">{{ formatDateTime(row.nextAttemptAtUtc) }}</template>
+        <template #default="{ row }">{{ formatDateTime(row.nextAttemptAt) }}</template>
       </el-table-column>
       <el-table-column prop="lockedBy" label="锁定节点" min-width="150" show-overflow-tooltip />
       <el-table-column prop="lastErrorPreview" label="错误信息" min-width="240" show-overflow-tooltip />
@@ -243,7 +267,9 @@ onMounted(reload)
         <template #default="{ row }">
           <el-button size="small" :icon="View" @click="router.push(jobDetailPath(row.id))">详情</el-button>
           <el-button size="small" :icon="Refresh" :disabled="!canRetry(row)" @click="retryJob(row)">重试</el-button>
-          <el-button size="small" :icon="Close" :disabled="!canCancel(row)" @click="cancelJob(row)">取消</el-button>
+          <el-button size="small" :icon="Close" :disabled="!canCancel(row)" @click="cancelJob(row)">
+            {{ cancelActionText(row) }}
+          </el-button>
         </template>
       </el-table-column>
     </DataTable>
@@ -251,7 +277,7 @@ onMounted(reload)
     <el-pagination
       v-model:current-page="query.pageIndex"
       v-model:page-size="query.pageSize"
-      :total="result.total"
+      :total="paginationTotal"
       :page-sizes="[10, 20, 50, 100, 200]"
       layout="total, sizes, prev, pager, next, jumper"
       class="table-pagination"

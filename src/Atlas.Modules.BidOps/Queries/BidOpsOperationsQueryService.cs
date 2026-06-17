@@ -64,7 +64,7 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
 
     public async Task<BidOpsOperationsDashboardDto> GetDashboardAsync(CancellationToken ct = default)
     {
-        var now = DateTime.UtcNow;
+        var now = DateTime.Now;
         var today = now.Date;
         var config = await GetConfigCheckAsync(ct);
         var summary = await _jobs.GetSummaryAsync(new BackgroundJobSearchQuery(), bidOpsOnly: true, ct: ct);
@@ -120,7 +120,7 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
 
     public async Task<BidOpsDashboardSummaryDto> GetBusinessDashboardAsync(CancellationToken ct = default)
     {
-        var now = DateTime.UtcNow;
+        var now = DateTime.Now;
         var today = now.Date;
         var deadlineUntil = now.AddDays(7);
 
@@ -318,7 +318,7 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
 
     public async Task<IReadOnlyList<BidOpsChannelHealthDto>> GetChannelHealthAsync(CancellationToken ct = default)
     {
-        var now = DateTime.UtcNow;
+        var now = DateTime.Now;
         var since24h = now.AddHours(-24);
         var sourceQuery = await _sources.QueryDataScopeAsync(BidOpsDataResources.CrawlSource, AtlasDataScopeType.AllTenant, ct);
         var channelQuery = await _channels.QueryDataScopeAsync(BidOpsDataResources.CrawlSource, AtlasDataScopeType.AllTenant, ct);
@@ -449,15 +449,15 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
             bidOpsOnly: true,
             ct: ct);
         var failed = await _jobs.SearchAsync(
-            new BackgroundJobSearchQuery { Status = BackgroundJobStatus.Failed, CreatedFromUtc = since24h, PageSize = 200 },
+            new BackgroundJobSearchQuery { Status = BackgroundJobStatus.Failed, CreatedFrom = since24h, PageSize = 200 },
             bidOpsOnly: true,
             ct: ct);
         var dead = await _jobs.SearchAsync(
-            new BackgroundJobSearchQuery { Status = BackgroundJobStatus.Dead, CreatedFromUtc = since24h, PageSize = 200 },
+            new BackgroundJobSearchQuery { Status = BackgroundJobStatus.Dead, CreatedFrom = since24h, PageSize = 200 },
             bidOpsOnly: true,
             ct: ct);
         var succeeded = await _jobs.SearchAsync(
-            new BackgroundJobSearchQuery { Status = BackgroundJobStatus.Succeeded, CreatedFromUtc = since24h, PageSize = 200 },
+            new BackgroundJobSearchQuery { Status = BackgroundJobStatus.Succeeded, CreatedFrom = since24h, PageSize = 200 },
             bidOpsOnly: true,
             ct: ct);
 

@@ -1,5 +1,185 @@
 # Implementation Log
 
+## 2026-06-16 DeepSeek Response Visibility In Background Job Details
+
+Completed:
+
+- Added scoped BidOps AI call diagnostics that capture DeepSeek/OpenAI-compatible raw response bodies and assistant content after each HTTP response is read.
+- Included `deepSeekResponses` in BidOps structured parse and outcome supplier extraction job results, with a larger explicit Worker result storage cap for these AI diagnostic jobs.
+- Widened `BackgroundJobs.Result` to `mediumtext` through global migration `v0.2.5-background-job-result-mediumtext`, updated the Global model snapshot, and extended the local setup repair command to modify the local column.
+- Updated operations detail mapping so BidOps AI job details can return large diagnostic results while list previews stay short.
+- Added a `DeepSeek 返回` tab on the background job detail page that formats assistant content and raw response body separately.
+- Added regression tests for AI diagnostics capture, job result serialization, large Worker result storage, and large BidOps AI detail results.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierAiExtractionService_ExtractsDeepSeekJsonRecords|BidOpsOutcomeSupplierAiExtractionService_LogsUnavailableSettingsWithoutApiKey|BidOpsOutcomeSupplierAiExtractionService_HandlesEmptyDeepSeekContent|BidOpsStructuredExtractionService_SendsHtmlAndAttachmentsToDeepSeek|StructuredParseJobHandler_ReturnsJsonResultSummary|OutcomeSupplierExtractJobHandler_ReturnsJsonResultSummary|BidOpsModule_RegistersServicesAndBackgroundHandlers" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded: 7 passed. The first parallel attempt was blocked by a transient local `obj` cache file lock; the sequential rerun passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "GetAsync_ReturnsFullResultForBidOpsDeepSeekDiagnostics|Worker_StoresExplicitLargeResult|Worker_CancelsRunningJobWhenTerminationIsRequested" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded: 3 passed.
+- `dotnet build src\Atlas.Data.Global.Migrations\Atlas.Data.Global.Migrations.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings after stopping the existing local Worker that locked normal output DLLs.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings.
+- `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- `dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj -- ensure-background-job-cancellation --global "Server=localhost;Port=3306;Database=atlas_global_bidops;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;"` succeeded and prepared the local Global DB result storage.
+- `.\scripts\restart-webapi.ps1` and `.\scripts\restart-worker.ps1` restarted local BidOps WebApi/Worker. WebApi returned 401 for an unauthenticated `/api/ops/background-jobs/summary` probe, confirming it is up and enforcing auth; Worker PID `35744` completed the `bidops.recovery` recurring task in `BidOpsLocal`.
+- Browser smoke opened `http://localhost:5173/ops/jobs`, confirmed the list and first job detail loaded without console errors. The inspected historical job did not show `DeepSeek 返回` because it predates persisted `deepSeekResponses`, which is expected.
+
+## 2026-06-15 Background Job Cooperative Termination
+
+Completed:
+
+- Added durable cancellation request fields to `BackgroundJobs`: `CancellationRequestedAt`, `CancellationRequestedBy`, and `CancellationReason`, plus global migration `v0.2.4-background-job-cancellation`.
+- Changed background job cancel operations so Pending/Failed/Dead jobs still cancel immediately, while Running jobs record a termination request instead of returning a BadRequest.
+- Updated `BackgroundJobWorker` to watch the active job for cancellation requests, cancel the handler `CancellationToken`, and mark the job `Canceled` when the handler exits because of that token.
+- Exposed `IsCancellationRequested` and cancellation request metadata through operations DTOs. The operations frontend now shows Running jobs with pending termination as `终止中`, enables `终止` for Running jobs, and keeps `取消` for non-running unfinished jobs.
+- Added regression coverage for operation-level Running cancellation requests and Worker-level cooperative cancellation of an active handler.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BackgroundTaskOperationsTests --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded: 8 passed.
+- `dotnet build src\Atlas.Data.Global.Migrations\Atlas.Data.Global.Migrations.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\GlobalMigrationJobCancellation\"` succeeded with 0 warnings.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\WebApiJobTermination\"` succeeded. One transient DLL copy retry warning occurred because another process briefly held `Atlas.Data.Abstractions.dll`; the build completed successfully.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\WorkerJobTermination\"` succeeded with 0 warnings.
+- `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LocalSetupJobTermination\"` succeeded with 0 warnings.
+- `dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj -- ensure-background-job-cancellation --global "Server=localhost;Port=3306;Database=atlas_global_bidops;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;"` succeeded and prepared the local historical Global DB without replaying pending EF migrations.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- `.\scripts\restart-webapi.ps1` and `.\scripts\restart-worker.ps1` restarted local BidOps WebApi/Worker. WebApi PID `22384` served `/api/ops/background-jobs` and `/api/ops/background-jobs/summary` with HTTP 200; Worker PID `15596` resumed BidOps recovery recurring tasks.
+- Browser smoke opened `http://localhost:5173/ops/jobs`, logged in with the local seeded BidOps account, confirmed the background job page loaded, and verified completed rows keep the cancel button disabled. No browser console errors were reported.
+- `git diff --check` succeeded; Git reported only the existing line-ending normalization warning for `AtlasTenantDbContextModelSnapshot.cs`.
+
+## 2026-06-15 Background Job Chinese Types And Local Times
+
+Completed:
+
+- Added backend task type display names for common Atlas, export, and BidOps job types. Operations DTOs now expose `JobTypeName` and Worker heartbeat DTOs expose `CurrentJobTypeName` while keeping the original `JobType` code for routing and filtering.
+- Changed background job lifecycle writes in `BackgroundJobClient`, `BackgroundJobWorker`, manual retry/cancel operations, recurring task scheduling context, and Worker heartbeat updates to use server local time (`DateTime.Now`).
+- Added local-time operation DTO aliases without `Utc` suffix: `AvailableAt`, `StartedAt`, `LockedAt`, `CompletedAt`, `NextAttemptAt`, `OldestPendingAt`, `RecentErrorAt`, `StartedAt`, and `LastSeenAt`. Existing `xxxAtUtc` fields remain for compatibility with old callers.
+- Updated the operations frontend job list/detail pages, Worker heartbeat page, BidOps operations dashboard, and crawl channel enqueue success message to display Chinese task types and local-time fields.
+- Updated `docs/background_tasks_guide.md` and decisions to document the local-operator semantics and the compatibility reason for keeping legacy `Utc` column/API aliases.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter BackgroundTaskOperationsTests --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded: 6 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\WebApiBackgroundJobLocalTimes\"` succeeded. One transient DLL copy retry warning occurred because another process briefly held `Atlas.Data.Abstractions.dll`; the build completed successfully.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\WorkerBackgroundJobLocalTimes\"` succeeded with 0 warnings.
+- `npm run build` succeeded in `frontend/atlas-admin`; Vite reported only existing non-fatal Rollup annotation and chunk-size warnings.
+- `rg "DateTime\.UtcNow|UtcNow" src/Atlas.BackgroundTasks src/Atlas.Modules.BidOps/Queries/BidOpsOperationsQueryService.cs -g "*.cs"` returned no matches.
+- `git diff --check` succeeded; Git reported only the existing line-ending normalization warning for `AtlasTenantDbContextModelSnapshot.cs`.
+
+## 2026-06-15 Local Audit Timestamps
+
+Completed:
+
+- Changed the EF audit interceptor to use `DateTime.Now` for infrastructure-managed `CreatedAt`, `UpdatedAt`, and soft-delete `DeletedAt` fields instead of `DateTime.UtcNow`.
+- Changed bulk insert/update audit field population to use the same local-time source so normal and batch persistence paths stay consistent.
+- Reverted the shared frontend `formatDateTime` helper to parse timezone-less datetime strings as browser-local time, preventing local backend timestamps from being shifted again in the UI.
+- Superseded the earlier background-job exception later the same day: background job operations now expose and write local operator times; legacy `xxxAtUtc` field names remain only as compatibility aliases/columns.
+
+Verification:
+
+- `dotnet test tests\Atlas.Data.Tests\Atlas.Data.Tests.csproj --filter "AuditInterceptor_UsesLocalTimeForAuditFields" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded: 1 passed. Existing nullable warnings in `tests\Atlas.Data.Tests` remain unrelated.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\WorkerLocalAuditTime\"` succeeded with 0 warnings.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+
+## 2026-06-15 BidOps Outcome Supplier Announcement Order
+
+Completed:
+
+- Added `OutcomeSupplierRecord.ExtractionOrder` and exposed it through `OutcomeSupplierRecordDto` so public result/candidate supplier rows keep the announcement order returned by DeepSeek or the deterministic parser.
+- Changed reviewer-prompted DeepSeek reparses to persist the DeepSeek array order exactly. Automatic deterministic-plus-AI merging now treats AI rows as the primary ordered source and appends deterministic-only fallback rows after them.
+- Changed review-detail outcome supplier queries to order by `ExtractionOrder` instead of package number, lot number, or supplier name. The review frontend no longer re-sorts award/candidate rows, so the visible table follows the backend announcement order.
+- Added tenant migration `v0.2.12-bidops-outcome-extraction-order`. Existing `bidops_outcome_supplier_record` rows are deleted during the migration instead of being approximate-backfilled, because their original announcement order was not durable before this change.
+- Updated LocalSetup `ensure-bidops-outcomes` so older local databases add `ExtractionOrder`, delete existing outcome supplier lead rows once during that schema upgrade, and create the raw-notice/order index.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_ReviewerPromptUsesAiRowsAsReplacement|BidOpsOutcomeSupplierExtractionService_ReviewerPromptPreservesAiAnnouncementOrder|BidOpsOutcomeSupplierExtractionService_AutomaticMergePrioritizesAiAnnouncementOrder|BidOpsOutcomeSupplierAiExtractionService_ExtractsDeepSeekJsonRecords|ReviewTasksController_DeclaresOutcomeAiReparseContract" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded: 5 passed.
+- `dotnet build src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\TenantMigrationOutcomeOrder2\"` succeeded with 0 warnings.
+- `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LocalSetupOutcomeOrder2\"` succeeded with 0 warnings.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\WorkerOutcomeOrder\"` succeeded with 0 warnings.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- Local `ensure-bidops-outcomes` deleted 63 existing outcome supplier rows after adding `ExtractionOrder`; a DB probe confirmed `bidops_outcome_supplier_record: 0`.
+- `.\scripts\restart-worker.ps1` restarted the local `BidOpsLocal` Worker after the schema update.
+
+## 2026-06-15 Frontend DateTime Timezone Formatting
+
+Completed:
+
+- Updated the shared frontend `formatDateTime` utility to treat both `T`-separated and space-separated datetime strings without an explicit timezone as UTC before rendering them in the browser's current timezone.
+- This fixes created/updated time displays when backend UTC values arrive as strings such as `2026-06-15 06:20:52` instead of `2026-06-15T06:20:52`.
+- Confirmed BidOps and operations created/updated time columns use the shared formatter rather than direct `Date`/`dayjs` formatting.
+- Superseded later the same day by the local audit timestamp change: timezone-less backend audit timestamps are now treated as local time because the backend stores audit fields in local time.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- A Node smoke check normalized `2026-06-15 06:20:52` to `2026-06-15T06:20:52Z` and rendered it as `2026-06-15 14:20` in the local `Asia/Shanghai` timezone.
+
+## 2026-06-15 BidOps AI HTTP Timeout
+
+Completed:
+
+- Increased BidOps structured notice AI extraction and outcome supplier AI extraction typed `HttpClient.Timeout` from 2 minutes to 30 minutes.
+- Kept crawler and attachment HTTP timeouts unchanged; the longer timeout is scoped to DeepSeek/OpenAI-compatible parsing requests that may need more time for large announcement and attachment text bundles.
+- Added a registration test that resolves the BidOps AI named clients from `IHttpClientFactory` and verifies both are configured with a 30-minute timeout.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsModule_ConfiguresAiHttpClientsWithThirtyMinuteTimeout|BidOpsOutcomeSupplierAiExtractionService_ExtractsDeepSeekJsonRecords|BidOpsStructuredExtractionService_SendsHtmlAndAttachmentsToDeepSeek" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1` succeeded: 3 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\BidOpsAiTimeout30Min\"` succeeded with 0 warnings.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\WorkerAiTimeout30Min\"` succeeded with 0 warnings.
+- `.\scripts\restart-worker.ps1` restarted the local `BidOpsLocal` Worker so new AI HTTP timeout settings are active for subsequent manual import/reparse jobs.
+
+## 2026-06-15 BidOps State Grid Local Data Reset
+
+Completed:
+
+- Physically deleted existing local State Grid ECP entry data for tenant `300001`, source `330001`, and the four MVP notice types: `TenderAnnouncement`, `ProcurementAnnouncement`, `CandidateAnnouncement`, and `AwardAnnouncement`.
+- Removed source-scoped Raw notices, attachments, staging rows, review tasks, formal notices/packages/requirements, outcome supplier leads, matching runs/results/checks, go/no-go decisions, opportunities, pursuits, crawl run logs, and BidOps background jobs.
+- Deleted only the local file-store objects referenced by the deleted Raw/staging/attachment rows.
+- Removed 11 supplier master-data shells that were created from the deleted Raw outcome notices; preserved unrelated supplier master data, supplier capability/contact/evidence seed data, buyer master data, and the crawl source/channel configuration.
+- Kept the State Grid source and four channels enabled for manual one-by-one import. Automatic scheduled scanning remains disabled in `BidOpsLocal` configuration.
+- Disabled local `BidOpsLocal` opportunity and supplier maintenance recurring tasks so the manual-import stabilization phase does not keep generating non-crawl BidOps maintenance jobs while one-time manual import jobs remain enabled.
+
+Verification:
+
+- Pre-delete dry run reported 3,939 tenant rows, 5,461 global BidOps jobs, and 757 referenced local storage files as candidates.
+- Confirmed delete removed 3,944 tenant DB rows, including 5 source/channel reset updates, 5,461 global BidOps background jobs, and 757 storage files.
+- Post-delete read-only verification showed `bidops_raw_notice`, `bidops_raw_attachment`, staging/review/formal/outcome/matching/opportunity/pursuit tables, `bidops_crawl_run_log`, and global BidOps background jobs at 0 rows for the source-scoped data.
+- Post-delete verification showed `bidops_crawl_source` remains 1 row, `bidops_crawl_channel` remains 4 rows, `bidops_buyer` remains 1 row, and unrelated supplier master data remains.
+- After a Worker restart generated 5 maintenance jobs, stopped the Worker, deleted those 5 global BidOps jobs, and restarted with opportunity/supplier maintenance disabled.
+
+## 2026-06-15 BidOps Reviewer-Prompted DeepSeek Reparse Gate
+
+Completed:
+
+- Confirmed local Worker processed reviewer-prompted outcome reparse jobs with `reviewerPrompt=True` but no DeepSeek request logs because automatic outcome/candidate notice detection returned false before the AI client was invoked.
+- Changed outcome supplier extraction so reviewer-provided correction prompts force an AI extraction attempt even when automatic outcome detection does not match.
+- Added a Worker information log before the forced AI path to make this branch observable.
+- Added AI HTTP configuration diagnostics when DeepSeek/OpenAI-compatible settings are unavailable, including a missing-key warning without logging secret values.
+- Changed DeepSeek request/response diagnostic JSON logging to preserve readable Chinese instead of `\uXXXX` unicode escapes.
+- Handled DeepSeek responses where `message.content` is empty, including `finish_reason=length`, without throwing `JsonReaderException`.
+- Switched BidOps local DeepSeek model configuration and the DeepSeek default model from the lower-latency flash model to `deepseek-v4-pro`.
+- Tightened DeepSeek prompts to require JSON-only output and explicitly forbid reasoning traces, analysis, Markdown, code fences, prefixes, or suffixes.
+- Made `BidOps:Ai:MaxOutputTokens` optional; when unset or non-positive, the request omits `max_tokens` instead of imposing an arbitrary output-token cap.
+- Updated the local Worker restart script to load `DEEPSEEK_API_KEY` from User/Machine environment variables when the process environment is empty, use encoded PowerShell startup commands, stop `Atlas.Worker.exe` processes even when WMI hides command lines, and fall back to WMI terminate when `Stop-Process` is denied.
+- Kept unattended parsing conservative: without a reviewer prompt, non-outcome notices still skip outcome supplier extraction.
+- Added regression tests for the reviewer-prompt extraction gate, missing-API-key diagnostics, readable Chinese DeepSeek request/response logs, and empty DeepSeek content handling.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_ReviewerPromptForcesAiAttempt|BidOpsOutcomeSupplierExtractionService_ReviewerPromptUsesAiRowsAsReplacement|BidOpsOutcomeSupplierAiExtractionService_ExtractsDeepSeekJsonRecords|BidOpsOutcomeSupplierAiExtractionService_LogsUnavailableSettingsWithoutApiKey|BidOpsOutcomeSupplierAiExtractionService_HandlesEmptyDeepSeekContent|BidOpsStructuredExtractionService_SendsHtmlAndAttachmentsToDeepSeek" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1` succeeded: 6 passed, including readable Chinese request/response log assertions and empty DeepSeek content handling.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierAiExtractionService_HandlesEmptyDeepSeekContent|BidOpsOutcomeSupplierAiExtractionService_ExtractsDeepSeekJsonRecords|BidOpsStructuredExtractionService_SendsHtmlAndAttachmentsToDeepSeek" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1` succeeded: 3 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\BidOpsEmptyDeepSeekContent\"` succeeded with 0 warnings.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:OutDir="$env:TEMP\AtlasVerify\WorkerEmptyDeepSeekContent\"` succeeded with 0 warnings.
+- `git diff --check` succeeded.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps -n` returned no matches.
+- `.\scripts\restart-worker.ps1` restarted the local Worker with `DOTNET_ENVIRONMENT=BidOpsLocal`; `var\logs\worker-local.log` confirms Worker resumed recurring tasks.
+- `.\scripts\restart-worker.ps1` restarted a new local Worker as `Atlas.Worker.exe` PID 6616 after terminating the stale Worker process tree with WMI; the new `var\logs\worker-local.log` confirms `BidOpsLocal` recurring tasks resumed.
+
 ## 2026-06-15 Worker Timestamped Logging
 
 Completed:
@@ -1332,7 +1512,7 @@ Verification:
 
 Completed:
 
-- Added shared BidOps AI HTTP settings that support `Provider=DeepSeek`, default `BaseUrl=https://api.deepseek.com`, default model `deepseek-v4-flash`, `MaxOutputTokens`, per-use switches, and `DEEPSEEK_API_KEY` fallback without hardcoding credentials.
+- Added shared BidOps AI HTTP settings that support `Provider=DeepSeek`, default `BaseUrl=https://api.deepseek.com`, default model `deepseek-v4-pro`, optional `MaxOutputTokens`, per-use switches, and `DEEPSEEK_API_KEY` fallback without hardcoding credentials.
 - Updated structured notice extraction to use the shared OpenAI-compatible settings, preserving deterministic fallback when AI is disabled or fails.
 - Added `IBidOpsOutcomeSupplierAiExtractionService` and a DeepSeek/OpenAI-compatible implementation for public result/candidate notices. It sends strict JSON-mode prompts over Raw text plus extracted attachment text, asks DeepSeek to correct table/PDF/common-body-field cases, and returns supplier lead candidates only.
 - Real DeepSeek smoke caught that the model may normalize `包1` to `1`; the outcome AI prompt and post-processing now preserve or restore package prefixes from evidence text before persistence.

@@ -339,7 +339,10 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
         }
 
         var total = await builder.CountAsync(ct);
-        var records = await ApplyOutcomeRecordSort(builder, query.SortBy)
+        var sortedBuilder = query.RawNoticeId.HasValue && string.IsNullOrWhiteSpace(query.SortBy)
+            ? builder.OrderBy(x => x.ExtractionOrder)
+            : ApplyOutcomeRecordSort(builder, query.SortBy);
+        var records = await sortedBuilder
             .Skip((pageIndex - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(ct);
@@ -862,6 +865,7 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
             Rank = record.Rank,
             AwardAmount = record.AwardAmount,
             ProcurementAgencyServiceFeeAmount = record.ProcurementAgencyServiceFeeAmount,
+            ExtractionOrder = record.ExtractionOrder,
             Currency = record.Currency,
             EvidenceText = record.EvidenceText,
             ExtractionConfidence = record.ExtractionConfidence,

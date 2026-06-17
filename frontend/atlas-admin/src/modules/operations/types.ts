@@ -16,6 +16,8 @@ export interface BackgroundJobSearchQuery {
   deadOnly?: boolean | null
   staleRunningOnly?: boolean | null
   waitingRetryOnly?: boolean | null
+  createdFrom?: string | null
+  createdTo?: string | null
   createdFromUtc?: string | null
   createdToUtc?: string | null
   pageIndex?: number
@@ -25,6 +27,7 @@ export interface BackgroundJobSearchQuery {
 export interface BackgroundJobListItemDto {
   id: BidOpsId
   jobType: string
+  jobTypeName: string
   queue: string
   jobName: string
   deduplicationKey?: string | null
@@ -34,6 +37,11 @@ export interface BackgroundJobListItemDto {
   statusName: string
   priority: number
   createdAt: string
+  availableAt: string
+  startedAt?: string | null
+  lockedAt?: string | null
+  completedAt?: string | null
+  nextAttemptAt?: string | null
   availableAtUtc: string
   startedAtUtc?: string | null
   lockedAtUtc?: string | null
@@ -42,6 +50,10 @@ export interface BackgroundJobListItemDto {
   attemptCount: number
   maxAttempts: number
   nextAttemptAtUtc?: string | null
+  isCancellationRequested: boolean
+  cancellationRequestedAt?: string | null
+  cancellationRequestedBy?: string | null
+  cancellationReason?: string | null
   lastErrorPreview: string
   resultPreview: string
   payloadPreview: string
@@ -66,6 +78,7 @@ export interface BackgroundJobStatusCountDto {
 
 export interface BackgroundJobDimensionCountDto {
   name: string
+  displayName?: string | null
   count: number
 }
 
@@ -79,6 +92,8 @@ export interface BackgroundJobSummaryDto {
   canceled: number
   staleRunning: number
   waitingRetry: number
+  oldestPendingAt?: string | null
+  recentErrorAt?: string | null
   oldestPendingAtUtc?: string | null
   recentErrorAtUtc?: string | null
   statusCounts: BackgroundJobStatusCountDto[]
@@ -90,6 +105,7 @@ export interface BackgroundJobRetryResultDto {
   originalJobId: BidOpsId
   newJobId: BidOpsId
   jobType: string
+  jobTypeName: string
   queue: string
   message: string
 }
@@ -98,6 +114,7 @@ export interface BackgroundJobCancelResultDto {
   jobId: BidOpsId
   status: BackgroundJobStatus
   statusName: string
+  isCancellationRequested: boolean
   message: string
 }
 
@@ -120,7 +137,10 @@ export interface BackgroundWorkerHeartbeatDto {
   recurringTaskRunnerEnabled: boolean
   currentJobId?: BidOpsId | null
   currentJobType?: string | null
+  currentJobTypeName?: string | null
   currentQueue?: string | null
+  startedAt: string
+  lastSeenAt: string
   startedAtUtc: string
   lastSeenAtUtc: string
   isOnline: boolean

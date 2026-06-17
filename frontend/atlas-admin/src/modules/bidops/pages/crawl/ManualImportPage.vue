@@ -284,7 +284,11 @@ onBeforeUnmount(stopPolling)
             </div>
             <div>
               <span>Job 状态</span>
-              <JobStatusTag :status="job?.status" :status-name="job?.statusName" />
+              <JobStatusTag
+                :status="job?.status"
+                :status-name="job?.statusName"
+                :cancellation-requested="job?.isCancellationRequested"
+              />
             </div>
             <div>
               <span>Raw 状态</span>

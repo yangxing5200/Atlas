@@ -270,6 +270,13 @@ All endpoints use Atlas permission policies.
 - `POST /api/bidops/operations/jobs/{id}/retry`
 - `POST /api/bidops/operations/jobs/{id}/cancel`
 
+Background job operation responses expose Chinese task display names through
+`jobTypeName` / `currentJobTypeName`, while retaining the original `jobType`
+code for filters and debugging. Task and Worker heartbeat timestamps should be
+read from the local-time fields without `Utc` suffix, such as `availableAt`,
+`startedAt`, `completedAt`, `nextAttemptAt`, `startedAt`, and `lastSeenAt`.
+Legacy `xxxAtUtc` fields remain only for API compatibility.
+
 Example manual import body:
 
 ```json
@@ -435,7 +442,7 @@ configuration or `DEEPSEEK_API_KEY` when the job executes.
 $env:BidOps__Ai__Enabled='true'
 $env:BidOps__Ai__Provider='DeepSeek'
 $env:BidOps__Ai__BaseUrl='https://api.deepseek.com'
-$env:BidOps__Ai__Model='deepseek-v4-flash'
+$env:BidOps__Ai__Model='deepseek-v4-pro'
 $env:BidOps__Ai__UseForNoticeStaging='true'
 $env:BidOps__Ai__UseForOutcomeSuppliers='true'
 $env:DEEPSEEK_API_KEY='...'
@@ -448,6 +455,16 @@ instead of `DEEPSEEK_API_KEY` for local-only configuration files that are not
 committed. In `BidOpsLocal`, do not set `BidOps:Ai:ApiKey` to an empty string;
 that shadows lower-priority configuration and makes the Worker behave as if no
 token exists.
+
+`BidOps:Ai:MaxOutputTokens` is optional. Leave it unset to avoid sending a
+`max_tokens` limit to DeepSeek; set it only when an operational run explicitly
+needs a provider-side output cap.
+
+BidOps AI HTTP clients for structured notice extraction and outcome supplier
+extraction use a 30-minute timeout. This avoids `TaskCanceledException` failures
+from the default 120-second HTTP timeout on large SGCC announcement bundles or
+reviewer-prompted reparses. Crawler and attachment HTTP clients keep their
+shorter bounded timeouts.
 
 DeepSeek outcome extraction is a correction/enrichment layer, not a business
 import shortcut. Deterministic result parsers run first; DeepSeek receives the
@@ -632,6 +649,13 @@ dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -
   --global "Server=localhost;Port=3306;Database=atlas_global_bidops;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;" `
   --tenant "Server=localhost;Port=3306;Database=atlas_bidops_runtime;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;"
 ```
+
+`v0.2.12-bidops-outcome-extraction-order` adds
+`OutcomeSupplierRecord.ExtractionOrder` so result/candidate supplier rows can be
+displayed in the same order as the public announcement. Existing outcome lead
+rows created before this column are deleted instead of approximate-backfilled,
+because their original announcement position was not durable. Regenerate those
+rows through manual URL import or Raw notice `重解析`.
 
 Public outcome supplier leads come from explicit supplier/candidate/winner
 fields in public中标/成交/候选公示 and extracted attachments. They are stored in
