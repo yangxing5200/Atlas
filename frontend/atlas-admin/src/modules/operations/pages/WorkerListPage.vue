@@ -9,7 +9,7 @@ import SearchForm from '@/shared/components/SearchForm.vue'
 import { useTableQuery } from '@/shared/composables/useTableQuery'
 import { formatDateTime } from '@/shared/utils/date'
 import type { BackgroundWorkerHeartbeatDto } from '../types'
-import { formatSeconds } from '../utils/display'
+import { formatJobType, formatSeconds } from '../utils/display'
 
 interface WorkerListQuery {
   keyword: string
@@ -43,6 +43,7 @@ const table = useTableQuery<BackgroundWorkerHeartbeatDto, WorkerListQuery>(
 const hasOnlineBidOpsWorker = computed(() =>
   table.result.items.some((worker) => worker.isOnline && worker.queues.some((queue) => queue.toLowerCase() === 'bidops')),
 )
+const paginationTotal = computed(() => Number(table.result.total || 0))
 </script>
 
 <template>
@@ -106,17 +107,17 @@ const hasOnlineBidOpsWorker = computed(() =>
             <el-button link type="primary" :icon="View" @click="router.push(`/ops/jobs/${row.currentJobId}`)">
               {{ row.currentJobId }}
             </el-button>
-            <span class="muted-text">{{ row.currentJobType || '-' }}</span>
+            <span class="muted-text">{{ formatJobType(row.currentJobType, row.currentJobTypeName) }}</span>
           </template>
           <span v-else>-</span>
         </template>
       </el-table-column>
       <el-table-column label="启动时间" width="170">
-        <template #default="{ row }">{{ formatDateTime(row.startedAtUtc) }}</template>
+        <template #default="{ row }">{{ formatDateTime(row.startedAt) }}</template>
       </el-table-column>
       <el-table-column label="最后心跳" width="180">
         <template #default="{ row }">
-          {{ formatDateTime(row.lastSeenAtUtc) }}
+          {{ formatDateTime(row.lastSeenAt) }}
           <span class="muted-text">({{ formatSeconds(row.secondsSinceLastSeen) }})</span>
         </template>
       </el-table-column>
@@ -125,7 +126,7 @@ const hasOnlineBidOpsWorker = computed(() =>
     <el-pagination
       v-model:current-page="table.query.pageIndex"
       v-model:page-size="table.query.pageSize"
-      :total="table.result.total"
+      :total="paginationTotal"
       :page-sizes="[10, 20, 50, 100]"
       layout="total, sizes, prev, pager, next, jumper"
       class="table-pagination"

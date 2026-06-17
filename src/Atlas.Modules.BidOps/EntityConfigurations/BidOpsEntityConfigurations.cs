@@ -471,6 +471,7 @@ public sealed class OutcomeSupplierRecordConfiguration : IEntityTypeConfiguratio
         builder.Property(x => x.OutcomeType).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
         builder.Property(x => x.AwardAmount).HasPrecision(18, 2);
         builder.Property(x => x.ProcurementAgencyServiceFeeAmount).HasPrecision(18, 2);
+        builder.Property(x => x.ExtractionOrder).IsRequired();
         builder.Property(x => x.Currency).HasColumnType("varchar(16)").HasMaxLength(16);
         builder.Property(x => x.EvidenceText).HasColumnType("varchar(2000)").HasMaxLength(2000);
         builder.Property(x => x.ExtractionConfidence).HasPrecision(5, 4);
@@ -482,6 +483,8 @@ public sealed class OutcomeSupplierRecordConfiguration : IEntityTypeConfiguratio
             .IsUnique();
         builder.HasIndex(x => new { x.TenantId, x.RawNoticeId })
             .HasDatabaseName("IX_bidops_outcome_record_Tenant_RawNotice");
+        builder.HasIndex(x => new { x.TenantId, x.RawNoticeId, x.ExtractionOrder })
+            .HasDatabaseName("IX_bidops_outcome_record_Tenant_RawNotice_Order");
         builder.HasIndex(x => new { x.TenantId, x.TenderPackageId })
             .HasDatabaseName("IX_bidops_outcome_record_Tenant_Package");
         builder.HasIndex(x => new { x.TenantId, x.BuyerId })

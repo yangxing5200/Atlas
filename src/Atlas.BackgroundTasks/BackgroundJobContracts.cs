@@ -25,6 +25,7 @@ public sealed class BackgroundJobWorkerOptions
     public int PollIntervalSeconds { get; set; } = 5;
     public int BatchSize { get; set; } = 20;
     public int ProcessingTimeoutSeconds { get; set; } = 300;
+    public int CancellationCheckIntervalSeconds { get; set; } = 2;
     public int InitialRetryDelaySeconds { get; set; } = 10;
     public int MaxRetryDelaySeconds { get; set; } = 300;
     public int DefaultMaxAttempts { get; set; } = 5;
@@ -56,19 +57,32 @@ public sealed record BackgroundJobEnqueueResult(
     string JobType,
     string Queue,
     BackgroundJobStatus Status,
-    bool AlreadyExists);
+    bool AlreadyExists)
+{
+    public string JobTypeName => Operations.BackgroundJobDisplayNames.ForJobType(JobType);
+}
 
 /// <summary>
 /// 后台任务处理结果。
 /// </summary>
 public sealed record BackgroundJobExecutionResult(
     bool Succeeded,
-    string? Result = null)
+    string? Result = null,
+    int? MaxResultCharacters = null)
 {
-    public static BackgroundJobExecutionResult Success(string? result = null)
+    public static BackgroundJobExecutionResult Success(
+        string? result = null,
+        int? maxResultCharacters = null)
     {
-        return new BackgroundJobExecutionResult(true, result);
+        return new BackgroundJobExecutionResult(true, result, maxResultCharacters);
     }
+}
+
+public static class BackgroundJobResultStorageLimits
+{
+    public const int DefaultMaxCharacters = 4_000;
+    public const int DefaultDetailMaxCharacters = 20_000;
+    public const int AiDiagnosticsMaxCharacters = 1_000_000;
 }
 
 /// <summary>

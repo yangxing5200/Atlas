@@ -9,7 +9,7 @@ public sealed class BackgroundWorkerHeartbeatState
         WorkerId = $"{Environment.MachineName}:{Guid.NewGuid():N}";
         HostName = Environment.MachineName;
         ProcessId = Environment.ProcessId;
-        StartedAtUtc = DateTime.UtcNow;
+        StartedAtUtc = DateTime.Now;
     }
 
     public string WorkerId { get; }

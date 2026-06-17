@@ -14,9 +14,12 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
     private const int DefaultPageSize = 20;
     private const int MaxPageSize = 200;
     private const int DeduplicationKeyMaxLength = 300;
+    private const int CancellationRequestedByMaxLength = 200;
     private const string BidOpsQueue = "bidops";
     private const string BidOpsJobTypePrefix = "bidops.";
     private const string BidOpsModuleName = "BidOps";
+    private const string BidOpsStructuredParseJobType = "bidops.ai.structured-parse";
+    private const string BidOpsOutcomeSupplierExtractJobType = "bidops.outcome.supplier-extract";
 
     private readonly AtlasGlobalDbContext _dbContext;
     private readonly ICurrentIdentity _currentIdentity;
@@ -46,7 +49,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
         ArgumentNullException.ThrowIfNull(query);
 
         var (pageIndex, pageSize) = NormalizePaging(query);
-        var now = DateTime.UtcNow;
+        var now = DateTime.Now;
         var builder = BuildQuery(query, bidOpsOnly, now).AsNoTracking();
 
         var total = await builder.CountAsync(ct);
@@ -72,7 +75,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        var now = DateTime.UtcNow;
+        var now = DateTime.Now;
         var builder = BuildQuery(query, bidOpsOnly, now).AsNoTracking();
         var staleThresholdUtc = GetStaleThresholdUtc(now);
 
@@ -91,6 +94,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             .Select(x => new BackgroundJobDimensionCountDto
             {
                 Name = x.Key,
+                DisplayName = x.Key,
                 Count = x.Count()
             })
             .OrderByDescending(x => x.Count)
@@ -103,6 +107,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             .Select(x => new BackgroundJobDimensionCountDto
             {
                 Name = x.Key,
+                DisplayName = BackgroundJobDisplayNames.ForJobType(x.Key),
                 Count = x.Count()
             })
             .OrderByDescending(x => x.Count)
@@ -149,6 +154,8 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             Canceled = CountStatus(statusCounts, BackgroundJobStatus.Canceled),
             StaleRunning = staleRunning,
             WaitingRetry = waitingRetry,
+            OldestPendingAt = oldestPending,
+            RecentErrorAt = recentError == default ? null : recentError,
             OldestPendingAtUtc = oldestPending,
             RecentErrorAtUtc = recentError == default ? null : recentError
         };
@@ -166,7 +173,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             query = ApplyBidOpsScope(query);
 
         var job = await query.FirstOrDefaultAsync(x => x.Id == id, ct);
-        return job == null ? null : MapDetail(job, DateTime.UtcNow);
+        return job == null ? null : MapDetail(job, DateTime.Now);
     }
 
     public async Task<BackgroundJobRetryResultDto?> RetryAsync(
@@ -185,7 +192,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
         if (original.Status is BackgroundJobStatus.Pending or BackgroundJobStatus.Running)
             throw new InvalidOperationException("当前任务仍在等待或执行中，不能创建人工重试任务。");
 
-        var now = DateTime.UtcNow;
+        var now = DateTime.Now;
         var job = new BackgroundJob
         {
             Id = _idGenerator.NextId(),
@@ -213,6 +220,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             OriginalJobId = original.Id,
             NewJobId = job.Id,
             JobType = job.JobType,
+            JobTypeName = BackgroundJobDisplayNames.ForJobType(job.JobType),
             Queue = job.Queue,
             Message = "已创建新的后台任务用于人工重试，原任务历史不会被覆盖。"
         };
@@ -234,11 +242,6 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
         if (job == null)
             return null;
 
-        if (job.Status == BackgroundJobStatus.Running)
-        {
-            throw new InvalidOperationException("当前框架不会强杀正在运行的任务；请等待处理器完成或由后续取消标记机制接管。");
-        }
-
         if (job.Status == BackgroundJobStatus.Succeeded)
         {
             return new BackgroundJobCancelResultDto
@@ -246,9 +249,14 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
                 JobId = job.Id,
                 Status = job.Status,
                 StatusName = job.Status.ToString(),
+                IsCancellationRequested = false,
                 Message = "任务已成功完成，不能取消。"
             };
         }
+
+        var now = DateTime.Now;
+        var reason = NormalizeCancellationReason(request.Reason);
+        var requestedBy = GetCancellationRequester();
 
         if (job.Status == BackgroundJobStatus.Canceled)
         {
@@ -257,19 +265,41 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
                 JobId = job.Id,
                 Status = job.Status,
                 StatusName = job.Status.ToString(),
+                IsCancellationRequested = false,
                 Message = "任务已处于取消状态。"
             };
         }
 
+        if (job.Status == BackgroundJobStatus.Running)
+        {
+            job.CancellationRequestedAt ??= now;
+            job.CancellationRequestedBy = requestedBy;
+            job.CancellationReason = reason;
+            job.Result = BuildCancellationResult(reason, requested: true);
+            job.UpdatedAt = now;
+
+            await _dbContext.SaveChangesAsync(ct);
+
+            return new BackgroundJobCancelResultDto
+            {
+                JobId = job.Id,
+                Status = job.Status,
+                StatusName = job.Status.ToString(),
+                IsCancellationRequested = true,
+                Message = "终止请求已提交，Worker 会尽快通知正在执行的任务停止。"
+            };
+        }
+
         job.Status = BackgroundJobStatus.Canceled;
-        job.CompletedAtUtc = DateTime.UtcNow;
+        job.CompletedAtUtc = now;
         job.NextAttemptAtUtc = null;
         job.LockedAtUtc = null;
         job.LockedBy = null;
-        job.Result = string.IsNullOrWhiteSpace(request.Reason)
-            ? "Canceled by operator."
-            : $"Canceled by operator. Reason: {request.Reason.Trim()}";
-        job.UpdatedAt = DateTime.UtcNow;
+        job.CancellationRequestedAt ??= now;
+        job.CancellationRequestedBy = requestedBy;
+        job.CancellationReason = reason;
+        job.Result = BuildCancellationResult(reason, requested: false);
+        job.UpdatedAt = now;
 
         await _dbContext.SaveChangesAsync(ct);
 
@@ -278,6 +308,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             JobId = job.Id,
             Status = job.Status,
             StatusName = job.Status.ToString(),
+            IsCancellationRequested = false,
             Message = "任务已取消。"
         };
     }
@@ -355,10 +386,12 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             }
         }
 
-        if (query.CreatedFromUtc.HasValue)
-            builder = builder.Where(x => x.CreatedAt >= query.CreatedFromUtc.Value);
-        if (query.CreatedToUtc.HasValue)
-            builder = builder.Where(x => x.CreatedAt <= query.CreatedToUtc.Value);
+        var createdFrom = query.CreatedFrom ?? query.CreatedFromUtc;
+        var createdTo = query.CreatedTo ?? query.CreatedToUtc;
+        if (createdFrom.HasValue)
+            builder = builder.Where(x => x.CreatedAt >= createdFrom.Value);
+        if (createdTo.HasValue)
+            builder = builder.Where(x => x.CreatedAt <= createdTo.Value);
 
         if (query.StaleRunningOnly == true)
         {
@@ -405,6 +438,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
         var maskedPayload = _masker.MaskJson(job.Payload);
         var lastError = _masker.MaskText(job.LastError, 1_000);
         var result = _masker.MaskText(job.Result, 1_000);
+        var cancellationReason = _masker.MaskText(job.CancellationReason, 1_000);
         var waitMilliseconds = CalculateWaitMilliseconds(job, now);
         var runMilliseconds = CalculateRunMilliseconds(job, now);
 
@@ -412,6 +446,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
         {
             Id = job.Id,
             JobType = job.JobType,
+            JobTypeName = BackgroundJobDisplayNames.ForJobType(job.JobType),
             Queue = job.Queue,
             JobName = job.JobName,
             DeduplicationKey = job.DeduplicationKey,
@@ -421,6 +456,11 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             StatusName = job.Status.ToString(),
             Priority = job.Priority,
             CreatedAt = job.CreatedAt,
+            AvailableAt = job.AvailableAtUtc,
+            StartedAt = job.StartedAtUtc,
+            LockedAt = job.LockedAtUtc,
+            CompletedAt = job.CompletedAtUtc,
+            NextAttemptAt = job.NextAttemptAtUtc,
             AvailableAtUtc = job.AvailableAtUtc,
             StartedAtUtc = job.StartedAtUtc,
             LockedAtUtc = job.LockedAtUtc,
@@ -429,6 +469,10 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             AttemptCount = job.AttemptCount,
             MaxAttempts = job.MaxAttempts,
             NextAttemptAtUtc = job.NextAttemptAtUtc,
+            IsCancellationRequested = IsCancellationRequested(job),
+            CancellationRequestedAt = job.CancellationRequestedAt,
+            CancellationRequestedBy = job.CancellationRequestedBy,
+            CancellationReason = cancellationReason,
             LastErrorPreview = Truncate(lastError, 300),
             ResultPreview = Truncate(result, 300),
             PayloadPreview = Truncate(maskedPayload, 500),
@@ -447,6 +491,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
         {
             Id = item.Id,
             JobType = item.JobType,
+            JobTypeName = item.JobTypeName,
             Queue = item.Queue,
             JobName = item.JobName,
             DeduplicationKey = item.DeduplicationKey,
@@ -456,6 +501,11 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             StatusName = item.StatusName,
             Priority = item.Priority,
             CreatedAt = item.CreatedAt,
+            AvailableAt = item.AvailableAt,
+            StartedAt = item.StartedAt,
+            LockedAt = item.LockedAt,
+            CompletedAt = item.CompletedAt,
+            NextAttemptAt = item.NextAttemptAt,
             AvailableAtUtc = item.AvailableAtUtc,
             StartedAtUtc = item.StartedAtUtc,
             LockedAtUtc = item.LockedAtUtc,
@@ -464,6 +514,10 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             AttemptCount = item.AttemptCount,
             MaxAttempts = item.MaxAttempts,
             NextAttemptAtUtc = item.NextAttemptAtUtc,
+            IsCancellationRequested = item.IsCancellationRequested,
+            CancellationRequestedAt = item.CancellationRequestedAt,
+            CancellationRequestedBy = item.CancellationRequestedBy,
+            CancellationReason = item.CancellationReason,
             LastErrorPreview = item.LastErrorPreview,
             ResultPreview = item.ResultPreview,
             PayloadPreview = item.PayloadPreview,
@@ -474,8 +528,21 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             RunSeconds = item.RunSeconds,
             Payload = _masker.MaskJson(job.Payload),
             LastError = _masker.MaskText(job.LastError, 20_000),
-            Result = _masker.MaskText(job.Result, 20_000)
+            Result = _masker.MaskText(job.Result, GetDetailResultMaxCharacters(job))
         };
+    }
+
+    private static int GetDetailResultMaxCharacters(BackgroundJob job)
+    {
+        return IsBidOpsAiDiagnosticJob(job)
+            ? BackgroundJobResultStorageLimits.AiDiagnosticsMaxCharacters
+            : BackgroundJobResultStorageLimits.DefaultDetailMaxCharacters;
+    }
+
+    private static bool IsBidOpsAiDiagnosticJob(BackgroundJob job)
+    {
+        return string.Equals(job.JobType, BidOpsStructuredParseJobType, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(job.JobType, BidOpsOutcomeSupplierExtractJobType, StringComparison.OrdinalIgnoreCase);
     }
 
     private DateTime GetStaleThresholdUtc(DateTime now)
@@ -488,6 +555,40 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
         return job.Status == BackgroundJobStatus.Running &&
                job.LockedAtUtc.HasValue &&
                job.LockedAtUtc.Value < GetStaleThresholdUtc(now);
+    }
+
+    private static bool IsCancellationRequested(BackgroundJob job)
+    {
+        return job.Status == BackgroundJobStatus.Running &&
+               job.CancellationRequestedAt.HasValue;
+    }
+
+    private string GetCancellationRequester()
+    {
+        var name = string.IsNullOrWhiteSpace(_currentIdentity.UserName)
+            ? "operator"
+            : _currentIdentity.UserName.Trim();
+
+        if (_currentIdentity.UserId is > 0)
+            name = $"{name} ({_currentIdentity.UserId.Value})";
+
+        return Truncate(name, CancellationRequestedByMaxLength);
+    }
+
+    private static string? NormalizeCancellationReason(string? reason)
+    {
+        return string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
+    }
+
+    private static string BuildCancellationResult(string? reason, bool requested)
+    {
+        var prefix = requested
+            ? "Cancellation requested by operator."
+            : "Canceled by operator.";
+
+        return string.IsNullOrWhiteSpace(reason)
+            ? prefix
+            : $"{prefix} Reason: {reason}";
     }
 
     private static long? CalculateWaitMilliseconds(BackgroundJob job, DateTime now)

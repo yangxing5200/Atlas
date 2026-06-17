@@ -1,5 +1,75 @@
 # Decisions
 
+## 2026-06-16 DeepSeek Response Visibility In Background Job Details
+
+- BidOps DeepSeek/OpenAI-compatible parsing jobs persist AI response diagnostics into the background job result so operators can inspect the exact provider response from the job detail page after a reparse.
+- The stored diagnostics include provider, model, endpoint host/path, HTTP status, elapsed time, response/assistant character counts, finish reason, the raw response body, and extracted assistant content. They intentionally do not store request bodies, authorization headers, or API keys.
+- `BackgroundJobs.Result` is widened to `mediumtext` and AI parsing handlers explicitly request a larger result storage cap. Other background jobs keep the default short result cap so normal lists and history remain lightweight.
+- Operations detail keeps list previews short but allows BidOps structured parse and outcome supplier extraction details to return up to the AI diagnostics cap. The frontend shows a dedicated `DeepSeek 返回` tab when `deepSeekResponses` are present.
+- Historical jobs that completed before this change cannot show DeepSeek raw content from the job detail because only Worker logs held that data. Rerunning/reparsing the Raw notice creates a new job with persisted diagnostics.
+
+## 2026-06-15 Cooperative Background Job Termination
+
+- Background job cancellation now supports Running jobs through cooperative termination, not process/thread killing. The operations API records a cancellation request on the job, and `BackgroundJobWorker` cancels the `CancellationToken` passed to the active handler after it observes the request.
+- Running jobs remain `Running` while termination is pending and are exposed with `IsCancellationRequested=true`. The frontend displays this as `终止中` and disables duplicate termination clicks.
+- When the handler exits because of the cancellation token, Worker marks the job `Canceled`, clears the lock fields, records completion time with server local time, and stores a short operator-canceled result. Pending, Failed, and Dead jobs are still canceled immediately without handler execution.
+- New cancellation fields use local operator time semantics and avoid a new `Utc` suffix: `CancellationRequestedAt`, `CancellationRequestedBy`, and `CancellationReason`.
+- Handlers are expected to pass their `CancellationToken` into HTTP, file, database, delay, and AI calls. Work that ignores the token cannot be force-stopped safely and will finish according to its own control flow.
+
+## 2026-06-15 Local Background Job Operator Times
+
+- Background job operator-facing task types are exposed with Chinese display names (`JobTypeName` / `CurrentJobTypeName`) while keeping the original `JobType` code for routing, filtering, idempotency, and debugging.
+- `BackgroundJobs` and `BackgroundWorkerHeartbeat` lifecycle writes now use the server's local time (`DateTime.Now`) so task creation, availability, start, lock, completion, retry, and heartbeat times line up with Atlas audit fields and local operator expectations.
+- Existing database column names such as `AvailableAtUtc`, `StartedAtUtc`, `CompletedAtUtc`, `NextAttemptAtUtc`, `StartedAtUtc`, and `LastSeenAtUtc` are retained for migration/index compatibility. Operations DTOs expose local-time aliases without the `Utc` suffix (`AvailableAt`, `StartedAt`, `CompletedAt`, `NextAttemptAt`, `LastSeenAt`), and the frontend displays those aliases.
+- UTC remains appropriate for security/session expiry, authorization entitlement windows, distributed messaging outbox/inbox timestamps, and other cross-region protocol semantics outside the background job operations surface.
+
+## 2026-06-15 Local Audit Timestamps
+
+- Atlas infrastructure-managed audit fields (`CreatedAt`, `UpdatedAt`, and soft-delete `DeletedAt`) use the server's local time (`DateTime.Now`) rather than UTC. This matches the local BidOps operator workflow, where database rows and UI timestamps should read as local time without mental conversion from Greenwich time.
+- Bulk insert/update helpers use the same local audit time source as the EF save interceptor so batch-created rows do not drift from normal repository writes.
+- Fields whose names explicitly end in `Utc` generally keep UTC semantics when they drive security, messaging, cross-region coordination, expiration, or entitlement behavior. Background job operations are the local-operator exception documented in `2026-06-15 Local Background Job Operator Times`.
+- The frontend shared date formatter treats timezone-less datetime strings as browser-local time. Values with explicit `Z` or numeric offsets still rely on normal parsing and render in the user's local timezone.
+
+## 2026-06-15 BidOps Outcome Supplier Announcement Order
+
+- Public outcome/candidate supplier rows must follow the order they appear in the announcement. When the source has no explicit sortable field, DeepSeek's returned array order or the deterministic parser's scan order is treated as the announcement order.
+- `OutcomeSupplierRecord.ExtractionOrder` is the durable order field. Review-detail APIs and frontend award/candidate tables must use this order and must not sort by package number, lot number, supplier name, amount, or rank unless the user explicitly requests a separate analysis view.
+- Reviewer-prompted DeepSeek reparses are replacement operations and persist DeepSeek rows in returned order. Automatic extraction uses AI rows as the primary ordered source, then appends deterministic-only fallback rows to avoid losing rule-based recall.
+- Existing outcome supplier lead rows created before `ExtractionOrder` are deleted during the v0.2.12 migration instead of being approximate-backfilled. Those rows did not store a reliable announcement position, so reviewers should regenerate them through manual import or Raw notice reparse.
+- Manual review additions append after the current maximum `ExtractionOrder`; editing an existing row does not change its order.
+
+## 2026-06-15 Frontend DateTime Timezone Formatting
+
+- Earlier in the day, frontend datetime display treated backend datetime strings without an explicit timezone as UTC when they included both date and time.
+- This decision was superseded by `2026-06-15 Local Audit Timestamps`: audit timestamps are stored as local time, so timezone-less values are now parsed as local time by the shared frontend formatter. Values with explicit `Z` or numeric offsets still keep normal parser semantics.
+
+## 2026-06-15 BidOps AI HTTP Timeout
+
+- BidOps DeepSeek/OpenAI-compatible structured notice extraction and outcome supplier extraction use a 30-minute typed `HttpClient.Timeout` because large SGCC announcement bundles and reviewer-prompted reparses can legitimately exceed the default 120-second HTTP timeout.
+- The longer timeout is scoped to AI parsing clients only. State Grid crawling and attachment download/extraction keep shorter dedicated HTTP timeouts so public-source crawling remains bounded and does not inherit long AI provider waits.
+- Worker one-time job processing timeout is already configured at 1,800 seconds in the default Worker settings, matching the 30-minute AI HTTP upper bound for local parsing runs.
+
+## 2026-06-15 BidOps Local State Grid Manual Import Reset
+
+- Local cleanup for the State Grid MVP source deletes source-scoped runtime data and referenced local files, but keeps `bidops_crawl_source` and `bidops_crawl_channel` records because manual URL import validates enabled source/channel configuration.
+- Local manual stabilization should rely on `BidOps:ScheduledScan:Enabled=false` to prevent unattended 4-channel crawling while keeping Worker one-time jobs available for one-by-one manual imports.
+- During the local manual-import stabilization phase, `BidOpsLocal` opportunity and supplier maintenance recurring tasks are disabled as well. They are not crawl jobs, but they create background-job noise on startup and are not needed while validating one notice at a time.
+- Supplier master data may be deleted only when it is directly traceable to the reset Raw outcome notices through `CreatedFromRawNoticeId` or `LastOutcomeRawNoticeId`; unrelated supplier/buyer master data must be preserved.
+
+## 2026-06-15 BidOps Reviewer-Prompted DeepSeek Reparse Gate
+
+- Reviewer-prompted outcome/candidate DeepSeek reparse is an explicit human request and should attempt the AI provider even when the automatic result/candidate notice detector does not match the Raw notice text.
+- Unattended structured parsing remains conservative: without a reviewer prompt, outcome supplier extraction still skips non-result/non-candidate notices to avoid creating supplier leads from procurement announcements.
+- When a reviewer prompt forces extraction past the automatic detector, Worker logs an explicit information entry before the DeepSeek request logs, so operators can distinguish intentional human-forced reparse from normal automatic extraction.
+- AI clients now log configuration diagnostics when HTTP settings are unavailable. The diagnostics include enabled/use/provider/model/endpoint/has-key booleans and key source name, but never log API key values.
+- DeepSeek request/response diagnostic JSON is serialized for logs with relaxed JSON escaping so Chinese prompt text, source evidence, and model responses stay readable in Worker logs instead of being written as `\uXXXX` sequences.
+- DeepSeek responses with empty `message.content` are treated as provider/model output exhaustion or malformed output, not as parser crashes. Worker logs `finish_reason` and falls back to deterministic extraction or empty outcome leads without throwing `JsonReaderException`.
+- BidOps local DeepSeek extraction uses `deepseek-v4-pro` instead of the lower-latency flash model so reviewer-triggered reparses prefer the higher-quality model.
+- DeepSeek prompts are JSON-only contracts: the model is explicitly told that the first output character must be `{`, the last must be `}`, and reasoning traces, analysis, Markdown, code fences, prefixes, and suffixes are invalid.
+- `BidOps:Ai:MaxOutputTokens` is optional. If it is unset or non-positive, BidOps omits `max_tokens` from the OpenAI-compatible request and lets the provider/model apply its own output policy; operators can still set a positive value when a run explicitly needs a cap.
+- The local Worker restart script resolves `DEEPSEEK_API_KEY` inside the launched Worker process from process, User, then Machine environment variables. This keeps the key out of tracked `appsettings` files while making User-scope key rotation effective after a Worker restart.
+- Local Worker shutdown should match `Atlas.Worker.exe` by process name even when WMI does not expose a command line, and may fall back to WMI termination when `Stop-Process` is denied for a stale local process tree.
+
 ## 2026-06-15 Worker Timestamped Logging
 
 - `Atlas.Worker` now registers the existing Atlas Serilog logging pipeline instead of relying on the default .NET console logger. Default console output is explicitly cleared so redirected Worker logs do not fall back to timestampless default formatting.
@@ -360,7 +430,7 @@
 
 ## 2026-06-14 BidOps DeepSeek Outcome Extraction
 
-- DeepSeek is integrated through the existing optional `BidOps:Ai:*` switch as an OpenAI-compatible HTTP provider. It is disabled by default, uses config or `DEEPSEEK_API_KEY` for credentials, and defaults to `https://api.deepseek.com/chat/completions` with model `deepseek-v4-flash`.
+- DeepSeek is integrated through the existing optional `BidOps:Ai:*` switch as an OpenAI-compatible HTTP provider. It is disabled by default, uses config or `DEEPSEEK_API_KEY` for credentials, and defaults to `https://api.deepseek.com/chat/completions` with model `deepseek-v4-pro`.
 - Outcome supplier extraction remains Worker-owned and staging/lead-only. Deterministic parsers run first; DeepSeek may enrich or correct public result rows, but the persistence service still deletes/rebuilds only that RawNotice's `OutcomeSupplierRecord` rows and then syncs conservative buyer/supplier master data.
 - Re-extraction uses the existing RawNotice `重解析` path. It force-runs attachment text extraction, then structured parsing, then outcome supplier extraction; approved/formal Raw notices remain protected from mutation in MVP.
 - `采购代理服务费` is stored separately as `OutcomeSupplierRecord.ProcurementAgencyServiceFeeAmount`. It must not be folded into `AwardAmount`, because service fee is a public transaction-administration clue rather than the supplier award amount.

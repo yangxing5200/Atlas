@@ -100,7 +100,7 @@ public sealed class RecurringTaskRunner : BackgroundService
         await using var scope = _scopeFactory.CreateAsyncScope();
         var lockProvider = scope.ServiceProvider.GetRequiredService<IDistributedLockProvider>();
         var tasks = scope.ServiceProvider.GetServices<IRecurringTask>().ToList();
-        var now = DateTimeOffset.UtcNow;
+        var now = DateTimeOffset.Now;
 
         foreach (var task in tasks)
         {
@@ -144,7 +144,7 @@ public sealed class RecurringTaskRunner : BackgroundService
             }
             finally
             {
-                _nextRuns[task.Name] = DateTimeOffset.UtcNow.Add(NormalizeInterval(task.Interval));
+                _nextRuns[task.Name] = DateTimeOffset.Now.Add(NormalizeInterval(task.Interval));
             }
         }
     }

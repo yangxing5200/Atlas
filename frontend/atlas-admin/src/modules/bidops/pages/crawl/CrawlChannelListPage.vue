@@ -80,7 +80,7 @@ async function scanNow(row: CrawlChannelDto) {
       type: 'warning',
     })
     const job = await crawlChannelsApi.scanNow(row.id)
-    ElMessage.success(`已入队：JobId=${job.jobId} JobType=${job.jobType} Queue=${job.queue} AlreadyExists=${job.alreadyExists}`)
+    ElMessage.success(`已入队：${job.jobTypeName || job.jobType}，JobId=${job.jobId}`)
   } catch {
     return
   }

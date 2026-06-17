@@ -2,6 +2,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using Atlas.BackgroundTasks;
 using Atlas.Core.Services;
+using Atlas.Modules.BidOps.Ai;
 using Atlas.Modules.BidOps.Models;
 using Atlas.Modules.BidOps.Services;
 using Microsoft.Extensions.Logging;
@@ -17,15 +18,18 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
 
     private readonly IExecutionIdentityAccessor _identityAccessor;
     private readonly IBidOpsOutcomeSupplierExtractionService _extraction;
+    private readonly IBidOpsAiCallDiagnostics _diagnostics;
     private readonly ILogger<OutcomeSupplierExtractJobHandler> _logger;
 
     public OutcomeSupplierExtractJobHandler(
         IExecutionIdentityAccessor identityAccessor,
         IBidOpsOutcomeSupplierExtractionService extraction,
+        IBidOpsAiCallDiagnostics diagnostics,
         ILogger<OutcomeSupplierExtractJobHandler> logger)
     {
         _identityAccessor = identityAccessor ?? throw new ArgumentNullException(nameof(identityAccessor));
         _extraction = extraction ?? throw new ArgumentNullException(nameof(extraction));
+        _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -56,7 +60,8 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
             result.SupplierCreatedCount,
             result.SupplierUpdatedCount,
             result.Message,
-            reviewerPrompt = !string.IsNullOrWhiteSpace(payload.ReviewerPrompt)
-        }, JsonOptions));
+            reviewerPrompt = !string.IsNullOrWhiteSpace(payload.ReviewerPrompt),
+            deepSeekResponses = _diagnostics.Entries
+        }, JsonOptions), BackgroundJobResultStorageLimits.AiDiagnosticsMaxCharacters);
     }
 }

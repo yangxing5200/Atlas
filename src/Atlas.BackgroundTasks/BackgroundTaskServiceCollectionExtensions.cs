@@ -109,6 +109,8 @@ public static class BackgroundTaskServiceCollectionExtensions
             options.BatchSize = defaults.BatchSize;
         if (!HasConfiguredValue(section, nameof(BackgroundJobWorkerOptions.ProcessingTimeoutSeconds)))
             options.ProcessingTimeoutSeconds = defaults.ProcessingTimeoutSeconds;
+        if (!HasConfiguredValue(section, nameof(BackgroundJobWorkerOptions.CancellationCheckIntervalSeconds)))
+            options.CancellationCheckIntervalSeconds = defaults.CancellationCheckIntervalSeconds;
         if (!HasConfiguredValue(section, nameof(BackgroundJobWorkerOptions.InitialRetryDelaySeconds)))
             options.InitialRetryDelaySeconds = defaults.InitialRetryDelaySeconds;
         if (!HasConfiguredValue(section, nameof(BackgroundJobWorkerOptions.MaxRetryDelaySeconds)))
@@ -135,6 +137,7 @@ public static class BackgroundTaskServiceCollectionExtensions
         target.PollIntervalSeconds = source.PollIntervalSeconds;
         target.BatchSize = source.BatchSize;
         target.ProcessingTimeoutSeconds = source.ProcessingTimeoutSeconds;
+        target.CancellationCheckIntervalSeconds = source.CancellationCheckIntervalSeconds;
         target.InitialRetryDelaySeconds = source.InitialRetryDelaySeconds;
         target.MaxRetryDelaySeconds = source.MaxRetryDelaySeconds;
         target.DefaultMaxAttempts = source.DefaultMaxAttempts;
@@ -153,6 +156,7 @@ public static class BackgroundTaskServiceCollectionExtensions
                options.PollIntervalSeconds > 0 &&
                options.BatchSize > 0 &&
                options.ProcessingTimeoutSeconds > 0 &&
+               options.CancellationCheckIntervalSeconds > 0 &&
                options.InitialRetryDelaySeconds > 0 &&
                options.MaxRetryDelaySeconds >= options.InitialRetryDelaySeconds &&
                options.DefaultMaxAttempts > 0;

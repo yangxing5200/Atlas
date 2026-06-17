@@ -43,7 +43,7 @@ namespace Atlas.Data.Common.Interceptors
             var userId = _currentIdentity?.UserId;
             var tenantId = _currentIdentity?.TenantId;
             var storeId = _currentIdentity?.StoreId;
-            var now = DateTime.UtcNow;
+            var now = DateTime.Now;
 
             var hasTenant = tenantId.HasValue;
             var hasStore = storeId.HasValue;

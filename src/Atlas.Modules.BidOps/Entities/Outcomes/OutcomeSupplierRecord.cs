@@ -52,6 +52,8 @@ public sealed class OutcomeSupplierRecord : BidOpsTenantEntity
 
     public decimal? ProcurementAgencyServiceFeeAmount { get; set; }
 
+    public int ExtractionOrder { get; set; }
+
     public string Currency { get; set; } = "CNY";
 
     public string EvidenceText { get; set; } = string.Empty;

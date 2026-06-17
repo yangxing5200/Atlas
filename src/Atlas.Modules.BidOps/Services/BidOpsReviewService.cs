@@ -318,6 +318,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
             Rank = NormalizeRank(request.Rank),
             AwardAmount = NormalizeAmount(request.AwardAmount, "成交/报价金额"),
             ProcurementAgencyServiceFeeAmount = NormalizeAmount(request.ProcurementAgencyServiceFeeAmount, "代理服务费"),
+            ExtractionOrder = await GetNextOutcomeExtractionOrderAsync(context.Raw.TenantId, context.Raw.Id, ct),
             Currency = "CNY",
             EvidenceText = Truncate(request.EvidenceText, 2000),
             ExtractionConfidence = 1m
@@ -515,7 +516,18 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         CancellationToken ct)
     {
         var outcomeQuery = await _outcomeRecords.QueryTrackingAsync(tenantId, ct);
-        return await outcomeQuery.Where(x => x.RawNoticeId == rawNoticeId).ToListAsync(ct);
+        var records = await outcomeQuery.Where(x => x.RawNoticeId == rawNoticeId).ToListAsync(ct);
+        return records
+            .OrderBy(x => x.ExtractionOrder)
+            .ThenBy(x => x.Id)
+            .ToList();
+    }
+
+    private async Task<int> GetNextOutcomeExtractionOrderAsync(long tenantId, long rawNoticeId, CancellationToken ct)
+    {
+        var outcomeQuery = await _outcomeRecords.QueryAsync(tenantId, ct);
+        var records = await outcomeQuery.Where(x => x.RawNoticeId == rawNoticeId).ToListAsync(ct);
+        return records.Count == 0 ? 0 : records.Max(x => x.ExtractionOrder) + 1;
     }
 
     private async Task<EditableOutcomeContext> GetEditableOutcomeContextAsync(long reviewTaskId, CancellationToken ct)
@@ -655,6 +667,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
             Rank = record.Rank,
             AwardAmount = record.AwardAmount,
             ProcurementAgencyServiceFeeAmount = record.ProcurementAgencyServiceFeeAmount,
+            ExtractionOrder = record.ExtractionOrder,
             Currency = record.Currency,
             EvidenceText = record.EvidenceText,
             ExtractionConfidence = record.ExtractionConfidence,

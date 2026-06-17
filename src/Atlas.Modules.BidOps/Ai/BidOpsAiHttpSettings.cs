@@ -1,3 +1,5 @@
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 
 namespace Atlas.Modules.BidOps.Ai;
@@ -14,7 +16,96 @@ internal sealed record BidOpsAiHttpSettings(
     string ApiKey,
     string Model,
     int MaxInputCharacters,
-    int MaxOutputTokens);
+    int? MaxOutputTokens);
+
+internal sealed record BidOpsAiHttpSettingsDiagnostics(
+    bool Enabled,
+    bool UseEnabled,
+    string Provider,
+    bool SupportedProvider,
+    string ApiKeySource,
+    bool HasApiKey,
+    bool HasModel,
+    bool HasEndpoint);
+
+internal static class BidOpsAiJsonLogging
+{
+    public static JsonSerializerOptions Options { get; } = new(JsonSerializerDefaults.Web)
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        PropertyNameCaseInsensitive = true
+    };
+
+    public static string FormatJsonForLog(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return json;
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return JsonSerializer.Serialize(document.RootElement, Options);
+        }
+        catch (JsonException)
+        {
+            return json;
+        }
+    }
+
+    public static string ExtractAssistantContentOrRaw(string responseText)
+    {
+        if (string.IsNullOrWhiteSpace(responseText))
+            return string.Empty;
+
+        try
+        {
+            using var document = JsonDocument.Parse(responseText);
+            var root = document.RootElement;
+            if (root.TryGetProperty("choices", out var choices) &&
+                choices.ValueKind == JsonValueKind.Array &&
+                choices.GetArrayLength() > 0)
+            {
+                var first = choices[0];
+                if (first.TryGetProperty("message", out var message) &&
+                    message.TryGetProperty("content", out var content))
+                {
+                    return content.GetString() ?? string.Empty;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            return responseText;
+        }
+
+        return responseText;
+    }
+
+    public static string ExtractFinishReason(string responseText)
+    {
+        if (string.IsNullOrWhiteSpace(responseText))
+            return string.Empty;
+
+        try
+        {
+            using var document = JsonDocument.Parse(responseText);
+            var root = document.RootElement;
+            if (root.TryGetProperty("choices", out var choices) &&
+                choices.ValueKind == JsonValueKind.Array &&
+                choices.GetArrayLength() > 0 &&
+                choices[0].TryGetProperty("finish_reason", out var finishReason))
+            {
+                return finishReason.GetString() ?? string.Empty;
+            }
+        }
+        catch (JsonException)
+        {
+            return string.Empty;
+        }
+
+        return string.Empty;
+    }
+}
 
 internal static class BidOpsAiHttpSettingsFactory
 {
@@ -31,10 +122,7 @@ internal static class BidOpsAiHttpSettingsFactory
         if (!IsSupportedProvider(provider))
             return false;
 
-        var apiKey = FirstNonEmpty(
-            configuration["BidOps:Ai:ApiKey"],
-            configuration["BidOps:DeepSeek:ApiKey"],
-            Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY"));
+        var apiKey = ResolveApiKey(configuration);
         if (string.IsNullOrWhiteSpace(apiKey))
             return false;
 
@@ -46,14 +134,38 @@ internal static class BidOpsAiHttpSettingsFactory
         if (string.IsNullOrWhiteSpace(endpoint))
             return false;
 
+        var configuredMaxOutputTokens = configuration.GetValue<int?>("BidOps:Ai:MaxOutputTokens");
+
         settings = new BidOpsAiHttpSettings(
             provider.Trim(),
             endpoint,
             apiKey.Trim(),
             model.Trim(),
             Math.Clamp(configuration.GetValue<int?>("BidOps:Ai:MaxInputCharacters") ?? 24_000, 4_000, 80_000),
-            Math.Clamp(configuration.GetValue<int?>("BidOps:Ai:MaxOutputTokens") ?? 4096, 512, 16_000));
+            configuredMaxOutputTokens.HasValue && configuredMaxOutputTokens.Value > 0
+                ? configuredMaxOutputTokens.Value
+                : null);
         return true;
+    }
+
+    public static BidOpsAiHttpSettingsDiagnostics Diagnose(
+        IConfiguration configuration,
+        BidOpsAiUse use)
+    {
+        var provider = FirstNonEmpty(configuration["BidOps:Ai:Provider"], "OpenAICompatible");
+        var apiKey = ResolveApiKey(configuration);
+        var model = FirstNonEmpty(configuration["BidOps:Ai:Model"], DefaultModel(provider));
+        var endpoint = ResolveEndpoint(configuration, provider);
+
+        return new BidOpsAiHttpSettingsDiagnostics(
+            configuration.GetValue<bool>("BidOps:Ai:Enabled"),
+            IsEnabledForUse(configuration, use),
+            provider.Trim(),
+            IsSupportedProvider(provider),
+            ResolveApiKeySource(configuration),
+            !string.IsNullOrWhiteSpace(apiKey),
+            !string.IsNullOrWhiteSpace(model),
+            !string.IsNullOrWhiteSpace(endpoint));
     }
 
     private static bool IsEnabledForUse(IConfiguration configuration, BidOpsAiUse use)
@@ -113,8 +225,30 @@ internal static class BidOpsAiHttpSettingsFactory
     private static string DefaultModel(string provider)
     {
         return string.Equals(provider, "DeepSeek", StringComparison.OrdinalIgnoreCase)
-            ? "deepseek-v4-flash"
+            ? "deepseek-v4-pro"
             : string.Empty;
+    }
+
+    private static string ResolveApiKey(IConfiguration configuration)
+    {
+        return FirstNonEmpty(
+            configuration["BidOps:Ai:ApiKey"],
+            configuration["BidOps:DeepSeek:ApiKey"],
+            Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY"));
+    }
+
+    private static string ResolveApiKeySource(IConfiguration configuration)
+    {
+        if (!string.IsNullOrWhiteSpace(configuration["BidOps:Ai:ApiKey"]))
+            return "BidOps:Ai:ApiKey";
+
+        if (!string.IsNullOrWhiteSpace(configuration["BidOps:DeepSeek:ApiKey"]))
+            return "BidOps:DeepSeek:ApiKey";
+
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY")))
+            return "DEEPSEEK_API_KEY";
+
+        return "None";
     }
 
     private static string FirstNonEmpty(params string?[] values)

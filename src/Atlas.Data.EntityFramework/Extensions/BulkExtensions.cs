@@ -211,7 +211,7 @@ namespace Atlas.Data.Common.Extensions
                 })
                 .ToList();
 
-            var now = DateTime.UtcNow;
+            var now = DateTime.Now;
             int totalInserted = 0;
 
             var connection = context.Database.GetDbConnection();
@@ -360,7 +360,7 @@ namespace Atlas.Data.Common.Extensions
                 ? entityType.GetProperties().FirstOrDefault(p => p.Name == "Version")
                 : null;
 
-            var now = DateTime.UtcNow;
+            var now = DateTime.Now;
 
             var originalVersions = new Dictionary<object, int>();
             if (hasVersion && versionProperty != null)

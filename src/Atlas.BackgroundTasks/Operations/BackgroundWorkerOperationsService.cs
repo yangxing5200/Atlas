@@ -31,8 +31,8 @@ public sealed class BackgroundWorkerOperationsService : IBackgroundWorkerOperati
         ArgumentNullException.ThrowIfNull(query);
 
         var (pageIndex, pageSize) = NormalizePaging(query);
-        var now = DateTime.UtcNow;
-        var onlineThresholdUtc = GetOnlineThresholdUtc(now);
+        var now = DateTime.Now;
+        var onlineThreshold = GetOnlineThreshold(now);
         var builder = _dbContext.BackgroundWorkerHeartbeats.AsNoTracking();
 
         if (!string.IsNullOrWhiteSpace(query.Keyword))
@@ -53,7 +53,7 @@ public sealed class BackgroundWorkerOperationsService : IBackgroundWorkerOperati
         }
 
         if (query.OnlineOnly == true)
-            builder = builder.Where(x => x.LastSeenAtUtc >= onlineThresholdUtc);
+            builder = builder.Where(x => x.LastSeenAtUtc >= onlineThreshold);
 
         var total = await builder.CountAsync(ct);
         var workers = await builder
@@ -64,7 +64,7 @@ public sealed class BackgroundWorkerOperationsService : IBackgroundWorkerOperati
 
         return new PagedResult<BackgroundWorkerHeartbeatDto>(
             total,
-            workers.Select(worker => Map(worker, now, onlineThresholdUtc)).ToList(),
+            workers.Select(worker => Map(worker, now, onlineThreshold)).ToList(),
             pageIndex,
             pageSize);
     }
@@ -72,7 +72,7 @@ public sealed class BackgroundWorkerOperationsService : IBackgroundWorkerOperati
     private BackgroundWorkerHeartbeatDto Map(
         BackgroundWorkerHeartbeat worker,
         DateTime now,
-        DateTime onlineThresholdUtc)
+        DateTime onlineThreshold)
     {
         return new BackgroundWorkerHeartbeatDto
         {
@@ -86,15 +86,18 @@ public sealed class BackgroundWorkerOperationsService : IBackgroundWorkerOperati
             RecurringTaskRunnerEnabled = worker.RecurringTaskRunnerEnabled,
             CurrentJobId = worker.CurrentJobId,
             CurrentJobType = worker.CurrentJobType,
+            CurrentJobTypeName = BackgroundJobDisplayNames.ForJobType(worker.CurrentJobType),
             CurrentQueue = worker.CurrentQueue,
+            StartedAt = worker.StartedAtUtc,
+            LastSeenAt = worker.LastSeenAtUtc,
             StartedAtUtc = worker.StartedAtUtc,
             LastSeenAtUtc = worker.LastSeenAtUtc,
-            IsOnline = worker.LastSeenAtUtc >= onlineThresholdUtc,
+            IsOnline = worker.LastSeenAtUtc >= onlineThreshold,
             SecondsSinceLastSeen = Math.Max(0, (long)(now - worker.LastSeenAtUtc).TotalSeconds)
         };
     }
 
-    private DateTime GetOnlineThresholdUtc(DateTime now)
+    private DateTime GetOnlineThreshold(DateTime now)
     {
         var thresholdSeconds = Math.Max(60, Math.Max(1, _workerOptions.PollIntervalSeconds) * 3);
         return now.AddSeconds(-thresholdSeconds);

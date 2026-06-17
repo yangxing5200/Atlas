@@ -663,9 +663,8 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             .Where(x => x.RawNoticeId == rawNoticeId)
             .ToListAsync(ct);
         return records
-            .OrderBy(x => x.PackageNo)
-            .ThenBy(x => x.LotNo)
-            .ThenBy(x => x.SupplierName)
+            .OrderBy(x => x.ExtractionOrder)
+            .ThenBy(x => x.Id)
             .ToList();
     }
 
@@ -717,6 +716,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
                 Rank = extract.Rank,
                 AwardAmount = extract.AwardAmount,
                 ProcurementAgencyServiceFeeAmount = extract.ProcurementAgencyServiceFeeAmount,
+                ExtractionOrder = records.Count,
                 Currency = "CNY",
                 EvidenceText = Truncate(extract.EvidenceText, 2000),
                 ExtractionConfidence = ClampConfidence(extract.Confidence),
@@ -725,9 +725,8 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         }
 
         return records
-            .OrderBy(x => x.PackageNo)
-            .ThenBy(x => x.LotNo)
-            .ThenBy(x => x.SupplierName)
+            .OrderBy(x => x.ExtractionOrder)
+            .ThenBy(x => x.Id)
             .ToList();
     }
 
@@ -1558,6 +1557,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             Rank = record.Rank,
             AwardAmount = record.AwardAmount,
             ProcurementAgencyServiceFeeAmount = record.ProcurementAgencyServiceFeeAmount,
+            ExtractionOrder = record.ExtractionOrder,
             Currency = record.Currency,
             EvidenceText = record.EvidenceText,
             ExtractionConfidence = record.ExtractionConfidence,

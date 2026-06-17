@@ -25,6 +25,8 @@ namespace Atlas.Modules.BidOps;
 
 public sealed class BidOpsModule : AtlasModule
 {
+    private static readonly TimeSpan AiHttpTimeout = TimeSpan.FromMinutes(30);
+
     public override string Name => "Atlas.Modules.BidOps";
 
     public override IReadOnlyCollection<Assembly> EntityConfigurationAssemblies => new[] { Assembly };
@@ -34,6 +36,7 @@ public sealed class BidOpsModule : AtlasModule
         context.Services.AddScoped<IBidOpsCrawlService, BidOpsCrawlService>();
         context.Services.AddScoped<IBidOpsRawIngestionService, BidOpsRawIngestionService>();
         context.Services.AddScoped<IBidOpsAiParsingService, BidOpsAiParsingService>();
+        context.Services.AddScoped<IBidOpsAiCallDiagnostics, BidOpsAiCallDiagnostics>();
         context.Services.AddScoped<IBidOpsReviewService, BidOpsReviewService>();
         context.Services.AddScoped<IBidOpsOpportunityService, BidOpsOpportunityService>();
         context.Services.AddScoped<IBidOpsOpportunityMaintenanceService, BidOpsOpportunityMaintenanceService>();
@@ -56,11 +59,11 @@ public sealed class BidOpsModule : AtlasModule
         });
         context.Services.AddHttpClient<IBidOpsAiExtractionService, BidOpsStructuredExtractionService>(client =>
         {
-            client.Timeout = TimeSpan.FromMinutes(2);
+            client.Timeout = AiHttpTimeout;
         });
         context.Services.AddHttpClient<IBidOpsOutcomeSupplierAiExtractionService, BidOpsOutcomeSupplierAiExtractionService>(client =>
         {
-            client.Timeout = TimeSpan.FromMinutes(2);
+            client.Timeout = AiHttpTimeout;
         });
         context.Services.AddSingleton<IBidOpsFileStore, LocalBidOpsFileStore>();
         context.Services.AddSingleton<IBidOpsTextExtractor, BidOpsTextExtractor>();

@@ -32,6 +32,20 @@ namespace Atlas.Data.Global.Migrations.Migrations
                     b.Property<DateTime>("AvailableAtUtc")
                         .HasColumnType("datetime(6)");
 
+                    b.Property<DateTime?>("CancellationRequestedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("CancellationReason")
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("CancellationReason"), "utf8mb4");
+
+                    b.Property<string>("CancellationRequestedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("CancellationRequestedBy"), "utf8mb4");
+
                     b.Property<DateTime?>("CompletedAtUtc")
                         .HasColumnType("datetime(6)");
 
@@ -103,8 +117,8 @@ namespace Atlas.Data.Global.Migrations.Migrations
                     MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Queue"), "utf8mb4");
 
                     b.Property<string>("Result")
-                        .HasMaxLength(256)
-                        .HasColumnType("text");
+                        .HasMaxLength(1000000)
+                        .HasColumnType("mediumtext");
 
                     MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Result"), "utf8mb4");
 
@@ -146,6 +160,9 @@ namespace Atlas.Data.Global.Migrations.Migrations
 
                     b.HasIndex("Queue", "Status", "LockedAtUtc")
                         .HasDatabaseName("IX_BackgroundJobs_RunningLocks");
+
+                    b.HasIndex("Status", "CancellationRequestedAt")
+                        .HasDatabaseName("IX_BackgroundJobs_CancellationRequested");
 
                     b.HasIndex("Queue", "Status", "AvailableAtUtc", "NextAttemptAtUtc", "Priority")
                         .HasDatabaseName("IX_BackgroundJobs_DispatchDue");

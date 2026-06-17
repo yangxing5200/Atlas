@@ -69,6 +69,7 @@ public sealed class BackgroundJobClient : IBackgroundJobClient
             }
         }
 
+        var now = DateTime.Now;
         var job = new BackgroundJob
         {
             Id = _idGenerator.NextId(),
@@ -81,8 +82,9 @@ public sealed class BackgroundJobClient : IBackgroundJobClient
             Payload = JsonSerializer.Serialize(request.Payload, JsonOptions),
             Status = BackgroundJobStatus.Pending,
             Priority = request.Priority,
-            AvailableAtUtc = request.AvailableAtUtc ?? DateTime.UtcNow,
-            MaxAttempts = Math.Max(1, request.MaxAttempts ?? _options.DefaultMaxAttempts)
+            AvailableAtUtc = request.AvailableAtUtc ?? now,
+            MaxAttempts = Math.Max(1, request.MaxAttempts ?? _options.DefaultMaxAttempts),
+            CreatedAt = now
         };
 
         await _dbContext.BackgroundJobs.AddAsync(job, ct);

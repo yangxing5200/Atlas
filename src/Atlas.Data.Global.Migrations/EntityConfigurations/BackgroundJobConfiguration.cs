@@ -64,11 +64,19 @@ public sealed class BackgroundJobConfiguration : IEntityTypeConfiguration<Backgr
             .IsRequired()
             .HasDefaultValue(5);
 
+        builder.Property(x => x.CancellationRequestedBy)
+            .HasColumnType("varchar(200)")
+            .HasMaxLength(200);
+
+        builder.Property(x => x.CancellationReason)
+            .HasColumnType("text");
+
         builder.Property(x => x.LastError)
             .HasColumnType("text");
 
         builder.Property(x => x.Result)
-            .HasColumnType("text");
+            .HasColumnType("mediumtext")
+            .HasMaxLength(1_000_000);
 
         builder.Property(x => x.CreatedAt)
             .IsRequired();
@@ -91,6 +99,9 @@ public sealed class BackgroundJobConfiguration : IEntityTypeConfiguration<Backgr
 
         builder.HasIndex(x => new { x.Queue, x.Status, x.LockedAtUtc })
             .HasDatabaseName("IX_BackgroundJobs_RunningLocks");
+
+        builder.HasIndex(x => new { x.Status, x.CancellationRequestedAt })
+            .HasDatabaseName("IX_BackgroundJobs_CancellationRequested");
 
         builder.HasIndex(x => new { x.TenantId, x.CreatedAt })
             .HasDatabaseName("IX_BackgroundJobs_Tenant_CreatedAt");

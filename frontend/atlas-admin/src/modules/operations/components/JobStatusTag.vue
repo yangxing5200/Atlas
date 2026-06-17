@@ -5,11 +5,12 @@ import { formatJobStatus, jobStatusTagType } from '../utils/display'
 defineProps<{
   status?: BackgroundJobStatus | null
   statusName?: string | null
+  cancellationRequested?: boolean | null
 }>()
 </script>
 
 <template>
-  <el-tag :type="jobStatusTagType(status, statusName)" effect="light">
-    {{ formatJobStatus(status, statusName) }}
+  <el-tag :type="jobStatusTagType(status, statusName, cancellationRequested)" effect="light">
+    {{ formatJobStatus(status, statusName, cancellationRequested) }}
   </el-tag>
 </template>

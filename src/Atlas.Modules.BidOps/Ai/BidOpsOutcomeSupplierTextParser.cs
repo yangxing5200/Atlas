@@ -17,6 +17,8 @@ public sealed class BidOpsOutcomeSupplierExtract
 
     public decimal? ProcurementAgencyServiceFeeAmount { get; set; }
 
+    public int ExtractionOrder { get; set; }
+
     public string ProjectName { get; set; } = string.Empty;
 
     public string ProjectCode { get; set; } = string.Empty;

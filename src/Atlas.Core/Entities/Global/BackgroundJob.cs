@@ -23,6 +23,9 @@ public sealed class BackgroundJob : BaseEntity, ISnowflakeId
     public int AttemptCount { get; set; }
     public int MaxAttempts { get; set; } = 5;
     public DateTime? NextAttemptAtUtc { get; set; }
+    public DateTime? CancellationRequestedAt { get; set; }
+    public string? CancellationRequestedBy { get; set; }
+    public string? CancellationReason { get; set; }
     public string? LastError { get; set; }
     public string? Result { get; set; }
 }

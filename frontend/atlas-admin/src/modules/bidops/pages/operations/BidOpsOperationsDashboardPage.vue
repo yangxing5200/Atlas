@@ -8,7 +8,7 @@ import PageContainer from '@/shared/components/PageContainer.vue'
 import { formatDateTime } from '@/shared/utils/date'
 import JobStatusTag from '@/modules/operations/components/JobStatusTag.vue'
 import type { BidOpsOperationsDashboardDto } from '@/modules/operations/types'
-import { severityType } from '@/modules/operations/utils/display'
+import { formatJobType, severityType } from '@/modules/operations/utils/display'
 
 const router = useRouter()
 const loading = ref(false)
@@ -99,7 +99,9 @@ onMounted(loadData)
               <JobStatusTag :status="row.status" :status-name="row.statusName" />
             </template>
           </el-table-column>
-          <el-table-column prop="jobType" label="任务类型" min-width="260" show-overflow-tooltip />
+          <el-table-column label="任务类型" min-width="260" show-overflow-tooltip>
+            <template #default="{ row }">{{ formatJobType(row.jobType, row.jobTypeName) }}</template>
+          </el-table-column>
           <el-table-column prop="queue" label="队列" width="100" />
           <el-table-column label="创建时间" width="170">
             <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>

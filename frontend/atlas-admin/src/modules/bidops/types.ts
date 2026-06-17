@@ -520,6 +520,7 @@ export interface OutcomeSupplierRecordDto {
   rank?: number | null
   awardAmount?: number | null
   procurementAgencyServiceFeeAmount?: number | null
+  extractionOrder: number
   currency: string
   evidenceText: string
   extractionConfidence: number
@@ -849,6 +850,7 @@ export interface BidOpsDashboardSummaryDto {
 export interface EnqueueJobDto {
   jobId: BidOpsId
   jobType: string
+  jobTypeName: string
   queue: string
   alreadyExists: boolean
 }
