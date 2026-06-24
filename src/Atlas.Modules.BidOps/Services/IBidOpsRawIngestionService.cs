@@ -18,6 +18,11 @@ public sealed record RawIngestionCommand(
     IReadOnlyList<RawAttachmentCandidate>? Attachments = null,
     bool ForceRefresh = false);
 
+public sealed record RawIngestionResult(
+    long RawNoticeId,
+    string Status,
+    bool ShouldProcess);
+
 public interface IBidOpsRawIngestionService
 {
     Task<long> ImportManualUrlAsync(
@@ -29,6 +34,17 @@ public interface IBidOpsRawIngestionService
         RawIngestionCommand command,
         long? backgroundJobId,
         string operation,
+        CancellationToken ct = default);
+
+    Task<RawIngestionResult> IngestPublicNoticeWithResultAsync(
+        RawIngestionCommand command,
+        long? backgroundJobId,
+        string operation,
+        CancellationToken ct = default);
+
+    Task<long?> FindExistingRawNoticeIdByUrlAsync(
+        string noticeType,
+        string detailUrl,
         CancellationToken ct = default);
 
     Task<long> CreateMockRawNoticeAsync(

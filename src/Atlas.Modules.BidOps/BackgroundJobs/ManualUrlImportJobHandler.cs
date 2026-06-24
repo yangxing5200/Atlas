@@ -1,6 +1,8 @@
 using Atlas.BackgroundTasks;
 using Atlas.Core.Services;
+using Atlas.Data.Abstractions;
 using Atlas.Modules.BidOps.Crawling;
+using Atlas.Modules.BidOps.Entities.Crawling;
 using Atlas.Modules.BidOps.Models;
 using Atlas.Modules.BidOps.Services;
 using Microsoft.Extensions.Logging;
@@ -12,6 +14,7 @@ public sealed class ManualUrlImportJobHandler : IBackgroundJobHandler
     private readonly IExecutionIdentityAccessor _identityAccessor;
     private readonly IBidOpsRawIngestionService _ingestion;
     private readonly IStateGridEcpCrawler _stateGridCrawler;
+    private readonly IRepository<RawNotice> _rawNotices;
     private readonly IBackgroundJobClient _jobs;
     private readonly ILogger<ManualUrlImportJobHandler> _logger;
 
@@ -19,12 +22,14 @@ public sealed class ManualUrlImportJobHandler : IBackgroundJobHandler
         IExecutionIdentityAccessor identityAccessor,
         IBidOpsRawIngestionService ingestion,
         IStateGridEcpCrawler stateGridCrawler,
+        IRepository<RawNotice> rawNotices,
         IBackgroundJobClient jobs,
         ILogger<ManualUrlImportJobHandler> logger)
     {
         _identityAccessor = identityAccessor ?? throw new ArgumentNullException(nameof(identityAccessor));
         _ingestion = ingestion ?? throw new ArgumentNullException(nameof(ingestion));
         _stateGridCrawler = stateGridCrawler ?? throw new ArgumentNullException(nameof(stateGridCrawler));
+        _rawNotices = rawNotices ?? throw new ArgumentNullException(nameof(rawNotices));
         _jobs = jobs ?? throw new ArgumentNullException(nameof(jobs));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
@@ -64,6 +69,7 @@ public sealed class ManualUrlImportJobHandler : IBackgroundJobHandler
         var forceParseRunId = payload.ForceRefresh
             ? Guid.NewGuid().ToString("N")
             : null;
+        var raw = await _rawNotices.GetByIdAsync(createdRawNoticeId, ct);
 
         await _jobs.EnqueueAsync(
             new EnqueueBackgroundJobRequest<AttachmentProcessJobPayload>
@@ -77,14 +83,19 @@ public sealed class ManualUrlImportJobHandler : IBackgroundJobHandler
                 StoreId = payload.StoreId,
                 DeduplicationKey = payload.ForceRefresh
                     ? $"bidops:attachment-process-refresh:{payload.TenantId}:{createdRawNoticeId}:{forceParseRunId}"
-                    : $"bidops:attachment-process:{payload.TenantId}:{createdRawNoticeId}:{DateTime.UtcNow:yyyyMMddHHmm}",
+                    : BidOpsBackgroundJobDeduplicationKeys.AttachmentProcess(
+                        payload.TenantId,
+                        createdRawNoticeId,
+                        raw?.ContentHash),
+                Priority = context.Job.Priority,
                 Payload = new AttachmentProcessJobPayload(
                     payload.TenantId,
                     payload.StoreId,
                     payload.UserId,
                     payload.UserName,
                     createdRawNoticeId,
-                    forceParseRunId)
+                    forceParseRunId,
+                    ProjectCode: payload.ProjectCode)
             },
             ct);
 
@@ -92,6 +103,6 @@ public sealed class ManualUrlImportJobHandler : IBackgroundJobHandler
             "BidOps manual URL import completed for raw notice {RawNoticeId}. forceRefresh={ForceRefresh}.",
             createdRawNoticeId,
             payload.ForceRefresh);
-        return BackgroundJobExecutionResult.Success($"rawNoticeId={createdRawNoticeId}");
+        return BackgroundJobExecutionResult.Success($"rawNoticeId={createdRawNoticeId};projectCode={payload.ProjectCode}");
     }
 }

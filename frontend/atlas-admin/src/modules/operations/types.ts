@@ -5,6 +5,7 @@ export type BackgroundJobDurationValue = number | string
 
 export interface BackgroundJobSearchQuery {
   keyword?: string
+  projectCode?: string | null
   tenantId?: BidOpsId | number | null
   queue?: string | null
   jobType?: string | null
@@ -20,6 +21,8 @@ export interface BackgroundJobSearchQuery {
   createdTo?: string | null
   createdFromUtc?: string | null
   createdToUtc?: string | null
+  sortBy?: 'CompletedAt' | 'CompletedAtUtc' | string | null
+  sortDescending?: boolean | null
   pageIndex?: number
   pageSize?: number
 }
@@ -30,6 +33,7 @@ export interface BackgroundJobListItemDto {
   jobTypeName: string
   queue: string
   jobName: string
+  projectCode: string
   deduplicationKey?: string | null
   tenantId?: BidOpsId | null
   storeId?: BidOpsId | null
@@ -162,10 +166,81 @@ export interface BidOpsConfigCheckDto {
   items: BidOpsConfigCheckItemDto[]
 }
 
+export interface BidOpsAiProviderOptionDto {
+  provider: string
+  label: string
+  description: string
+  model: string
+  reasoningEffort: string
+  available: boolean
+  availabilityMessage: string
+}
+
+export interface BidOpsAiProviderSettingsDto {
+  enabled: boolean
+  noticeStagingEnabled: boolean
+  outcomeSuppliersEnabled: boolean
+  configuredProvider: string
+  runtimeProvider: string
+  effectiveProvider: string
+  providerSource: string
+  effectiveModel: string
+  reasoningEffort: string
+  deepSeekModel: string
+  codexCliModel: string
+  codexCliReasoningEffort: string
+  codexCliModelSource: string
+  codexCliReasoningEffortSource: string
+  codexCliScenarios: BidOpsCodexCliScenarioSettingsDto[]
+  updatedAt?: string | null
+  updatedByUserName: string
+  options: BidOpsAiProviderOptionDto[]
+}
+
+export interface BidOpsCodexCliScenarioSettingsDto {
+  scenario: string
+  label: string
+  description: string
+  model: string
+  reasoningEffort: string
+  modelSource: string
+  reasoningEffortSource: string
+}
+
+export interface UpdateBidOpsAiProviderRequest {
+  provider: string
+}
+
+export interface UpdateBidOpsCodexCliSettingsRequest {
+  model: string
+  reasoningEffort: string
+}
+
+export interface UpdateBidOpsCodexCliScenarioSettingsRequest {
+  scenario: string
+  model: string
+  reasoningEffort: string
+}
+
+export interface BidOpsRuntimeStatusDto {
+  taskPaused: boolean
+  pauseReason: string
+  pauseUpdatedAt?: string | null
+  pauseUpdatedByUserName: string
+  deferredUntil?: string | null
+}
+
+export interface UpdateBidOpsTaskPauseRequest {
+  paused: boolean
+  reason?: string | null
+}
+
 export interface BidOpsOperationsDashboardDto {
   backgroundJobWorkerEnabled: boolean
   recurringTaskRunnerEnabled: boolean
   bidOpsQueueConfigured: boolean
+  aiSettings: BidOpsAiProviderSettingsDto
+  runtimeStatus: BidOpsRuntimeStatusDto
   jobs: BackgroundJobSummaryDto
   rawNoticeCreatedToday: number
   reviewTaskCreatedToday: number
@@ -188,6 +263,9 @@ export interface BidOpsChannelHealthDto {
   channelEnabled: boolean
   enabled: boolean
   needLogin: boolean
+  scheduleMode: string
+  scanIntervalMinutes?: number | null
+  dailyScanTime: string
   crawlIntervalMinutes: number
   lastScanTime?: string | null
   lastSuccessTime?: string | null
@@ -199,6 +277,50 @@ export interface BidOpsChannelHealthDto {
   runningJobs: number
   failedJobs24h: number
   succeededJobs24h: number
+  backfillStatus: string
+  backfillNextCursor: string
+  backfillScannedItemCount: number
+  backfillCreatedCount: number
+  backfillChangedCount: number
+  backfillDuplicateCount: number
+  backfillFailedItemCount: number
+  backfillRemainingEstimate?: number | null
+  alertLevel: string
+  alertMessage: string
+}
+
+export interface BidOpsCrawlProgressDto {
+  channelId: BidOpsId
+  sourceId: BidOpsId
+  sourceName: string
+  sourceType: string
+  channelName: string
+  noticeType: string
+  sourceEnabled: boolean
+  channelEnabled: boolean
+  mode: string
+  status: string
+  nextCursor: string
+  lastSuccessfulCursor: string
+  rangeStartPublishTime?: string | null
+  rangeEndPublishTime?: string | null
+  highWatermarkPublishTime?: string | null
+  lowWatermarkPublishTime?: string | null
+  totalRemoteCount?: number | null
+  scannedItemCount: number
+  createdCount: number
+  changedCount: number
+  duplicateCount: number
+  failedItemCount: number
+  remainingEstimate?: number | null
+  startedAt?: string | null
+  lastRunAt?: string | null
+  completedAt?: string | null
+  pausedAt?: string | null
+  pauseReason: string
+  lastError: string
+  alertLevel: string
+  alertMessage: string
 }
 
 export type BackgroundJobPagedResult = PagedResult<BackgroundJobListItemDto>

@@ -26,7 +26,7 @@ public static class BidOpsCandidateEvidenceParser
         List<CandidateEvidence> results)
     {
         var projectCodeFallback = BidOpsEvidenceText.ExtractProjectCode(document.Text);
-        var projectNameFallback = FirstNonEmpty(BidOpsEvidenceText.ExtractProjectName(document.Text), document.Title);
+        var projectNameFallback = BidOpsEvidenceText.ExtractProjectName(document.Text);
 
         foreach (var table in BidOpsEvidenceTableParser.Parse(document.Text))
         {

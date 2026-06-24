@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Refresh, Search, Tickets } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh, Search, Tickets, VideoPause, VideoPlay, RefreshLeft } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
+import { crawlChannelsApi } from '@/api/bidops/crawlChannels.api'
 import { bidOpsOperationsApi } from '@/api/bidops/operations.api'
 import DataTable from '@/shared/components/DataTable.vue'
 import PageContainer from '@/shared/components/PageContainer.vue'
@@ -13,6 +15,7 @@ import { formatNoticeType, formatSourceType } from '../../utils/display'
 
 const router = useRouter()
 const loading = ref(false)
+const actionLoading = ref(false)
 const keyword = ref('')
 const status = ref('')
 const items = ref<BidOpsChannelHealthDto[]>([])
@@ -46,6 +49,79 @@ async function loadData() {
     items.value = await bidOpsOperationsApi.channelsHealth()
   } finally {
     loading.value = false
+  }
+}
+
+function checkpointStatusLabel(value: string) {
+  const labels: Record<string, string> = {
+    Idle: '待继续',
+    Running: '运行中',
+    Paused: '已暂停',
+    Completed: '已完成',
+    Failed: '失败',
+  }
+  return labels[value] || (value ? value : '未开始')
+}
+
+function checkpointTagType(value: string) {
+  if (value === 'Completed') return 'success'
+  if (value === 'Running') return 'primary'
+  if (value === 'Paused') return 'info'
+  if (value === 'Failed') return 'danger'
+  return 'warning'
+}
+
+function alertTagType(value: string) {
+  if (value === 'Error') return 'danger'
+  if (value === 'Warning') return 'warning'
+  if (value === 'Info') return 'info'
+  return 'success'
+}
+
+async function continueBackfill(row: BidOpsChannelHealthDto) {
+  await runChannelAction(async () => {
+    const job = await crawlChannelsApi.continueCheckpoint(row.channelId, { mode: 'Backfill', maxPages: 3 })
+    ElMessage.success(`继续扫描已入队：JobId=${job.jobId}`)
+  })
+}
+
+async function pauseBackfill(row: BidOpsChannelHealthDto) {
+  await runChannelAction(async () => {
+    await crawlChannelsApi.pauseCheckpoint(row.channelId, { mode: 'Backfill', reason: 'Paused from operations page' })
+    ElMessage.success('补采游标已暂停')
+  })
+}
+
+async function resumeBackfill(row: BidOpsChannelHealthDto) {
+  await runChannelAction(async () => {
+    const job = await crawlChannelsApi.resumeCheckpoint(row.channelId, { mode: 'Backfill', maxPages: 3 })
+    ElMessage.success(`补采已恢复：JobId=${job.jobId}`)
+  })
+}
+
+async function resetBackfill(row: BidOpsChannelHealthDto) {
+  try {
+    await ElMessageBox.confirm('重置后补采游标会回到第 1 页，累计进度也会清零。', '重置补采游标', {
+      confirmButtonText: '重置',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    await runChannelAction(async () => {
+      await crawlChannelsApi.resetCheckpoint(row.channelId, { mode: 'Backfill', nextPage: 1 })
+      ElMessage.success('补采游标已重置')
+    })
+  } catch {
+    return
+  }
+}
+
+async function runChannelAction(action: () => Promise<void>) {
+  actionLoading.value = true
+  try {
+    await action()
+    await loadData()
+  } finally {
+    actionLoading.value = false
   }
 }
 
@@ -114,7 +190,7 @@ onMounted(loadData)
         </template>
       </el-table-column>
       <el-table-column label="间隔" width="100">
-        <template #default="{ row }">{{ row.crawlIntervalMinutes }} 分钟</template>
+        <template #default="{ row }">{{ row.scheduleMode === 'Daily' ? `每天 ${row.dailyScanTime || '-'}` : `${row.crawlIntervalMinutes} 分钟` }}</template>
       </el-table-column>
       <el-table-column label="最近扫描" width="170">
         <template #default="{ row }">{{ formatDateTime(row.lastScanTime) }}</template>
@@ -128,10 +204,55 @@ onMounted(loadData)
       <el-table-column label="24h 成败" width="120">
         <template #default="{ row }">{{ row.succeededJobs24h }} / {{ row.failedJobs24h }}</template>
       </el-table-column>
-      <el-table-column prop="lastError" label="错误信息" min-width="230" show-overflow-tooltip />
-      <el-table-column label="操作" width="120" fixed="right">
+      <el-table-column label="补采进度" width="190">
         <template #default="{ row }">
-          <el-button size="small" @click="router.push(`/bidops/operations/jobs?businessId=${row.channelId}`)">任务</el-button>
+          <div class="stacked">
+            <strong>{{ row.backfillScannedItemCount }} 条 / 剩 {{ row.backfillRemainingEstimate ?? '-' }}</strong>
+            <span>新 {{ row.backfillCreatedCount }} · 变 {{ row.backfillChangedCount }} · 重 {{ row.backfillDuplicateCount }}</span>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column label="补采状态" width="130">
+        <template #default="{ row }">
+          <el-tag :type="checkpointTagType(row.backfillStatus)" effect="light">
+            {{ checkpointStatusLabel(row.backfillStatus) }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="游标" width="100">
+        <template #default="{ row }">{{ row.backfillNextCursor || '-' }}</template>
+      </el-table-column>
+      <el-table-column label="告警" min-width="190" show-overflow-tooltip>
+        <template #default="{ row }">
+          <el-tag v-if="row.alertLevel" :type="alertTagType(row.alertLevel)" effect="light">
+            {{ row.alertMessage || row.alertLevel }}
+          </el-tag>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="lastError" label="错误信息" min-width="230" show-overflow-tooltip />
+      <el-table-column label="操作" width="260" fixed="right">
+        <template #default="{ row }">
+          <div class="table-actions">
+            <el-button size="small" @click="router.push(`/bidops/operations/jobs?businessId=${row.channelId}`)">任务</el-button>
+            <el-button size="small" type="primary" plain :icon="VideoPlay" :loading="actionLoading" @click="continueBackfill(row)">
+              继续
+            </el-button>
+            <el-button
+              v-if="row.backfillStatus === 'Paused'"
+              size="small"
+              plain
+              :icon="VideoPlay"
+              :loading="actionLoading"
+              @click="resumeBackfill(row)"
+            >
+              恢复
+            </el-button>
+            <el-button v-else size="small" plain :icon="VideoPause" :loading="actionLoading" @click="pauseBackfill(row)">
+              暂停
+            </el-button>
+            <el-button size="small" plain :icon="RefreshLeft" :loading="actionLoading" @click="resetBackfill(row)">重置</el-button>
+          </div>
         </template>
       </el-table-column>
     </DataTable>
@@ -155,5 +276,11 @@ onMounted(loadData)
 .stacked span {
   color: #687385;
   font-size: 12px;
+}
+
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 </style>

@@ -1,5 +1,7 @@
 using Atlas.BackgroundTasks;
 using Atlas.Core.Services;
+using Atlas.Data.Abstractions;
+using Atlas.Modules.BidOps.Entities.Crawling;
 using Atlas.Modules.BidOps.Models;
 using Atlas.Modules.BidOps.Services;
 using Microsoft.Extensions.Logging;
@@ -10,17 +12,20 @@ public sealed class MockCrawlJobHandler : IBackgroundJobHandler
 {
     private readonly IExecutionIdentityAccessor _identityAccessor;
     private readonly IBidOpsRawIngestionService _ingestion;
+    private readonly IRepository<RawNotice> _rawNotices;
     private readonly IBackgroundJobClient _jobs;
     private readonly ILogger<MockCrawlJobHandler> _logger;
 
     public MockCrawlJobHandler(
         IExecutionIdentityAccessor identityAccessor,
         IBidOpsRawIngestionService ingestion,
+        IRepository<RawNotice> rawNotices,
         IBackgroundJobClient jobs,
         ILogger<MockCrawlJobHandler> logger)
     {
         _identityAccessor = identityAccessor ?? throw new ArgumentNullException(nameof(identityAccessor));
         _ingestion = ingestion ?? throw new ArgumentNullException(nameof(ingestion));
+        _rawNotices = rawNotices ?? throw new ArgumentNullException(nameof(rawNotices));
         _jobs = jobs ?? throw new ArgumentNullException(nameof(jobs));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
@@ -38,6 +43,7 @@ public sealed class MockCrawlJobHandler : IBackgroundJobHandler
             payload.ChannelId,
             context.Job.Id,
             ct);
+        var raw = await _rawNotices.GetByIdAsync(rawNoticeId, ct);
 
         await _jobs.EnqueueAsync(
             new EnqueueBackgroundJobRequest<AttachmentProcessJobPayload>
@@ -47,7 +53,11 @@ public sealed class MockCrawlJobHandler : IBackgroundJobHandler
                 JobName = "BidOps process mock notice attachments",
                 TenantId = payload.TenantId,
                 StoreId = payload.StoreId,
-                DeduplicationKey = $"bidops:attachment-process:{payload.TenantId}:{rawNoticeId}:{DateTime.UtcNow:yyyyMMddHHmm}",
+                DeduplicationKey = BidOpsBackgroundJobDeduplicationKeys.AttachmentProcess(
+                    payload.TenantId,
+                    rawNoticeId,
+                    raw?.ContentHash),
+                Priority = context.Job.Priority,
                 Payload = new AttachmentProcessJobPayload(
                     payload.TenantId,
                     payload.StoreId,

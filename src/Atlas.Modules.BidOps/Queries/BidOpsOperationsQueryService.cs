@@ -10,6 +10,7 @@ using Atlas.Modules.BidOps.Entities.Opportunities;
 using Atlas.Modules.BidOps.Entities.Staging;
 using Atlas.Modules.BidOps.Entities.Tendering;
 using Atlas.Modules.BidOps.Models;
+using Atlas.Modules.BidOps.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
@@ -20,6 +21,7 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
 {
     private readonly IRepository<CrawlSource> _sources;
     private readonly IRepository<CrawlChannel> _channels;
+    private readonly IRepository<CrawlCheckpoint> _checkpoints;
     private readonly IRepository<RawNotice> _rawNotices;
     private readonly IRepository<RawAttachment> _rawAttachments;
     private readonly IRepository<ReviewTask> _reviewTasks;
@@ -31,10 +33,13 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
     private readonly BackgroundJobWorkerOptions _workerOptions;
     private readonly RecurringTaskRunnerOptions _recurringOptions;
     private readonly IConfiguration _configuration;
+    private readonly IBidOpsAiSettingsService _aiSettings;
+    private readonly IBidOpsRuntimeControlService _runtimeControl;
 
     public BidOpsOperationsQueryService(
         IRepository<CrawlSource> sources,
         IRepository<CrawlChannel> channels,
+        IRepository<CrawlCheckpoint> checkpoints,
         IRepository<RawNotice> rawNotices,
         IRepository<RawAttachment> rawAttachments,
         IRepository<ReviewTask> reviewTasks,
@@ -45,10 +50,13 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
         IBackgroundJobOperationsService jobs,
         IOptions<BackgroundJobWorkerOptions> workerOptions,
         IOptions<RecurringTaskRunnerOptions> recurringOptions,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IBidOpsAiSettingsService aiSettings,
+        IBidOpsRuntimeControlService runtimeControl)
     {
         _sources = sources ?? throw new ArgumentNullException(nameof(sources));
         _channels = channels ?? throw new ArgumentNullException(nameof(channels));
+        _checkpoints = checkpoints ?? throw new ArgumentNullException(nameof(checkpoints));
         _rawNotices = rawNotices ?? throw new ArgumentNullException(nameof(rawNotices));
         _rawAttachments = rawAttachments ?? throw new ArgumentNullException(nameof(rawAttachments));
         _reviewTasks = reviewTasks ?? throw new ArgumentNullException(nameof(reviewTasks));
@@ -60,6 +68,8 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
         _workerOptions = workerOptions?.Value ?? new BackgroundJobWorkerOptions();
         _recurringOptions = recurringOptions?.Value ?? new RecurringTaskRunnerOptions();
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _aiSettings = aiSettings ?? throw new ArgumentNullException(nameof(aiSettings));
+        _runtimeControl = runtimeControl ?? throw new ArgumentNullException(nameof(runtimeControl));
     }
 
     public async Task<BidOpsOperationsDashboardDto> GetDashboardAsync(CancellationToken ct = default)
@@ -96,6 +106,8 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
             BackgroundJobWorkerEnabled = _workerOptions.Enabled,
             RecurringTaskRunnerEnabled = _recurringOptions.Enabled,
             BidOpsQueueConfigured = HasBidOpsQueue(),
+            RuntimeStatus = await _runtimeControl.GetStatusAsync(ct),
+            AiSettings = await _aiSettings.GetSettingsAsync(ct),
             Jobs = summary,
             RawNoticeCreatedToday = ToInt(await rawQuery.Where(x => x.FetchTime >= today).CountAsync(ct)),
             ReviewTaskCreatedToday = ToInt(await reviewQuery.Where(x => x.CreatedAt >= today).CountAsync(ct)),
@@ -214,6 +226,7 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
     public async Task<BidOpsConfigCheckDto> GetConfigCheckAsync(CancellationToken ct = default)
     {
         var items = new List<BidOpsConfigCheckItemDto>();
+        var runtimeStatus = await _runtimeControl.GetStatusAsync(ct);
         var sourceQuery = await _sources.QueryDataScopeAsync(BidOpsDataResources.CrawlSource, AtlasDataScopeType.AllTenant, ct);
         var channelQuery = await _channels.QueryDataScopeAsync(BidOpsDataResources.CrawlSource, AtlasDataScopeType.AllTenant, ct);
         var enabledSourceCount = await sourceQuery.Where(x => x.Enabled).CountAsync(ct);
@@ -226,6 +239,16 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
                 "BackgroundJobWorkerDisabled",
                 "后台任务 Worker 未启用",
                 "BackgroundTasks:OneTimeJobs:Enabled=false，已入队的一次性任务不会被消费。"));
+        }
+
+        if (runtimeStatus.TaskPaused)
+        {
+            items.Add(Warning(
+                "BidOpsTasksPaused",
+                "BidOps 全局任务已暂停",
+                string.IsNullOrWhiteSpace(runtimeStatus.PauseReason)
+                    ? "暂停期间不会执行或新建 BidOps 后台任务，恢复后已排队任务会继续处理。"
+                    : $"暂停原因：{runtimeStatus.PauseReason}"));
         }
 
         if (!HasBidOpsQueue())
@@ -332,25 +355,77 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
             .ToList();
 
         var jobs = await LoadChannelJobSnapshotAsync(since24h, ct);
+        var checkpointQuery = await _checkpoints.QueryDataScopeAsync(BidOpsDataResources.CrawlCheckpoint, AtlasDataScopeType.AllTenant, ct);
+        var backfillCheckpoints = await checkpointQuery
+            .Where(x => x.Mode == BidOpsCrawlModes.Backfill)
+            .ToListAsync(ct);
+        var backfillMap = backfillCheckpoints
+            .GroupBy(x => x.ChannelId)
+            .ToDictionary(x => x.Key, x => x.OrderByDescending(y => y.LastRunAt ?? y.CreatedAt).First());
 
         return channels
-            .Select(channel => MapChannelHealth(channel, sourceMap.GetValueOrDefault(channel.SourceId), jobs, now, since24h))
+            .Select(channel => MapChannelHealth(
+                channel,
+                sourceMap.GetValueOrDefault(channel.SourceId),
+                jobs,
+                backfillMap.GetValueOrDefault(channel.Id),
+                now,
+                since24h))
             .ToList();
+    }
+
+    public async Task<IReadOnlyList<BidOpsCrawlProgressDto>> GetCrawlProgressAsync(CancellationToken ct = default)
+    {
+        var sourceQuery = await _sources.QueryDataScopeAsync(BidOpsDataResources.CrawlSource, AtlasDataScopeType.AllTenant, ct);
+        var channelQuery = await _channels.QueryDataScopeAsync(BidOpsDataResources.CrawlSource, AtlasDataScopeType.AllTenant, ct);
+        var checkpointQuery = await _checkpoints.QueryDataScopeAsync(BidOpsDataResources.CrawlCheckpoint, AtlasDataScopeType.AllTenant, ct);
+
+        var sources = await sourceQuery.ToListAsync(ct);
+        var sourceMap = sources.ToDictionary(x => x.Id);
+        var channels = (await channelQuery
+            .OrderBy(x => x.SourceId)
+            .ToListAsync(ct))
+            .OrderBy(x => x.SourceId)
+            .ThenBy(x => x.Code)
+            .ToList();
+        var checkpoints = await checkpointQuery.ToListAsync(ct);
+        var checkpointMap = checkpoints
+            .GroupBy(x => (x.ChannelId, x.Mode))
+            .ToDictionary(x => x.Key, x => x.OrderByDescending(y => y.LastRunAt ?? y.CreatedAt).First());
+
+        var items = new List<BidOpsCrawlProgressDto>();
+        foreach (var channel in channels)
+        {
+            var source = sourceMap.GetValueOrDefault(channel.SourceId);
+            foreach (var mode in new[] { BidOpsCrawlModes.Incremental, BidOpsCrawlModes.Backfill })
+            {
+                checkpointMap.TryGetValue((channel.Id, mode), out var checkpoint);
+                items.Add(MapCrawlProgress(channel, source, checkpoint, mode));
+            }
+        }
+
+        return items;
     }
 
     private BidOpsChannelHealthDto MapChannelHealth(
         CrawlChannel channel,
         CrawlSource? source,
         IReadOnlyCollection<ChannelJobProjection> jobs,
+        CrawlCheckpoint? backfillCheckpoint,
         DateTime now,
         DateTime since24h)
     {
-        var intervalMinutes = Math.Max(1, source?.CrawlIntervalMinutes ?? 60);
+        var intervalMinutes = Math.Max(
+            1,
+            channel.ScanIntervalMinutes.HasValue && channel.ScanIntervalMinutes.Value > 0
+                ? channel.ScanIntervalMinutes.Value
+                : source?.CrawlIntervalMinutes ?? 60);
         var nextDueAtUtc = channel.LastSuccessTime?.AddMinutes(intervalMinutes);
         var matchedJobs = jobs
             .Where(job => JobMatchesChannel(job, channel.Id))
             .ToList();
 
+        var alert = BuildCrawlAlert(channel, source, backfillCheckpoint);
         return new BidOpsChannelHealthDto
         {
             ChannelId = channel.Id,
@@ -363,6 +438,9 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
             ChannelEnabled = channel.Enabled,
             Enabled = channel.Enabled && (source?.Enabled ?? false),
             NeedLogin = source?.NeedLogin ?? false,
+            ScheduleMode = channel.ScheduleMode,
+            ScanIntervalMinutes = channel.ScanIntervalMinutes,
+            DailyScanTime = channel.DailyScanTime,
             CrawlIntervalMinutes = intervalMinutes,
             LastScanTime = channel.LastScanTime,
             LastSuccessTime = channel.LastSuccessTime,
@@ -379,7 +457,17 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
                 (x.Status == BackgroundJobStatus.Failed || x.Status == BackgroundJobStatus.Dead)),
             SucceededJobs24h = matchedJobs.Count(x =>
                 x.CreatedAt >= since24h &&
-                x.Status == BackgroundJobStatus.Succeeded)
+                x.Status == BackgroundJobStatus.Succeeded),
+            BackfillStatus = backfillCheckpoint?.Status ?? string.Empty,
+            BackfillNextCursor = backfillCheckpoint?.NextCursor ?? string.Empty,
+            BackfillScannedItemCount = backfillCheckpoint?.ScannedItemCount ?? 0,
+            BackfillCreatedCount = backfillCheckpoint?.CreatedCount ?? 0,
+            BackfillChangedCount = backfillCheckpoint?.ChangedCount ?? 0,
+            BackfillDuplicateCount = backfillCheckpoint?.DuplicateCount ?? 0,
+            BackfillFailedItemCount = backfillCheckpoint?.FailedItemCount ?? 0,
+            BackfillRemainingEstimate = backfillCheckpoint?.RemainingEstimate,
+            AlertLevel = alert.Level,
+            AlertMessage = alert.Message
         };
     }
 
@@ -417,6 +505,81 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
             return "Due";
 
         return "Healthy";
+    }
+
+    private static BidOpsCrawlProgressDto MapCrawlProgress(
+        CrawlChannel channel,
+        CrawlSource? source,
+        CrawlCheckpoint? checkpoint,
+        string mode)
+    {
+        var alert = BuildCrawlAlert(channel, source, checkpoint);
+        return new BidOpsCrawlProgressDto
+        {
+            ChannelId = channel.Id,
+            SourceId = channel.SourceId,
+            SourceName = source?.Name ?? $"来源 {channel.SourceId}",
+            SourceType = source?.SourceType ?? string.Empty,
+            ChannelName = channel.Name,
+            NoticeType = channel.NoticeType,
+            SourceEnabled = source?.Enabled ?? false,
+            ChannelEnabled = channel.Enabled,
+            Mode = mode,
+            Status = checkpoint?.Status ?? "NotStarted",
+            NextCursor = checkpoint?.NextCursor ?? "1",
+            LastSuccessfulCursor = checkpoint?.LastSuccessfulCursor ?? string.Empty,
+            RangeStartPublishTime = checkpoint?.RangeStartPublishTime,
+            RangeEndPublishTime = checkpoint?.RangeEndPublishTime,
+            HighWatermarkPublishTime = checkpoint?.HighWatermarkPublishTime,
+            LowWatermarkPublishTime = checkpoint?.LowWatermarkPublishTime,
+            TotalRemoteCount = checkpoint?.TotalRemoteCount,
+            ScannedItemCount = checkpoint?.ScannedItemCount ?? 0,
+            CreatedCount = checkpoint?.CreatedCount ?? 0,
+            ChangedCount = checkpoint?.ChangedCount ?? 0,
+            DuplicateCount = checkpoint?.DuplicateCount ?? 0,
+            FailedItemCount = checkpoint?.FailedItemCount ?? 0,
+            RemainingEstimate = checkpoint?.RemainingEstimate,
+            StartedAt = checkpoint?.StartedAt,
+            LastRunAt = checkpoint?.LastRunAt,
+            CompletedAt = checkpoint?.CompletedAt,
+            PausedAt = checkpoint?.PausedAt,
+            PauseReason = checkpoint?.PauseReason ?? string.Empty,
+            LastError = checkpoint?.LastError ?? string.Empty,
+            AlertLevel = alert.Level,
+            AlertMessage = alert.Message
+        };
+    }
+
+    private static (string Level, string Message) BuildCrawlAlert(
+        CrawlChannel channel,
+        CrawlSource? source,
+        CrawlCheckpoint? checkpoint)
+    {
+        if (source == null)
+            return ("Error", "采集来源不存在。");
+
+        if (!source.Enabled)
+            return ("Warning", "采集来源已停用。");
+
+        if (!channel.Enabled)
+            return ("Warning", "采集栏目已停用。");
+
+        if (source.NeedLogin)
+            return ("Warning", "来源需要登录，自动扫描会跳过。");
+
+        if (checkpoint == null)
+            return (string.Empty, string.Empty);
+
+        if (checkpoint.Status == BidOpsCrawlCheckpointStatuses.Failed)
+            return ("Error", string.IsNullOrWhiteSpace(checkpoint.LastError) ? "最近一次扫描失败。" : checkpoint.LastError);
+
+        if (checkpoint.FailedItemCount > 0)
+            return ("Warning", $"累计 {checkpoint.FailedItemCount} 条公告处理失败。");
+
+        if (checkpoint.Status == BidOpsCrawlCheckpointStatuses.Paused)
+            return ("Info", string.IsNullOrWhiteSpace(checkpoint.PauseReason) ? "采集游标已暂停。" : checkpoint.PauseReason);
+
+        return (string.Empty, string.Empty);
     }
 
     private bool HasBidOpsQueue()

@@ -125,6 +125,9 @@ switch (command)
     case "bidops-status":
         await PrintBidOpsStatusAsync(globalConnection, tenantConnection);
         break;
+    case "inspect-bidops-sgcc-notices":
+        await BidOpsSgccNoticeInspector.RunAsync(args);
+        break;
     case "ensure-bidops-opportunities":
         await EnsureBidOpsOpportunityTablesAsync(tenantConnection);
         break;
@@ -140,8 +143,17 @@ switch (command)
     case "ensure-bidops-outcomes":
         await EnsureBidOpsOutcomeTablesAsync(tenantConnection);
         break;
+    case "ensure-bidops-procurement-details":
+        await EnsureBidOpsProcurementDetailTablesAsync(tenantConnection);
+        break;
+    case "ensure-bidops-crawl-progress":
+        await EnsureBidOpsCrawlProgressTablesAsync(tenantConnection);
+        break;
+    case "ensure-bidops-ai-settings":
+        await EnsureBidOpsAiSettingsTableAsync(tenantConnection);
+        break;
     case "repair-bidops-data-quality":
-        await RepairBidOpsDataQualityAsync(tenantConnection);
+        await RepairBidOpsDataQualityAsync(tenantConnection, args);
         break;
     case "reset-bidops-derived-data":
         await ResetBidOpsDerivedDataAsync(tenantConnection, args);
@@ -162,7 +174,7 @@ switch (command)
         break;
     default:
         throw new InvalidOperationException(
-            $"Unknown command '{command}'. Use: init-global, create-tenant-db, seed-demo, seed-local, seed-production, ensure-background-job-cancellation, seed-bidops-state-grid, bidops-status, ensure-bidops-opportunities, ensure-bidops-suppliers, ensure-bidops-matching, ensure-bidops-pursuits, ensure-bidops-outcomes, repair-bidops-data-quality, reset-bidops-derived-data, approve-bidops-pending, cancel-bidops-crawl-jobs, reset-demo.");
+            $"Unknown command '{command}'. Use: init-global, create-tenant-db, seed-demo, seed-local, seed-production, ensure-background-job-cancellation, seed-bidops-state-grid, bidops-status, inspect-bidops-sgcc-notices, ensure-bidops-opportunities, ensure-bidops-suppliers, ensure-bidops-matching, ensure-bidops-pursuits, ensure-bidops-outcomes, ensure-bidops-procurement-details, ensure-bidops-crawl-progress, ensure-bidops-ai-settings, repair-bidops-data-quality, reset-bidops-derived-data, approve-bidops-pending, cancel-bidops-crawl-jobs, reset-demo.");
 }
 
 static async Task InitGlobalAsync(string globalConnection)
@@ -247,7 +259,9 @@ static async Task SeedBidOpsStateGridAsync(string globalConnection, string tenan
     SeedBidOpsTenant(tenantDb);
     SeedBidOpsStateGridCrawler(tenantDb);
     await tenantDb.SaveChangesAsync();
+    await EnsureBidOpsRawNoticeBusinessIdentityAsync(tenantDb);
     await EnsureBidOpsOutcomeTablesAsync(tenantConnection);
+    await EnsureBidOpsAiSettingsTableAsync(tenantConnection);
 
     Console.WriteLine();
     Console.WriteLine("BidOps State Grid local runtime is ready.");
@@ -970,12 +984,265 @@ CREATE TABLE IF NOT EXISTS `bidops_outcome_supplier_record` (
     Console.WriteLine("BidOps outcome supplier local tables and permissions are ready.");
 }
 
+static async Task EnsureBidOpsProcurementDetailTablesAsync(string tenantConnection)
+{
+    await using var tenantDb = CreateTenantDbContext(tenantConnection);
+    var migrationPath = FindRepositoryFile(
+        Path.Combine(
+            "src",
+            "Atlas.Data.Tenant.Migrations",
+            "Migrations",
+            "20260618093000_v0.2.14-bidops-procurement-details.cs"));
+    var migrationText = await File.ReadAllTextAsync(migrationPath);
+    var matches = Regex.Matches(
+        migrationText,
+        "migrationBuilder\\.Sql\\(\"\"\"\\s*(?<sql>CREATE TABLE `bidops_(?:procurement_detail_staging|procurement_detail|lifecycle_package_link)`[\\s\\S]*?)\\s*\"\"\"\\);");
+    if (matches.Count != 3)
+        throw new InvalidOperationException($"Expected 3 BidOps procurement detail CREATE TABLE blocks, found {matches.Count} in {migrationPath}.");
+
+    foreach (Match match in matches)
+    {
+        var sql = match.Groups["sql"].Value.Trim();
+        var tableMatch = Regex.Match(sql, "CREATE TABLE `(?<table>[^`]+)`");
+        if (!tableMatch.Success)
+            throw new InvalidOperationException("Could not read table name from BidOps procurement detail migration SQL.");
+
+        var tableName = tableMatch.Groups["table"].Value;
+        if (await TableExistsAsync(tenantDb, tableName))
+        {
+            Console.WriteLine($"{tableName} already exists.");
+            continue;
+        }
+
+        await tenantDb.Database.ExecuteSqlRawAsync(sql);
+        Console.WriteLine($"Created {tableName}.");
+    }
+
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_procurement_detail_staging", "IX_bidops_proc_detail_stg_Tenant_Notice", "CREATE INDEX `IX_bidops_proc_detail_stg_Tenant_Notice` ON `bidops_procurement_detail_staging` (`TenantId`, `NoticeStagingId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_procurement_detail_staging", "IX_bidops_proc_detail_stg_Tenant_Pkg", "CREATE INDEX `IX_bidops_proc_detail_stg_Tenant_Pkg` ON `bidops_procurement_detail_staging` (`TenantId`, `PackageStagingId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_procurement_detail_staging", "IX_bidops_proc_detail_stg_Tenant_ProjectLotPkg", "CREATE INDEX `IX_bidops_proc_detail_stg_Tenant_ProjectLotPkg` ON `bidops_procurement_detail_staging` (`TenantId`, `ProjectCode`, `LotNo`, `PackageNo`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_procurement_detail_staging", "IX_bidops_proc_detail_stg_Tenant_SourceRow", "CREATE INDEX `IX_bidops_proc_detail_stg_Tenant_SourceRow` ON `bidops_procurement_detail_staging` (`TenantId`, `RawNoticeId`, `RawAttachmentId`, `TableIndex`, `RowIndex`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_procurement_detail_staging", "IX_bidops_proc_detail_stg_Tenant_StatusCreated", "CREATE INDEX `IX_bidops_proc_detail_stg_Tenant_StatusCreated` ON `bidops_procurement_detail_staging` (`TenantId`, `ReviewStatus`, `CreatedAt`);");
+
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_procurement_detail", "IX_bidops_proc_detail_Tenant_Notice", "CREATE INDEX `IX_bidops_proc_detail_Tenant_Notice` ON `bidops_procurement_detail` (`TenantId`, `NoticeId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_procurement_detail", "IX_bidops_proc_detail_Tenant_Pkg", "CREATE INDEX `IX_bidops_proc_detail_Tenant_Pkg` ON `bidops_procurement_detail` (`TenantId`, `TenderPackageId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_procurement_detail", "IX_bidops_proc_detail_Tenant_ProjectLotPkg", "CREATE INDEX `IX_bidops_proc_detail_Tenant_ProjectLotPkg` ON `bidops_procurement_detail` (`TenantId`, `ProjectCode`, `LotNo`, `PackageNo`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_procurement_detail", "IX_bidops_proc_detail_Tenant_SourceRow", "CREATE INDEX `IX_bidops_proc_detail_Tenant_SourceRow` ON `bidops_procurement_detail` (`TenantId`, `RawNoticeId`, `RawAttachmentId`, `TableIndex`, `RowIndex`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_procurement_detail", "IX_bidops_proc_detail_Tenant_StatusCreated", "CREATE INDEX `IX_bidops_proc_detail_Tenant_StatusCreated` ON `bidops_procurement_detail` (`TenantId`, `Status`, `CreatedAt`);");
+
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_lifecycle_package_link", "IX_bidops_lifecycle_link_Tenant_Award", "CREATE INDEX `IX_bidops_lifecycle_link_Tenant_Award` ON `bidops_lifecycle_package_link` (`TenantId`, `AwardOutcomeRecordId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_lifecycle_package_link", "IX_bidops_lifecycle_link_Tenant_Candidate", "CREATE INDEX `IX_bidops_lifecycle_link_Tenant_Candidate` ON `bidops_lifecycle_package_link` (`TenantId`, `CandidateOutcomeRecordId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_lifecycle_package_link", "IX_bidops_lifecycle_link_Tenant_ProcDetail", "CREATE INDEX `IX_bidops_lifecycle_link_Tenant_ProcDetail` ON `bidops_lifecycle_package_link` (`TenantId`, `ProcurementDetailId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_lifecycle_package_link", "IX_bidops_lifecycle_link_Tenant_ProcStaging", "CREATE INDEX `IX_bidops_lifecycle_link_Tenant_ProcStaging` ON `bidops_lifecycle_package_link` (`TenantId`, `ProcurementDetailStagingId`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_lifecycle_package_link", "IX_bidops_lifecycle_link_Tenant_ProjectLotPkg", "CREATE INDEX `IX_bidops_lifecycle_link_Tenant_ProjectLotPkg` ON `bidops_lifecycle_package_link` (`TenantId`, `ProjectCode`, `LotNo`, `PackageNo`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_lifecycle_package_link", "IX_bidops_lifecycle_link_Tenant_SourceHash", "CREATE UNIQUE INDEX `IX_bidops_lifecycle_link_Tenant_SourceHash` ON `bidops_lifecycle_package_link` (`TenantId`, `SourceHash`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_lifecycle_package_link", "IX_bidops_lifecycle_link_Tenant_StatusReviewScore", "CREATE INDEX `IX_bidops_lifecycle_link_Tenant_StatusReviewScore` ON `bidops_lifecycle_package_link` (`TenantId`, `LinkStatus`, `RequiresManualReview`, `MatchScore`);");
+    await CreateIndexIfMissingAsync(tenantDb, "bidops_lifecycle_package_link", "IX_bidops_lifecycle_link_Tenant_TenderPkg", "CREATE INDEX `IX_bidops_lifecycle_link_Tenant_TenderPkg` ON `bidops_lifecycle_package_link` (`TenantId`, `TenderPackageId`);");
+
+    Console.WriteLine("BidOps procurement detail and lifecycle link local tables are ready.");
+}
+
+static async Task EnsureBidOpsCrawlProgressTablesAsync(string tenantConnection)
+{
+    await using var tenantDb = CreateTenantDbContext(tenantConnection);
+
+    await tenantDb.Database.ExecuteSqlRawAsync("""
+CREATE TABLE IF NOT EXISTS `bidops_crawl_checkpoint` (
+  `Id` bigint NOT NULL,
+  `SourceId` bigint NOT NULL,
+  `ChannelId` bigint NOT NULL,
+  `Mode` varchar(32) CHARACTER SET utf8mb4 NOT NULL,
+  `Status` varchar(32) CHARACTER SET utf8mb4 NOT NULL,
+  `CursorKind` varchar(32) CHARACTER SET utf8mb4 NOT NULL,
+  `NextCursor` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+  `LastSuccessfulCursor` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+  `RangeStartPublishTime` datetime(6) NULL,
+  `RangeEndPublishTime` datetime(6) NULL,
+  `HighWatermarkPublishTime` datetime(6) NULL,
+  `LowWatermarkPublishTime` datetime(6) NULL,
+  `TotalRemoteCount` int NULL,
+  `ScannedItemCount` int NOT NULL,
+  `CreatedCount` int NOT NULL,
+  `ChangedCount` int NOT NULL,
+  `DuplicateCount` int NOT NULL,
+  `FailedItemCount` int NOT NULL,
+  `RemainingEstimate` int NULL,
+  `StartedAt` datetime(6) NULL,
+  `LastRunAt` datetime(6) NULL,
+  `CompletedAt` datetime(6) NULL,
+  `PausedAt` datetime(6) NULL,
+  `PauseReason` varchar(1000) CHARACTER SET utf8mb4 NOT NULL,
+  `LastError` varchar(2000) CHARACTER SET utf8mb4 NOT NULL,
+  `CreatedAt` datetime(6) NOT NULL,
+  `UpdatedAt` datetime(6) NULL,
+  `TenantId` bigint NOT NULL,
+  PRIMARY KEY (`Id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+""");
+
+    await tenantDb.Database.ExecuteSqlRawAsync("""
+CREATE TABLE IF NOT EXISTS `bidops_crawl_run` (
+  `Id` bigint NOT NULL,
+  `SourceId` bigint NOT NULL,
+  `ChannelId` bigint NOT NULL,
+  `CheckpointId` bigint NULL,
+  `BackgroundJobId` bigint NULL,
+  `Mode` varchar(32) CHARACTER SET utf8mb4 NOT NULL,
+  `Status` varchar(32) CHARACTER SET utf8mb4 NOT NULL,
+  `StartCursor` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+  `EndCursor` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+  `PageSize` int NOT NULL,
+  `PageCount` int NOT NULL,
+  `DiscoveredCount` int NOT NULL,
+  `CreatedCount` int NOT NULL,
+  `ChangedCount` int NOT NULL,
+  `DuplicateCount` int NOT NULL,
+  `FailedItemCount` int NOT NULL,
+  `TotalRemoteCount` int NULL,
+  `RemainingEstimate` int NULL,
+  `StartedAt` datetime(6) NOT NULL,
+  `CompletedAt` datetime(6) NULL,
+  `Message` varchar(2000) CHARACTER SET utf8mb4 NOT NULL,
+  `CreatedAt` datetime(6) NOT NULL,
+  `UpdatedAt` datetime(6) NULL,
+  `TenantId` bigint NOT NULL,
+  PRIMARY KEY (`Id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+""");
+
+    await AddColumnIfMissingAsync(
+        tenantDb,
+        "bidops_crawl_channel",
+        "ScheduleMode",
+        "ALTER TABLE `bidops_crawl_channel` ADD COLUMN `ScheduleMode` varchar(32) CHARACTER SET utf8mb4 NOT NULL DEFAULT 'Interval';");
+
+    await AddColumnIfMissingAsync(
+        tenantDb,
+        "bidops_crawl_channel",
+        "ScanIntervalMinutes",
+        "ALTER TABLE `bidops_crawl_channel` ADD COLUMN `ScanIntervalMinutes` int NULL;");
+
+    await AddColumnIfMissingAsync(
+        tenantDb,
+        "bidops_crawl_channel",
+        "DailyScanTime",
+        "ALTER TABLE `bidops_crawl_channel` ADD COLUMN `DailyScanTime` varchar(16) CHARACTER SET utf8mb4 NOT NULL DEFAULT '';");
+
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_crawl_checkpoint",
+        "IX_bidops_crawl_checkpoint_Tenant_Channel_Mode",
+        "CREATE UNIQUE INDEX `IX_bidops_crawl_checkpoint_Tenant_Channel_Mode` ON `bidops_crawl_checkpoint` (`TenantId`, `ChannelId`, `Mode`);");
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_crawl_checkpoint",
+        "IX_bidops_crawl_checkpoint_Tenant_Source_Status_Run",
+        "CREATE INDEX `IX_bidops_crawl_checkpoint_Tenant_Source_Status_Run` ON `bidops_crawl_checkpoint` (`TenantId`, `SourceId`, `Status`, `LastRunAt`);");
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_crawl_run",
+        "IX_bidops_crawl_run_Tenant_Channel_Started",
+        "CREATE INDEX `IX_bidops_crawl_run_Tenant_Channel_Started` ON `bidops_crawl_run` (`TenantId`, `ChannelId`, `StartedAt`);");
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_crawl_run",
+        "IX_bidops_crawl_run_Tenant_Checkpoint_Started",
+        "CREATE INDEX `IX_bidops_crawl_run_Tenant_Checkpoint_Started` ON `bidops_crawl_run` (`TenantId`, `CheckpointId`, `StartedAt`);");
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_crawl_run",
+        "IX_bidops_crawl_run_Tenant_BackgroundJob",
+        "CREATE INDEX `IX_bidops_crawl_run_Tenant_BackgroundJob` ON `bidops_crawl_run` (`TenantId`, `BackgroundJobId`);");
+
+    Console.WriteLine("BidOps crawl progress local tables and channel schedule columns are ready.");
+}
+
+static async Task EnsureBidOpsAiSettingsTableAsync(string tenantConnection)
+{
+    await using var tenantDb = CreateTenantDbContext(tenantConnection);
+
+    await tenantDb.Database.ExecuteSqlRawAsync("""
+CREATE TABLE IF NOT EXISTS `bidops_runtime_setting` (
+  `Id` bigint NOT NULL,
+  `SettingKey` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+  `SettingValue` varchar(512) CHARACTER SET utf8mb4 NOT NULL,
+  `UpdatedByUserName` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+  `CreatedAt` datetime(6) NOT NULL,
+  `UpdatedAt` datetime(6) NULL,
+  `TenantId` bigint NOT NULL,
+  PRIMARY KEY (`Id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+""");
+
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_runtime_setting",
+        "IX_bidops_runtime_setting_TenantId",
+        "CREATE INDEX `IX_bidops_runtime_setting_TenantId` ON `bidops_runtime_setting` (`TenantId`);");
+
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_runtime_setting",
+        "IX_bidops_runtime_setting_TenantId_CreatedAt",
+        "CREATE INDEX `IX_bidops_runtime_setting_TenantId_CreatedAt` ON `bidops_runtime_setting` (`TenantId`, `CreatedAt`);");
+
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_runtime_setting",
+        "IX_bidops_runtime_setting_TenantId_SettingKey",
+        "CREATE UNIQUE INDEX `IX_bidops_runtime_setting_TenantId_SettingKey` ON `bidops_runtime_setting` (`TenantId`, `SettingKey`);");
+
+    Console.WriteLine("BidOps AI runtime settings local table is ready.");
+}
+
 static async Task CreateIndexIfMissingAsync(DbContext db, string tableName, string indexName, string createSql)
 {
     if (await IndexExistsAsync(db, tableName, indexName))
         return;
 
     await db.Database.ExecuteSqlRawAsync(createSql);
+}
+
+static async Task EnsureBidOpsRawNoticeBusinessIdentityAsync(DbContext db)
+{
+    if (!await TableExistsAsync(db, "bidops_raw_notice"))
+        return;
+
+    await db.Database.ExecuteSqlRawAsync("""
+UPDATE `bidops_raw_notice`
+SET `SourceNoticeId` = CONCAT('url:', `DetailUrlHash`)
+WHERE `SourceNoticeId` IS NULL
+   OR TRIM(`SourceNoticeId`) = ''
+   OR (`SourceNoticeId` NOT LIKE 'code:%' AND `SourceNoticeId` NOT LIKE 'url:%');
+""");
+
+    await db.Database.ExecuteSqlRawAsync("""
+UPDATE `bidops_raw_notice` r
+JOIN (
+    SELECT `TenantId`, `NoticeType`, `SourceNoticeId`, MIN(`Id`) AS `KeepId`
+    FROM `bidops_raw_notice`
+    GROUP BY `TenantId`, `NoticeType`, `SourceNoticeId`
+    HAVING COUNT(*) > 1
+) d
+  ON d.`TenantId` = r.`TenantId`
+ AND d.`NoticeType` = r.`NoticeType`
+ AND d.`SourceNoticeId` = r.`SourceNoticeId`
+SET r.`SourceNoticeId` = CONCAT(LEFT(r.`SourceNoticeId`, 96), ':legacy:', r.`Id`)
+WHERE r.`Id` <> d.`KeepId`;
+""");
+
+    try
+    {
+        await CreateIndexIfMissingAsync(
+            db,
+            "bidops_raw_notice",
+            "IX_bidops_raw_notice_TenantId_NoticeType_SourceNoticeId",
+            "CREATE UNIQUE INDEX `IX_bidops_raw_notice_TenantId_NoticeType_SourceNoticeId` ON `bidops_raw_notice` (`TenantId`, `NoticeType`, `SourceNoticeId`);");
+    }
+    catch (Exception ex) when (ex.Message.Contains("Specified key was too long", StringComparison.OrdinalIgnoreCase))
+    {
+        Console.WriteLine("Skipped raw notice business identity unique index; current local MySQL key length limit is too low for the existing utf8mb4 columns.");
+    }
 }
 
 static async Task<bool> AddColumnIfMissingAsync(DbContext db, string tableName, string columnName, string alterSql)
@@ -1191,11 +1458,502 @@ static async Task<long> CountTenantRowsAsync(DbContext db, string tableName, lon
     return Convert.ToInt64(result);
 }
 
-static async Task RepairBidOpsDataQualityAsync(string tenantConnection)
+static async Task<bool> TablesExistAsync(DbContext db, params string[] tableNames)
+{
+    foreach (var tableName in tableNames)
+    {
+        if (!await TableExistsAsync(db, tableName))
+        {
+            Console.WriteLine($"Skipped repair step; table {tableName} does not exist.");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static async Task<long> CountSqlAsync(DbContext db, string sql)
+{
+    var connection = db.Database.GetDbConnection();
+    if (connection.State != ConnectionState.Open)
+        await connection.OpenAsync();
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = sql;
+    var result = await command.ExecuteScalarAsync();
+    return Convert.ToInt64(result);
+}
+
+static async Task<int> ExecuteSqlAsync(DbContext db, string sql)
+{
+    var connection = db.Database.GetDbConnection();
+    if (connection.State != ConnectionState.Open)
+        await connection.OpenAsync();
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = sql;
+    return await command.ExecuteNonQueryAsync();
+}
+
+static async Task<int> RepairBidOpsOutcomeLotIdentityQualityAsync(DbContext tenantDb, long tenantId, bool dryRun)
+{
+    const string normalizedEvidenceLine = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(`EvidenceText`, '')), CHAR(13), ' '), CHAR(10), ' '), CHAR(9), ' '), '　', ' '), '  ', ' '), '  ', ' ')";
+    const string leadingLotNoValue = "CASE WHEN " + normalizedEvidenceLine + " REGEXP '^[[:space:]]*[0-9]+(([.、][[:space:]]+)|[[:space:]]+)[A-Za-z0-9]{3,}([-_/][A-Za-z0-9]{2,}){2,}[[:space:]]+' THEN SUBSTRING_INDEX(SUBSTRING_INDEX(" + normalizedEvidenceLine + ", ' ', 2), ' ', -1) ELSE SUBSTRING_INDEX(" + normalizedEvidenceLine + ", ' ', 1) END";
+    const string leadingLotNoPredicate = @"
+TRIM(COALESCE(`LotNo`, '')) = ''
+  AND " + normalizedEvidenceLine + @" REGEXP '^[[:space:]]*([0-9]+([.、]|[[:space:]]+)[[:space:]]*)?[A-Za-z0-9]{3,}([-_/][A-Za-z0-9]{2,}){2,}[[:space:]]+(包[[:space:]]*[A-Za-z0-9一二三四五六七八九十]+|第?[[:space:]]*[A-Za-z0-9一二三四五六七八九十]+[[:space:]]*包)'
+";
+
+    var affected = 0;
+    var missingLotFromEvidence = 0L;
+    var staleOutcomeIssues = 0L;
+    var resolvedLifecycleIssues = 0L;
+    var staleConflictNowMissingIssues = 0L;
+    var resolvedMissingLotIssues = 0L;
+    var reviewTaskSummaries = 0L;
+
+    if (await TablesExistAsync(tenantDb, "bidops_outcome_supplier_record"))
+    {
+        missingLotFromEvidence = await CountSqlAsync(tenantDb, $"""
+SELECT COUNT(1)
+FROM `bidops_outcome_supplier_record`
+WHERE `TenantId` = {tenantId}
+  AND {leadingLotNoPredicate};
+""");
+    }
+
+    if (await TablesExistAsync(tenantDb, "bidops_review_quality_issue", "bidops_outcome_supplier_record"))
+    {
+        staleOutcomeIssues = await CountSqlAsync(tenantDb, $"""
+SELECT COUNT(1)
+FROM `bidops_review_quality_issue` q
+LEFT JOIN `bidops_outcome_supplier_record` r
+  ON r.`Id` = q.`OutcomeSupplierRecordId`
+ AND r.`TenantId` = q.`TenantId`
+WHERE q.`TenantId` = {tenantId}
+  AND q.`OutcomeSupplierRecordId` IS NOT NULL
+  AND r.`Id` IS NULL;
+""");
+
+        resolvedMissingLotIssues = await CountSqlAsync(tenantDb, $"""
+SELECT COUNT(1)
+FROM `bidops_review_quality_issue` q
+JOIN `bidops_outcome_supplier_record` r
+  ON r.`Id` = q.`OutcomeSupplierRecordId`
+ AND r.`TenantId` = q.`TenantId`
+WHERE q.`TenantId` = {tenantId}
+  AND q.`IsResolved` = 0
+  AND q.`IssueType` = 'MissingLotOrPackage'
+  AND q.`OutcomeSupplierRecordId` IS NOT NULL
+  AND (
+    TRIM(COALESCE(r.`LotNo`, '')) <> ''
+    OR TRIM(COALESCE(r.`PackageNo`, '')) <> ''
+  );
+""");
+    }
+
+    if (await TablesExistAsync(
+            tenantDb,
+            "bidops_review_quality_issue",
+            "bidops_outcome_supplier_record",
+            "bidops_review_task",
+            "bidops_notice_staging",
+            "bidops_package_staging"))
+    {
+        resolvedLifecycleIssues = await CountSqlAsync(tenantDb, $"""
+SELECT COUNT(1)
+FROM (
+    SELECT q.`Id`
+    FROM `bidops_review_quality_issue` q
+    JOIN `bidops_outcome_supplier_record` r
+      ON r.`Id` = q.`OutcomeSupplierRecordId`
+     AND r.`TenantId` = q.`TenantId`
+    JOIN `bidops_review_task` t
+      ON t.`Id` = q.`ReviewTaskId`
+     AND t.`TenantId` = q.`TenantId`
+    JOIN `bidops_notice_staging` n
+      ON n.`Id` = t.`BizId`
+     AND n.`TenantId` = q.`TenantId`
+    JOIN `bidops_package_staging` p
+      ON p.`NoticeStagingId` = n.`Id`
+     AND p.`TenantId` = q.`TenantId`
+    WHERE q.`TenantId` = {tenantId}
+      AND q.`IsResolved` = 0
+      AND q.`IssueType` IN ('LifecycleMatchConflict', 'LifecycleMatchMissing')
+      AND q.`OutcomeSupplierRecordId` IS NOT NULL
+      AND t.`BizType` = 'NoticeStaging'
+      AND TRIM(COALESCE(r.`PackageNo`, '')) <> ''
+      AND UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`PackageNo`, '')), ' ', ''), '　', '')) =
+          UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`PackageNo`, '')), ' ', ''), '　', ''))
+      AND (
+        (
+          TRIM(COALESCE(r.`LotNo`, '')) <> ''
+          AND TRIM(COALESCE(p.`LotNo`, '')) <> ''
+          AND UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotNo`, '')), ' ', ''), '　', '')) =
+              UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotNo`, '')), ' ', ''), '　', ''))
+        )
+        OR (
+          TRIM(COALESCE(r.`LotName`, '')) <> ''
+          AND TRIM(COALESCE(p.`LotName`, '')) <> ''
+          AND UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotName`, '')), ' ', ''), '　', '')) =
+              UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotName`, '')), ' ', ''), '　', ''))
+        )
+      )
+      AND (
+        TRIM(COALESCE(r.`LotNo`, '')) = ''
+        OR TRIM(COALESCE(p.`LotNo`, '')) = ''
+        OR UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotNo`, '')), ' ', ''), '　', '')) =
+           UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotNo`, '')), ' ', ''), '　', ''))
+      )
+      AND (
+        TRIM(COALESCE(r.`LotName`, '')) = ''
+        OR TRIM(COALESCE(p.`LotName`, '')) = ''
+        OR UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotName`, '')), ' ', ''), '　', '')) =
+           UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotName`, '')), ' ', ''), '　', ''))
+      )
+    GROUP BY q.`Id`
+    HAVING COUNT(DISTINCT p.`Id`) = 1
+) resolved;
+""");
+
+        staleConflictNowMissingIssues = await CountSqlAsync(tenantDb, $"""
+SELECT COUNT(1)
+FROM `bidops_review_quality_issue` q
+JOIN `bidops_outcome_supplier_record` r
+  ON r.`Id` = q.`OutcomeSupplierRecordId`
+ AND r.`TenantId` = q.`TenantId`
+JOIN `bidops_review_task` t
+  ON t.`Id` = q.`ReviewTaskId`
+ AND t.`TenantId` = q.`TenantId`
+JOIN `bidops_notice_staging` n
+  ON n.`Id` = t.`BizId`
+ AND n.`TenantId` = q.`TenantId`
+WHERE q.`TenantId` = {tenantId}
+  AND q.`IsResolved` = 0
+  AND q.`IssueType` = 'LifecycleMatchConflict'
+  AND q.`OutcomeSupplierRecordId` IS NOT NULL
+  AND t.`BizType` = 'NoticeStaging'
+  AND TRIM(COALESCE(r.`PackageNo`, '')) <> ''
+  AND (
+    TRIM(COALESCE(r.`LotNo`, '')) <> ''
+    OR TRIM(COALESCE(r.`LotName`, '')) <> ''
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM `bidops_package_staging` p
+    WHERE p.`NoticeStagingId` = n.`Id`
+      AND p.`TenantId` = q.`TenantId`
+      AND TRIM(COALESCE(p.`PackageNo`, '')) <> ''
+      AND UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`PackageNo`, '')), ' ', ''), '　', '')) =
+          UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`PackageNo`, '')), ' ', ''), '　', ''))
+      AND (
+        (
+          TRIM(COALESCE(r.`LotNo`, '')) <> ''
+          AND TRIM(COALESCE(p.`LotNo`, '')) <> ''
+          AND UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotNo`, '')), ' ', ''), '　', '')) =
+              UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotNo`, '')), ' ', ''), '　', ''))
+        )
+        OR (
+          TRIM(COALESCE(r.`LotName`, '')) <> ''
+          AND TRIM(COALESCE(p.`LotName`, '')) <> ''
+          AND UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotName`, '')), ' ', ''), '　', '')) =
+              UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotName`, '')), ' ', ''), '　', ''))
+        )
+      )
+      AND (
+        TRIM(COALESCE(r.`LotNo`, '')) = ''
+        OR TRIM(COALESCE(p.`LotNo`, '')) = ''
+        OR UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotNo`, '')), ' ', ''), '　', '')) =
+           UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotNo`, '')), ' ', ''), '　', ''))
+      )
+      AND (
+        TRIM(COALESCE(r.`LotName`, '')) = ''
+        OR TRIM(COALESCE(p.`LotName`, '')) = ''
+        OR UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotName`, '')), ' ', ''), '　', '')) =
+           UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotName`, '')), ' ', ''), '　', ''))
+      )
+  );
+""");
+    }
+
+    if (await TablesExistAsync(tenantDb, "bidops_review_task"))
+    {
+        reviewTaskSummaries = await CountSqlAsync(tenantDb, $"""
+SELECT COUNT(1)
+FROM `bidops_review_task`
+WHERE `TenantId` = {tenantId};
+""");
+    }
+
+    Console.WriteLine("Outcome lot identity repair candidates:");
+    Console.WriteLine($"  outcome records missing LotNo but evidence starts with LotNo: {missingLotFromEvidence}");
+    Console.WriteLine($"  stale quality issues pointing to deleted outcome records: {staleOutcomeIssues}");
+    Console.WriteLine($"  package-match issues now uniquely resolvable by lot/package: {resolvedLifecycleIssues}");
+    Console.WriteLine($"  stale conflict issues now missing by lot/package: {staleConflictNowMissingIssues}");
+    Console.WriteLine($"  missing-lot/package issues already satisfied by current record: {resolvedMissingLotIssues}");
+    Console.WriteLine($"  review task summaries covered by recalculation: {reviewTaskSummaries}");
+
+    if (dryRun)
+        return 0;
+
+    if (missingLotFromEvidence > 0)
+    {
+        affected += await ExecuteSqlAsync(tenantDb, $"""
+UPDATE `bidops_outcome_supplier_record`
+SET
+  `LotNo` = LEFT({leadingLotNoValue}, 128),
+  `LotName` = CASE WHEN TRIM(COALESCE(`LotName`, '')) = '' THEN '未分标段' ELSE `LotName` END,
+  `UpdatedAt` = NOW(6)
+WHERE `TenantId` = {tenantId}
+  AND {leadingLotNoPredicate};
+""");
+    }
+
+    if (staleOutcomeIssues > 0)
+    {
+        affected += await ExecuteSqlAsync(tenantDb, $"""
+DELETE q
+FROM `bidops_review_quality_issue` q
+LEFT JOIN `bidops_outcome_supplier_record` r
+  ON r.`Id` = q.`OutcomeSupplierRecordId`
+ AND r.`TenantId` = q.`TenantId`
+WHERE q.`TenantId` = {tenantId}
+  AND q.`OutcomeSupplierRecordId` IS NOT NULL
+  AND r.`Id` IS NULL;
+""");
+    }
+
+    if (resolvedLifecycleIssues > 0)
+    {
+        affected += await ExecuteSqlAsync(tenantDb, $"""
+DELETE q
+FROM `bidops_review_quality_issue` q
+JOIN (
+    SELECT `Id`
+    FROM (
+        SELECT q.`Id`
+        FROM `bidops_review_quality_issue` q
+        JOIN `bidops_outcome_supplier_record` r
+          ON r.`Id` = q.`OutcomeSupplierRecordId`
+         AND r.`TenantId` = q.`TenantId`
+        JOIN `bidops_review_task` t
+          ON t.`Id` = q.`ReviewTaskId`
+         AND t.`TenantId` = q.`TenantId`
+        JOIN `bidops_notice_staging` n
+          ON n.`Id` = t.`BizId`
+         AND n.`TenantId` = q.`TenantId`
+        JOIN `bidops_package_staging` p
+          ON p.`NoticeStagingId` = n.`Id`
+         AND p.`TenantId` = q.`TenantId`
+        WHERE q.`TenantId` = {tenantId}
+          AND q.`IsResolved` = 0
+          AND q.`IssueType` IN ('LifecycleMatchConflict', 'LifecycleMatchMissing')
+          AND q.`OutcomeSupplierRecordId` IS NOT NULL
+          AND t.`BizType` = 'NoticeStaging'
+          AND TRIM(COALESCE(r.`PackageNo`, '')) <> ''
+          AND UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`PackageNo`, '')), ' ', ''), '　', '')) =
+              UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`PackageNo`, '')), ' ', ''), '　', ''))
+          AND (
+            (
+              TRIM(COALESCE(r.`LotNo`, '')) <> ''
+              AND TRIM(COALESCE(p.`LotNo`, '')) <> ''
+              AND UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotNo`, '')), ' ', ''), '　', '')) =
+                  UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotNo`, '')), ' ', ''), '　', ''))
+            )
+            OR (
+              TRIM(COALESCE(r.`LotName`, '')) <> ''
+              AND TRIM(COALESCE(p.`LotName`, '')) <> ''
+              AND UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotName`, '')), ' ', ''), '　', '')) =
+                  UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotName`, '')), ' ', ''), '　', ''))
+            )
+          )
+          AND (
+            TRIM(COALESCE(r.`LotNo`, '')) = ''
+            OR TRIM(COALESCE(p.`LotNo`, '')) = ''
+            OR UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotNo`, '')), ' ', ''), '　', '')) =
+               UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotNo`, '')), ' ', ''), '　', ''))
+          )
+          AND (
+            TRIM(COALESCE(r.`LotName`, '')) = ''
+            OR TRIM(COALESCE(p.`LotName`, '')) = ''
+            OR UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotName`, '')), ' ', ''), '　', '')) =
+               UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotName`, '')), ' ', ''), '　', ''))
+          )
+        GROUP BY q.`Id`
+        HAVING COUNT(DISTINCT p.`Id`) = 1
+    ) resolved_inner
+) resolved
+  ON resolved.`Id` = q.`Id`;
+""");
+    }
+
+    if (staleConflictNowMissingIssues > 0)
+    {
+        affected += await ExecuteSqlAsync(tenantDb, $"""
+UPDATE `bidops_review_quality_issue` q
+JOIN (
+    SELECT `Id`
+    FROM (
+        SELECT q.`Id`
+        FROM `bidops_review_quality_issue` q
+        JOIN `bidops_outcome_supplier_record` r
+          ON r.`Id` = q.`OutcomeSupplierRecordId`
+         AND r.`TenantId` = q.`TenantId`
+        JOIN `bidops_review_task` t
+          ON t.`Id` = q.`ReviewTaskId`
+         AND t.`TenantId` = q.`TenantId`
+        JOIN `bidops_notice_staging` n
+          ON n.`Id` = t.`BizId`
+         AND n.`TenantId` = q.`TenantId`
+        WHERE q.`TenantId` = {tenantId}
+          AND q.`IsResolved` = 0
+          AND q.`IssueType` = 'LifecycleMatchConflict'
+          AND q.`OutcomeSupplierRecordId` IS NOT NULL
+          AND t.`BizType` = 'NoticeStaging'
+          AND TRIM(COALESCE(r.`PackageNo`, '')) <> ''
+          AND (
+            TRIM(COALESCE(r.`LotNo`, '')) <> ''
+            OR TRIM(COALESCE(r.`LotName`, '')) <> ''
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM `bidops_package_staging` p
+            WHERE p.`NoticeStagingId` = n.`Id`
+              AND p.`TenantId` = q.`TenantId`
+              AND TRIM(COALESCE(p.`PackageNo`, '')) <> ''
+              AND UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`PackageNo`, '')), ' ', ''), '　', '')) =
+                  UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`PackageNo`, '')), ' ', ''), '　', ''))
+              AND (
+                (
+                  TRIM(COALESCE(r.`LotNo`, '')) <> ''
+                  AND TRIM(COALESCE(p.`LotNo`, '')) <> ''
+                  AND UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotNo`, '')), ' ', ''), '　', '')) =
+                      UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotNo`, '')), ' ', ''), '　', ''))
+                )
+                OR (
+                  TRIM(COALESCE(r.`LotName`, '')) <> ''
+                  AND TRIM(COALESCE(p.`LotName`, '')) <> ''
+                  AND UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotName`, '')), ' ', ''), '　', '')) =
+                      UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotName`, '')), ' ', ''), '　', ''))
+                )
+              )
+              AND (
+                TRIM(COALESCE(r.`LotNo`, '')) = ''
+                OR TRIM(COALESCE(p.`LotNo`, '')) = ''
+                OR UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotNo`, '')), ' ', ''), '　', '')) =
+                   UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotNo`, '')), ' ', ''), '　', ''))
+              )
+              AND (
+                TRIM(COALESCE(r.`LotName`, '')) = ''
+                OR TRIM(COALESCE(p.`LotName`, '')) = ''
+                OR UPPER(REPLACE(REPLACE(TRIM(COALESCE(p.`LotName`, '')), ' ', ''), '　', '')) =
+                   UPPER(REPLACE(REPLACE(TRIM(COALESCE(r.`LotName`, '')), ' ', ''), '　', ''))
+              )
+          )
+    ) stale_inner
+) stale
+  ON stale.`Id` = q.`Id`
+SET
+  q.`IssueType` = 'LifecycleMatchMissing',
+  q.`Severity` = 1,
+  q.`Message` = '中标/候选结果暂未匹配到采购公告包件，闭环分析可能缺少服务内容和资质要求。',
+  q.`UpdatedAt` = NOW(6);
+""");
+    }
+
+    if (resolvedMissingLotIssues > 0)
+    {
+        affected += await ExecuteSqlAsync(tenantDb, $"""
+DELETE q
+FROM `bidops_review_quality_issue` q
+JOIN `bidops_outcome_supplier_record` r
+  ON r.`Id` = q.`OutcomeSupplierRecordId`
+ AND r.`TenantId` = q.`TenantId`
+WHERE q.`TenantId` = {tenantId}
+  AND q.`IsResolved` = 0
+  AND q.`IssueType` = 'MissingLotOrPackage'
+  AND q.`OutcomeSupplierRecordId` IS NOT NULL
+  AND (
+    TRIM(COALESCE(r.`LotNo`, '')) <> ''
+    OR TRIM(COALESCE(r.`PackageNo`, '')) <> ''
+  );
+""");
+    }
+
+    if (reviewTaskSummaries > 0)
+    {
+        affected += await ExecuteSqlAsync(tenantDb, $"""
+UPDATE `bidops_review_task` t
+LEFT JOIN (
+    SELECT
+      `ReviewTaskId`,
+      COUNT(1) AS `IssueCount`,
+      SUM(CASE WHEN `Severity` = 2 THEN 1 ELSE 0 END) AS `HighCount`,
+      SUM(CASE
+        WHEN `Severity` = 2 THEN 30
+        WHEN `Severity` = 1 THEN 15
+        WHEN `Severity` = 0 THEN 5
+        ELSE 0
+      END) AS `Penalty`,
+      SUM(CASE
+        WHEN `IssueType` IN ('MissingLotOrPackage', 'AmbiguousAmountUnit', 'RateOrDiscountInAmountColumn', 'OriginalEvidenceMissing', 'DuplicatePackageIdentity')
+        THEN 1 ELSE 0
+      END) AS `ReparseCount`
+    FROM `bidops_review_quality_issue`
+    WHERE `TenantId` = {tenantId}
+      AND `IsResolved` = 0
+    GROUP BY `ReviewTaskId`
+) q
+  ON q.`ReviewTaskId` = t.`Id`
+SET
+  t.`QualityIssueCount` = COALESCE(q.`IssueCount`, 0),
+  t.`HighRiskIssueCount` = COALESCE(q.`HighCount`, 0),
+  t.`QualityScore` = GREATEST(0, 100 - COALESCE(q.`Penalty`, 0)),
+  t.`RiskLevel` = CASE
+    WHEN GREATEST(0, 100 - COALESCE(q.`Penalty`, 0)) < 60 OR COALESCE(q.`HighCount`, 0) > 0 THEN 2
+    WHEN GREATEST(0, 100 - COALESCE(q.`Penalty`, 0)) < 85 OR COALESCE(q.`IssueCount`, 0) > 0 THEN 1
+    ELSE 0
+  END,
+  t.`ReviewRecommendation` = CASE
+    WHEN COALESCE(q.`IssueCount`, 0) = 0 THEN 0
+    WHEN (
+      GREATEST(0, 100 - COALESCE(q.`Penalty`, 0)) < 60
+      OR COALESCE(q.`HighCount`, 0) > 0
+    ) AND COALESCE(q.`ReparseCount`, 0) > 0 THEN 2
+    ELSE 1
+  END,
+  t.`UpdatedAt` = NOW(6)
+WHERE t.`TenantId` = {tenantId};
+""");
+    }
+
+    return affected;
+}
+
+static async Task RepairBidOpsDataQualityAsync(string tenantConnection, string[] args)
 {
     await using var tenantDb = CreateTenantDbContext(tenantConnection);
     var affected = 0;
-    var tenantId = BidOpsTenantId;
+    var tenantIdText = GetOption(args, "--tenant-id");
+    var tenantId = long.TryParse(tenantIdText, out var parsedTenantId) && parsedTenantId > 0
+        ? parsedTenantId
+        : BidOpsTenantId;
+    var confirm = HasFlag(args, "--confirm");
+    var dryRun = !confirm || HasFlag(args, "--dry-run");
+
+    Console.WriteLine($"BidOps data quality repair for tenant {tenantId}.");
+    Console.WriteLine(dryRun
+        ? "Mode: dry-run. No rows will be changed. Add --confirm without --dry-run to execute."
+        : "Mode: confirmed repair.");
+
+    affected += await RepairBidOpsOutcomeLotIdentityQualityAsync(tenantDb, tenantId, dryRun);
+    if (dryRun)
+    {
+        Console.WriteLine("BidOps data quality repair dry-run completed.");
+        return;
+    }
+
+    await EnsureBidOpsRawNoticeBusinessIdentityAsync(tenantDb);
 
     affected += await ExecuteIfTableExistsAsync(tenantDb, "bidops_package_staging", $"""
 UPDATE `bidops_package_staging`
@@ -2362,6 +3120,31 @@ static string GetCommand(string[] args)
         .ToLowerInvariant() ?? "reset-demo";
 }
 
+static string FindRepositoryFile(string relativePath)
+{
+    var current = new DirectoryInfo(Directory.GetCurrentDirectory());
+    while (current != null)
+    {
+        var candidate = Path.Combine(current.FullName, relativePath);
+        if (File.Exists(candidate))
+            return candidate;
+
+        current = current.Parent;
+    }
+
+    current = new DirectoryInfo(AppContext.BaseDirectory);
+    while (current != null)
+    {
+        var candidate = Path.Combine(current.FullName, relativePath);
+        if (File.Exists(candidate))
+            return candidate;
+
+        current = current.Parent;
+    }
+
+    throw new FileNotFoundException($"Could not locate repository file '{relativePath}'.");
+}
+
 static void UpsertRange<TEntity>(DbContext db, params TEntity[] entities)
     where TEntity : BaseEntity
 {
@@ -2414,11 +3197,16 @@ Atlas.LocalSetup commands:
   ensure-background-job-cancellation Ensure local BackgroundJobs termination columns and diagnostic result storage exist.
   seed-bidops-state-grid Idempotently seed BidOps local runtime and enqueue public State Grid scan jobs.
   bidops-status     Print BidOps local job and data counts.
+  inspect-bidops-sgcc-notices Fetch public SGCC procurement detail URLs and print collectable fields as JSON.
   ensure-bidops-opportunities Ensure local BidOps opportunity tables exist for smoke testing.
   ensure-bidops-suppliers Ensure local BidOps supplier tables exist for smoke testing.
   ensure-bidops-matching Ensure local BidOps matching tables exist for smoke testing.
   ensure-bidops-pursuits Ensure local BidOps pursuit tables exist for smoke testing.
   ensure-bidops-outcomes Ensure local BidOps outcome supplier tables exist for smoke testing.
+  ensure-bidops-procurement-details Ensure local BidOps procurement detail and lifecycle link tables exist.
+  ensure-bidops-crawl-progress Ensure local BidOps crawl progress tables and channel schedule columns exist.
+  ensure-bidops-ai-settings Ensure local BidOps AI runtime setting table exists.
+  repair-bidops-data-quality Dry-run BidOps quality repair; add --confirm to update derived quality data.
   reset-bidops-derived-data Dry-run BidOps derived data cleanup; add --confirm to delete in dev DB.
   approve-bidops-pending Approve one pending BidOps review task in the local tenant.
   cancel-bidops-crawl-jobs Cancel pending/running local BidOps crawl jobs.
@@ -2427,9 +3215,10 @@ Atlas.LocalSetup commands:
 Options:
   --global <connection-string>  Overrides ATLAS_GLOBAL_CONNECTION.
   --tenant <connection-string>  Overrides ATLAS_TENANT_CONNECTION.
-  --tenant-id <id>              Tenant id for reset-bidops-derived-data; defaults to BidOps local tenant.
-  --dry-run                     Print derived data counts without deleting.
-  --confirm                     Required to delete derived data.
+  --tenant-id <id>              Tenant id for BidOps repair/reset commands; defaults to BidOps local tenant.
+  --url <detail-url>            Detail URL for inspect-bidops-sgcc-notices; may be repeated.
+  --dry-run                     Print BidOps repair/reset counts without changing data.
+  --confirm                     Required to update/delete BidOps derived quality data.
 """);
 }
 

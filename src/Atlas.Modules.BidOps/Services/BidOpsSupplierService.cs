@@ -37,6 +37,7 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICurrentIdentity _current;
     private readonly IIdGenerator _idGenerator;
+    private readonly IBidOpsRuntimeControlService _runtimeControl;
 
     public BidOpsSupplierService(
         IRepository<Supplier> suppliers,
@@ -53,7 +54,8 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
         IBackgroundJobClient jobs,
         IUnitOfWork unitOfWork,
         ICurrentIdentity current,
-        IIdGenerator idGenerator)
+        IIdGenerator idGenerator,
+        IBidOpsRuntimeControlService runtimeControl)
     {
         _suppliers = suppliers ?? throw new ArgumentNullException(nameof(suppliers));
         _contacts = contacts ?? throw new ArgumentNullException(nameof(contacts));
@@ -70,6 +72,7 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
         _current = current ?? throw new ArgumentNullException(nameof(current));
         _idGenerator = idGenerator ?? throw new ArgumentNullException(nameof(idGenerator));
+        _runtimeControl = runtimeControl ?? throw new ArgumentNullException(nameof(runtimeControl));
     }
 
     public async Task<PagedResult<SupplierDto>> SearchAsync(
@@ -458,6 +461,7 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
         int maxItems,
         CancellationToken ct = default)
     {
+        await _runtimeControl.EnsureTasksNotPausedAsync(ct);
         var tenant = _current.TenantId
             ?? throw new AtlasException("Tenant context is required for BidOps operations.");
         var userId = _current.UserId
@@ -499,13 +503,15 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
                     TenantId = tenant,
                     StoreId = _current.StoreId,
                     DeduplicationKey = $"bidops:outcome-supplier-extract:{tenant}:{raw.Id}:{backfillRunId}",
+                    Priority = BidOpsBackgroundJobPriorities.Manual,
                     MaxAttempts = 3,
                     Payload = new OutcomeSupplierExtractJobPayload(
                         tenant,
                         _current.StoreId,
                         userId,
                         _current.UserName,
-                        raw.Id)
+                        raw.Id,
+                        ProjectCode: BidOpsJobProjectCode.FromRawNotice(raw))
                 },
                 ct);
 
@@ -529,7 +535,7 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
         {
             Id = id,
             TenantId = tenantId,
-            SupplierNo = $"SUP-{now:yyyyMMdd}-{Math.Abs(id % 1_000_000):D6}",
+            SupplierNo = BidOpsBusinessNumberBuilder.Build("SUP", id, now),
             Name = Truncate(name, 300),
             UnifiedSocialCreditCode = Truncate(request.UnifiedSocialCreditCode, 64),
             Region = Truncate(request.Region, 128),

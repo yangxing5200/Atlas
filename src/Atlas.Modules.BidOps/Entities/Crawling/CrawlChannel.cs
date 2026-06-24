@@ -20,6 +20,12 @@ public sealed class CrawlChannel : BidOpsTenantEntity
 
     public bool Enabled { get; set; } = true;
 
+    public string ScheduleMode { get; set; } = BidOpsCrawlScheduleModes.Interval;
+
+    public int? ScanIntervalMinutes { get; set; }
+
+    public string DailyScanTime { get; set; } = string.Empty;
+
     public string ListItemSelector { get; set; } = string.Empty;
 
     public string TitleSelector { get; set; } = string.Empty;

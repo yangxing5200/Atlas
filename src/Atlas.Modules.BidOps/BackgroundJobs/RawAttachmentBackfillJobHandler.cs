@@ -92,6 +92,7 @@ public sealed class RawAttachmentBackfillJobHandler : IBackgroundJobHandler
                 var forceParseRunId = payload.ForceReparse
                     ? $"raw-attachment-backfill-{context.Job.Id}-{rawNoticeId.Value}"
                     : null;
+                var raw = await _rawNotices.GetByIdAsync(rawNoticeId.Value, ct);
                 await _jobs.EnqueueAsync(
                     new EnqueueBackgroundJobRequest<AttachmentProcessJobPayload>
                     {
@@ -100,7 +101,13 @@ public sealed class RawAttachmentBackfillJobHandler : IBackgroundJobHandler
                         JobName = "BidOps process backfilled raw notice attachments",
                         TenantId = payload.TenantId,
                         StoreId = payload.StoreId,
-                        DeduplicationKey = $"bidops:historical-attachment-process:{payload.TenantId}:{rawNoticeId.Value}:{context.Job.Id}",
+                        DeduplicationKey = payload.ForceReparse
+                            ? $"bidops:historical-attachment-process:{payload.TenantId}:{rawNoticeId.Value}:{context.Job.Id}"
+                            : BidOpsBackgroundJobDeduplicationKeys.AttachmentProcess(
+                                payload.TenantId,
+                                rawNoticeId.Value,
+                                raw?.ContentHash),
+                        Priority = context.Job.Priority,
                         MaxAttempts = 3,
                         Payload = new AttachmentProcessJobPayload(
                             payload.TenantId,

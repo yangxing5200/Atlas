@@ -5,6 +5,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Atlas.Modules.BidOps;
+using Atlas.Modules.BidOps.Ai.Evidence;
+using Atlas.Modules.BidOps.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -12,27 +14,100 @@ namespace Atlas.Modules.BidOps.Ai;
 
 public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionService
 {
+    private const int DeterministicReferenceMaxCharacters = 12_000;
+    private const int ComplexSourceAttachmentCount = 3;
+    private const int ComplexSourceCharacters = 60_000;
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         PropertyNameCaseInsensitive = true
     };
 
+    private const string NoticeExtractionJsonSchema = """
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "noticeType": { "type": "string" },
+    "projectName": { "type": "string" },
+    "projectCode": { "type": "string" },
+    "buyerName": { "type": "string" },
+    "agencyName": { "type": "string" },
+    "region": { "type": "string" },
+    "budgetAmount": { "type": ["number", "null"] },
+    "publishTime": { "type": ["string", "null"] },
+    "signupDeadline": { "type": ["string", "null"] },
+    "bidDeadline": { "type": ["string", "null"] },
+    "openBidTime": { "type": ["string", "null"] },
+    "confidence": { "type": "number" },
+    "packages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "lotNo": { "type": "string" },
+          "lotName": { "type": "string" },
+          "packageNo": { "type": "string" },
+          "packageName": { "type": "string" },
+          "category": { "type": "string" },
+          "quantity": { "type": ["number", "null"] },
+          "unit": { "type": "string" },
+          "budgetAmount": { "type": ["number", "null"] },
+          "maxPrice": { "type": ["number", "null"] },
+          "deliveryPlace": { "type": "string" },
+          "deliveryPeriod": { "type": "string" },
+          "confidence": { "type": "number" },
+          "requirements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "requirementType": { "type": "string" },
+                "originalText": { "type": "string" },
+                "sourcePage": { "type": ["integer", "null"] },
+                "isMandatory": { "type": "boolean" },
+                "isRejectRisk": { "type": "boolean" },
+                "requiredEvidenceType": { "type": "string" },
+                "riskLevel": { "type": "string" },
+                "aiExplanation": { "type": "string" },
+                "confidence": { "type": "number" }
+              },
+              "required": ["requirementType", "originalText", "sourcePage", "isMandatory", "isRejectRisk", "requiredEvidenceType", "riskLevel", "aiExplanation", "confidence"]
+            }
+          }
+        },
+        "required": ["lotNo", "lotName", "packageNo", "packageName", "category", "quantity", "unit", "budgetAmount", "maxPrice", "deliveryPlace", "deliveryPeriod", "confidence", "requirements"]
+      }
+    }
+  },
+  "required": ["noticeType", "projectName", "projectCode", "buyerName", "agencyName", "region", "budgetAmount", "publishTime", "signupDeadline", "bidDeadline", "openBidTime", "confidence", "packages"]
+}
+""";
+
     private readonly HttpClient _httpClient;
     private readonly IConfiguration _configuration;
     private readonly IBidOpsAiCallDiagnostics _diagnostics;
     private readonly ILogger<BidOpsStructuredExtractionService> _logger;
+    private readonly IBidOpsCodexCliClient? _codexCli;
+    private readonly IBidOpsAiSettingsService? _aiSettings;
 
     public BidOpsStructuredExtractionService(
         HttpClient httpClient,
         IConfiguration configuration,
         IBidOpsAiCallDiagnostics diagnostics,
-        ILogger<BidOpsStructuredExtractionService> logger)
+        ILogger<BidOpsStructuredExtractionService> logger,
+        IBidOpsCodexCliClient? codexCli = null,
+        IBidOpsAiSettingsService? aiSettings = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _codexCli = codexCli;
+        _aiSettings = aiSettings;
     }
 
     public async Task<BidOpsNoticeExtract> ExtractAsync(
@@ -51,9 +126,35 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
     {
         var sourceText = BuildDeterministicSourceText(request);
         var deterministic = BidOpsDeterministicNoticeParser.Extract(request.Title, sourceText);
-        if (!BidOpsAiHttpSettingsFactory.TryCreate(_configuration, BidOpsAiUse.NoticeStaging, out var settings))
+        var runtimeSettings = await ResolveRuntimeSettingsAsync(GetCodexCliScenario(request), cancellationToken);
+        if (BidOpsCodexCliSettingsFactory.TryCreate(
+            _configuration,
+            BidOpsAiUse.NoticeStaging,
+            runtimeSettings?.Provider,
+            runtimeSettings?.CodexCliModel,
+            runtimeSettings?.CodexCliReasoningEffort,
+            out var codexSettings))
         {
-            LogUnavailableSettings();
+            if (_codexCli == null)
+            {
+                _logger.LogWarning("BidOps structured Codex CLI extraction skipped because IBidOpsCodexCliClient is not registered.");
+                return deterministic;
+            }
+
+            try
+            {
+                return await ExtractWithCodexCliAsync(request, deterministic, codexSettings, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "BidOps structured Codex CLI extraction failed; deterministic extraction was used.");
+                return deterministic;
+            }
+        }
+
+        if (!BidOpsAiHttpSettingsFactory.TryCreate(_configuration, BidOpsAiUse.NoticeStaging, runtimeSettings?.Provider, out var settings))
+        {
+            LogUnavailableSettings(runtimeSettings?.Provider);
             return deterministic;
         }
 
@@ -68,9 +169,54 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
         }
     }
 
-    private void LogUnavailableSettings()
+    private async Task<BidOpsEffectiveAiRuntimeSettings?> ResolveRuntimeSettingsAsync(
+        string scenario,
+        CancellationToken ct)
     {
-        var diagnostics = BidOpsAiHttpSettingsFactory.Diagnose(_configuration, BidOpsAiUse.NoticeStaging);
+        if (_aiSettings == null)
+            return null;
+
+        try
+        {
+            var settings = await _aiSettings.GetSettingsAsync(ct);
+            var codexSettings = settings.CodexCliScenarios
+                .FirstOrDefault(x => x.Scenario.Equals(scenario, StringComparison.OrdinalIgnoreCase)) ??
+                settings.CodexCliScenarios.FirstOrDefault(x => x.Scenario.Equals(BidOpsCodexCliScenarios.Default, StringComparison.OrdinalIgnoreCase));
+            return new BidOpsEffectiveAiRuntimeSettings(
+                settings.EffectiveProvider,
+                codexSettings?.Model ?? settings.CodexCliModel,
+                codexSettings?.ReasoningEffort ?? settings.CodexCliReasoningEffort);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "BidOps structured AI runtime settings could not be read; appsettings provider/model/reasoning settings will be used.");
+            return null;
+        }
+    }
+
+    private static string GetCodexCliScenario(BidOpsNoticeAiExtractionRequest request)
+    {
+        if (!string.IsNullOrWhiteSpace(request.ReviewerPrompt))
+            return BidOpsCodexCliScenarios.ReviewerPrompt;
+
+        if (request.IsReparse)
+            return BidOpsCodexCliScenarios.ManualReparse;
+
+        return IsComplexSource(request)
+            ? BidOpsCodexCliScenarios.Complex
+            : BidOpsCodexCliScenarios.Default;
+    }
+
+    private static bool IsComplexSource(BidOpsNoticeAiExtractionRequest request)
+    {
+        var sourceCharacters = request.Text.Length + request.Attachments.Sum(x => x.Text.Length);
+        return request.Attachments.Count >= ComplexSourceAttachmentCount ||
+            sourceCharacters >= ComplexSourceCharacters;
+    }
+
+    private void LogUnavailableSettings(string? providerOverride)
+    {
+        var diagnostics = BidOpsAiHttpSettingsFactory.Diagnose(_configuration, BidOpsAiUse.NoticeStaging, providerOverride);
         var level = diagnostics.Enabled && diagnostics.UseEnabled ? LogLevel.Warning : LogLevel.Debug;
         _logger.Log(
             level,
@@ -200,12 +346,97 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
         return usable;
     }
 
+    private async Task<BidOpsNoticeExtract> ExtractWithCodexCliAsync(
+        BidOpsNoticeAiExtractionRequest request,
+        BidOpsNoticeExtract fallback,
+        BidOpsCodexCliSettings settings,
+        CancellationToken ct)
+    {
+        var prompt = BuildPrompt(request, Truncate(BuildSourceBundle(request), settings.MaxInputCharacters), fallback);
+        var stopwatch = Stopwatch.StartNew();
+        _logger.LogInformation(
+            "BidOps structured Codex CLI request started. provider={Provider}, binary={BinaryPath}, model={Model}, reasoningEffort={ReasoningEffort}, sandbox={Sandbox}, noticeTypeHint={NoticeTypeHint}, titleLength={TitleLength}, promptChars={PromptChars}, attachmentCount={AttachmentCount}.",
+            settings.Provider,
+            FormatEndpointForLog(settings.BinaryPath),
+            settings.Model,
+            settings.ReasoningEffort,
+            settings.Sandbox,
+            request.NoticeType,
+            request.Title.Length,
+            prompt.Length,
+            request.Attachments.Count);
+
+        var result = await _codexCli!.ExecuteJsonAsync(
+            BidOpsCodexCliSettingsFactory.CreateRequest(
+                settings,
+                BidOpsAiUse.NoticeStaging,
+                BuildCodexExtractionPrompt("公开招投标/采购公告结构化抽取", prompt),
+                NoticeExtractionJsonSchema),
+            ct);
+        stopwatch.Stop();
+
+        var content = BidOpsAiJsonLogging.ExtractJsonObjectOrRaw(result.AssistantContent);
+        var combinedResponse = CombineCodexOutput(result.Stdout, result.Stderr);
+        _diagnostics.Record(new BidOpsAiCallDiagnosticEntry(
+            BidOpsAiUse.NoticeStaging.ToString(),
+            settings.Provider,
+            settings.Model,
+            FormatEndpointForLog(settings.BinaryPath),
+            result.ExitCode == 0 ? 200 : result.ExitCode,
+            stopwatch.ElapsedMilliseconds,
+            combinedResponse.Length,
+            content.Length,
+            $"exit:{result.ExitCode}",
+            combinedResponse,
+            content));
+
+        _logger.LogInformation(
+            "BidOps structured Codex CLI response. exitCode={ExitCode}, elapsedMs={ElapsedMs}, stdoutChars={StdoutChars}, stderrChars={StderrChars}, assistantChars={AssistantChars}.",
+            result.ExitCode,
+            result.ElapsedMilliseconds,
+            result.Stdout.Length,
+            result.Stderr.Length,
+            content.Length);
+
+        if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(content))
+        {
+            _logger.LogWarning(
+                "BidOps structured Codex CLI request failed or returned empty content. provider={Provider}, model={Model}, binary={BinaryPath}, exitCode={ExitCode}, stderr={Stderr}.",
+                settings.Provider,
+                settings.Model,
+                FormatEndpointForLog(settings.BinaryPath),
+                result.ExitCode,
+                Truncate(result.Stderr, 2000));
+            return fallback;
+        }
+
+        var extracted = ParseAiJson(content, fallback);
+        var usable = EnsureUsable(extracted, fallback);
+        _logger.LogInformation(
+            "BidOps structured Codex CLI request completed. provider={Provider}, model={Model}, reasoningEffort={ReasoningEffort}, exitCode={ExitCode}, elapsedMs={ElapsedMs}, assistantChars={AssistantChars}, noticeType={NoticeType}, packageCount={PackageCount}, requirementCount={RequirementCount}.",
+            settings.Provider,
+            settings.Model,
+            settings.ReasoningEffort,
+            result.ExitCode,
+            result.ElapsedMilliseconds,
+            content.Length,
+            usable.NoticeType,
+            usable.Packages.Count,
+            usable.Packages.Sum(x => x.Requirements.Count));
+        return usable;
+    }
+
     private static string BuildPrompt(
         BidOpsNoticeAiExtractionRequest request,
         string sourceBundle,
         BidOpsNoticeExtract fallback)
     {
-        var fallbackJson = JsonSerializer.Serialize(fallback, JsonOptions);
+        var fallbackJson = Truncate(
+            JsonSerializer.Serialize(fallback, JsonOptions),
+            DeterministicReferenceMaxCharacters);
+        var reviewerPrompt = string.IsNullOrWhiteSpace(request.ReviewerPrompt)
+            ? "无"
+            : request.ReviewerPrompt.Trim();
         return $$"""
 输出限制：
 - 只返回一个 JSON 对象；第一个字符必须是 {，最后一个字符必须是 }。
@@ -259,6 +490,7 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
 - 只能使用公开公告正文、公告 HTML、附件提取文本中明确出现的事实。
 - 中文项目名、采购方、代理机构、分标/包件名称、资格要求等必须保持原文写法。
 - 不要编造采购方、代理机构、预算、包件、日期或资格要求；无法确认时用空字符串或 null。
+- budgetAmount 和 maxPrice 必须返回人民币元。任意金额列的表头、列名、单元格或紧邻说明明确写 `万元`、`万` 或 `/万元` 时，先乘以 10000 再返回；例如 `采购金额（万元）= 45.78`、`分项估算金额（万元）= 45.78`、`包估算金额（万元）= 45.78`、`行报价最高限价（含税/万元）= 45.78` 都返回 `457800`。没有明确金额单位时按元返回；百分比、折扣率、费率、税率、分值不要填入金额字段。
 - 如果没有明确包件表格，返回一个包件：packageNo 为空，packageName 使用 projectName。
 - 如公告中出现资格、截止时间、标书、质保、履约、否决/废标风险等要求，需要写入 requirements。
 - 根据公告类型、标题和内容判断字段重点：
@@ -268,6 +500,10 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
   - CorrectionAnnouncement 或 ChangeAnnouncement：只提取正文明确变更的公告级字段，以及受影响的包件/截止时间字段。
 - 公告正文 HTML 对 Word/HTML 表格（例如 MsoNormalTable）优先级最高。包件或资格要求在 PDF/Word/Excel/ZIP 附件中时，使用附件提取文本。
 - 下面是规则解析参考结果，只作为参考；如果公开原文更准确，以公开原文为准：{{fallbackJson}}
+- 如果“审核人员修正提示”和规则解析参考结果冲突，并且公告原文或附件支持审核人员修正提示，则优先按审核人员修正提示提取。
+
+审核人员修正提示：
+{{reviewerPrompt}}
 
 公告标题：
 {{request.Title}}
@@ -279,6 +515,31 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
 公开来源材料：
 {{sourceBundle}}
 """;
+    }
+
+    private static string BuildCodexExtractionPrompt(string taskName, string prompt)
+    {
+        return $$"""
+任务：{{taskName}}
+
+执行边界：
+- 只使用下面提供的公开来源材料和规则解析参考结果。
+- 不要读取工作目录文件，不要执行 shell 命令，不要联网搜索，不要修改任何文件。
+- 最终只输出符合 JSON Schema 的 JSON 对象，不要输出 Markdown、解释或代码块。
+
+{{prompt}}
+""";
+    }
+
+    private static string CombineCodexOutput(string stdout, string stderr)
+    {
+        if (string.IsNullOrWhiteSpace(stderr))
+            return stdout;
+
+        if (string.IsNullOrWhiteSpace(stdout))
+            return stderr;
+
+        return $"{stdout}{Environment.NewLine}{stderr}";
     }
 
     private static string FormatEndpointForLog(string endpoint)
@@ -381,8 +642,8 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
                     NormalizeCategory(GetString(item, "category")),
                     GetDecimal(item, "quantity"),
                     Trim(GetString(item, "unit"), 64),
-                    GetDecimal(item, "budgetAmount"),
-                    GetDecimal(item, "maxPrice"),
+                    GetAmount(item, "budgetAmount"),
+                    GetAmount(item, "maxPrice"),
                     Trim(GetString(item, "deliveryPlace"), 300),
                     Trim(GetString(item, "deliveryPeriod"), 200),
                     ClampConfidence(GetDecimal(item, "confidence") ?? 0.7m),
@@ -392,6 +653,8 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
 
         if (packages.Count == 0)
             packages.Add(fallback.Packages.First());
+        else
+            packages = ReconcilePackageAmountsWithFallback(packages, fallback.Packages);
 
         return new BidOpsNoticeExtract(
             Trim(EmptyToDefault(GetString(root, "noticeType"), fallback.NoticeType), 64),
@@ -400,7 +663,7 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
             Trim(GetString(root, "buyerName"), 300),
             Trim(GetString(root, "agencyName"), 300),
             Trim(GetString(root, "region"), 128),
-            GetDecimal(root, "budgetAmount"),
+            ReconcileAmountWithFallback(GetAmount(root, "budgetAmount"), fallback.BudgetAmount),
             GetDate(root, "publishTime"),
             GetDate(root, "signupDeadline"),
             GetDate(root, "bidDeadline"),
@@ -464,6 +727,83 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
         return decimal.TryParse(GetString(element, name), NumberStyles.Number, CultureInfo.InvariantCulture, out number)
             ? number
             : null;
+    }
+
+    private static decimal? GetAmount(JsonElement element, string name)
+    {
+        if (!TryGetProperty(element, name, out var value) || value.ValueKind == JsonValueKind.Null)
+            return null;
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out var number))
+            return number;
+
+        return BidOpsMoneyNormalizer.TryNormalize(GetString(element, name));
+    }
+
+    private static List<BidOpsPackageExtract> ReconcilePackageAmountsWithFallback(
+        IReadOnlyList<BidOpsPackageExtract> packages,
+        IReadOnlyList<BidOpsPackageExtract> fallbackPackages)
+    {
+        var reconciled = new List<BidOpsPackageExtract>(packages.Count);
+        foreach (var package in packages)
+        {
+            var fallback = FindFallbackPackage(package, fallbackPackages);
+            reconciled.Add(fallback == null
+                ? package
+                : package with
+                {
+                    BudgetAmount = ReconcileAmountWithFallback(package.BudgetAmount, fallback.BudgetAmount),
+                    MaxPrice = ReconcileAmountWithFallback(package.MaxPrice, fallback.MaxPrice)
+                });
+        }
+
+        return reconciled;
+    }
+
+    private static BidOpsPackageExtract? FindFallbackPackage(
+        BidOpsPackageExtract package,
+        IReadOnlyList<BidOpsPackageExtract> fallbackPackages)
+    {
+        var exact = fallbackPackages.FirstOrDefault(candidate =>
+            !string.IsNullOrWhiteSpace(package.LotNo) &&
+            !string.IsNullOrWhiteSpace(package.PackageNo) &&
+            string.Equals(NormalizeMatchKey(candidate.LotNo), NormalizeMatchKey(package.LotNo), StringComparison.Ordinal) &&
+            string.Equals(NormalizeMatchKey(candidate.PackageNo), NormalizeMatchKey(package.PackageNo), StringComparison.Ordinal));
+        if (exact != null)
+            return exact;
+
+        var sameName = fallbackPackages.FirstOrDefault(candidate =>
+            !string.IsNullOrWhiteSpace(package.PackageName) &&
+            string.Equals(NormalizeMatchKey(candidate.PackageName), NormalizeMatchKey(package.PackageName), StringComparison.Ordinal));
+        if (sameName != null)
+            return sameName;
+
+        if (fallbackPackages.Count == 1)
+            return fallbackPackages[0];
+
+        return null;
+    }
+
+    private static decimal? ReconcileAmountWithFallback(decimal? amount, decimal? fallback)
+    {
+        if (!fallback.HasValue || fallback.Value <= 0)
+            return amount;
+
+        if (!amount.HasValue || amount.Value <= 0)
+            return fallback;
+
+        var tenThousandNormalized = Math.Round(amount.Value * 10_000m, 2);
+        return Math.Abs(tenThousandNormalized - fallback.Value) <= 0.01m
+            ? fallback
+            : amount;
+    }
+
+    private static string NormalizeMatchKey(string value)
+    {
+        return string.Concat(value
+            .Where(ch => !char.IsWhiteSpace(ch) &&
+                         ch is not '|' and not ':' and not '：' and not '-' and not '_' and not '(' and not ')' and not '（' and not '）'))
+            .ToLowerInvariant();
     }
 
     private static int? GetNullableInt(JsonElement element, string name)
@@ -557,6 +897,11 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
     {
         return value.Length <= maxLength ? value : value[..maxLength];
     }
+
+    private sealed record BidOpsEffectiveAiRuntimeSettings(
+        string Provider,
+        string CodexCliModel,
+        string CodexCliReasoningEffort);
 }
 
 public static partial class BidOpsDeterministicNoticeParser
@@ -1129,4 +1474,5 @@ public static partial class BidOpsDeterministicNoticeParser
                 .ToLowerInvariant();
         }
     }
+
 }

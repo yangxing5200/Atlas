@@ -88,11 +88,11 @@ builder.Services.AddAtlasCore(builder.Configuration);
 | `CancellationRequestedAt` / `CancellationRequestedBy` / `CancellationReason` | 运营侧终止请求信息。 |
 | `LastError` / `Result` | 运维排障信息。 |
 
-`BackgroundJobs` 历史列名中仍保留 `Utc` 后缀，避免破坏既有迁移和索引；当前任务生命周期写入使用服务器本地时间（`DateTime.Now`）。运维 API 同时返回无 `Utc` 后缀的本地时间字段，例如 `availableAt`、`startedAt`、`completedAt`、`nextAttemptAt`，前端应优先展示这些字段。`xxxAtUtc` 字段仅作为兼容旧调用的别名保留。
+`BackgroundJobs` 历史列名中仍保留 `Utc` 后缀，避免破坏既有迁移和索引；当前任务生命周期写入使用服务器本地时间（`DateTime.Now`）。运维 API 同时返回无 `Utc` 后缀的本地时间字段，例如 `availableAt`、`startedAt`、`completedAt`、`nextAttemptAt`，前端应优先展示这些字段。`xxxAtUtc` 字段仅作为兼容旧调用的别名保留。后台任务列表支持通过 `SortBy=CompletedAt` 和 `SortDescending=true/false` 按完成时间排序，未完成任务会排在已完成任务之后。
 
 运营侧取消采用协作终止语义。`Pending` / `Failed` / `Dead` 任务会立即落成 `Canceled`；`Running` 任务会先写入 `CancellationRequestedAt`、请求人和原因，并在运维 API 中返回 `isCancellationRequested=true`。Worker 会轮询当前任务的终止请求并取消传给 handler 的 `CancellationToken`；handler 因该 token 退出后，任务才最终标记为 `Canceled` 并清空锁定信息。后台任务处理器必须把 `CancellationToken` 继续传给 HTTP、文件、数据库、AI、延迟等待等耗时调用，不能依赖强杀线程来停止工作。
 
-Worker 默认把 handler 的 `Result` 截到 4000 字符，避免普通任务把全局任务表变成大文本存储。确实需要排障明细的 handler 可以在 `BackgroundJobExecutionResult.Success` 中显式传入更大的 `maxResultCharacters`；运维详情 API 默认仍只返回 20000 字符。BidOps DeepSeek/OpenAI-compatible 解析任务是当前例外：它们把 `deepSeekResponses` 写入 `Result`，包括 provider/model/status、原始 response body 和 assistant content，但不保存请求体、Authorization header 或 API key；详情页会单独展示 `DeepSeek 返回`。
+Worker 默认把 handler 的 `Result` 截到 4000 字符，避免普通任务把全局任务表变成大文本存储。确实需要排障明细的 handler 可以在 `BackgroundJobExecutionResult.Success` 中显式传入更大的 `maxResultCharacters`；运维详情 API 默认仍只返回 20000 字符。BidOps AI 解析任务是当前例外：它们把 AI 响应诊断写入历史兼容字段 `deepSeekResponses`，包括 provider/model/status、原始 response body 和 assistant content，但不保存请求体、Authorization header 或 API key；详情页会单独展示 `AI 返回`。
 
 Claim 是数据库原子更新，支持多 worker 并发：
 
@@ -145,6 +145,30 @@ WHERE Id = @jobId
 | `worker-maintenance` | `[ "maintenance" ]` | 清理、补偿、报表等维护任务。 |
 
 吞吐上涨时，优先通过增加同队列 worker 实例扩容；业务隔离不足时，再拆队列。
+
+如果只想让某些 Worker 消费指定任务类型，可以配置 `IncludedJobTypes` / `ExcludedJobTypes`。例如新增一台只跑 BidOps AI 解析的机器：
+
+```json
+{
+  "BackgroundTasks": {
+    "OneTimeJobs": {
+      "Enabled": true,
+      "Queues": [ "bidops" ],
+      "MaxConcurrency": 4,
+      "IncludedJobTypes": [
+        "bidops.ai.structured-parse",
+        "bidops.outcome.supplier-extract"
+      ],
+      "JobTypeConcurrency": {
+        "bidops.ai.structured-parse": 2,
+        "bidops.outcome.supplier-extract": 2
+      }
+    }
+  }
+}
+```
+
+跨机器消费同一队列时，每台 Worker 必须使用不同的 Snowflake `WorkerId` / `DatacenterId`，并指向同一套 Global/Tenant 数据库。BidOps 当前本地文件存储模式还要求所有会处理附件、文本抽取或依赖文件内容的 Worker 能访问同一份 `BidOps:FileStore:LocalRootPath`；否则应先切到共享目录、MinIO 或 S3 兼容存储。AI 专用 Worker 仍需要安装并配置相同的 AI Provider，例如 Codex CLI 或 DeepSeek API Key。
 
 ## Demo: 租户缓存预热
 

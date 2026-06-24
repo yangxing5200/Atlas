@@ -182,7 +182,7 @@ internal static partial class BidOpsEvidenceText
     {
         return TrimProjectCode(ExtractFirst(
             text,
-            @"(?:项目编号|采购编号|招标编号|批次编号|采购项目编号|招标项目编号|项目采购编号|招标采购编号|PURPRJ_CODE|PROJECT_CODE|BID_BATCH_CODE)\s*(?:[（(][^）)]{1,40}[）)])?\s*[:：=]\s*(?<value>[A-Za-z0-9_.\-/（）()]{3,100})"));
+            @"(?:项目编号|项目编码|项目代码|采购编号|招标编号|批次编号|采购项目编号|招标项目编号|项目采购编号|招标采购编号|PURPRJ_CODE|PROJECT_CODE|ProjectCode|BID_BATCH_CODE)[^\S\r\n]*(?:[（(][^）)]{1,40}[）)])?[^\S\r\n]*[:：=][^\S\r\n]*(?<value>[A-Za-z0-9_.\-/（）()]{3,100})"));
     }
 
     public static string ExtractLotNo(string? text)

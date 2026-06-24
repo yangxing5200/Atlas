@@ -41,7 +41,7 @@ public static class BidOpsWrappedOutcomeTableParser
             return [];
 
         var projectCode = BidOpsEvidenceText.ExtractProjectCode(source);
-        var projectName = FirstNonEmpty(BidOpsEvidenceText.ExtractProjectName(source), title);
+        var projectName = BidOpsEvidenceText.ExtractProjectName(source);
         var amountUnit = InferAmountUnit(lines);
         var results = new List<BidOpsOutcomeSupplierExtract>();
         var inOutcomeSection = false;

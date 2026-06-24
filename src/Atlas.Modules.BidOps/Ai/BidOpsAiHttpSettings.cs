@@ -105,6 +105,39 @@ internal static class BidOpsAiJsonLogging
 
         return string.Empty;
     }
+
+    public static string ExtractJsonObjectOrRaw(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var trimmed = StripJsonFence(value.Trim());
+        var firstObject = trimmed.IndexOf('{');
+        var lastObject = trimmed.LastIndexOf('}');
+        if (firstObject >= 0 && lastObject > firstObject)
+            return trimmed[firstObject..(lastObject + 1)].Trim();
+
+        var firstArray = trimmed.IndexOf('[');
+        var lastArray = trimmed.LastIndexOf(']');
+        if (firstArray >= 0 && lastArray > firstArray)
+            return trimmed[firstArray..(lastArray + 1)].Trim();
+
+        return trimmed;
+    }
+
+    private static string StripJsonFence(string value)
+    {
+        if (!value.StartsWith("```", StringComparison.Ordinal))
+            return value;
+
+        var firstLineEnd = value.IndexOf('\n');
+        if (firstLineEnd < 0)
+            return value;
+
+        var body = value[(firstLineEnd + 1)..];
+        var lastFence = body.LastIndexOf("```", StringComparison.Ordinal);
+        return lastFence >= 0 ? body[..lastFence].Trim() : body.Trim();
+    }
 }
 
 internal static class BidOpsAiHttpSettingsFactory
@@ -112,13 +145,14 @@ internal static class BidOpsAiHttpSettingsFactory
     public static bool TryCreate(
         IConfiguration configuration,
         BidOpsAiUse use,
+        string? providerOverride,
         out BidOpsAiHttpSettings settings)
     {
         settings = default!;
-        if (!configuration.GetValue<bool>("BidOps:Ai:Enabled") || !IsEnabledForUse(configuration, use))
+        var provider = FirstNonEmpty(providerOverride, configuration["BidOps:Ai:Provider"], "CodexCli");
+        if (!configuration.GetValue<bool>("BidOps:Ai:Enabled") || !IsEnabledForUse(configuration, use, provider))
             return false;
 
-        var provider = FirstNonEmpty(configuration["BidOps:Ai:Provider"], "OpenAICompatible");
         if (!IsSupportedProvider(provider))
             return false;
 
@@ -150,16 +184,17 @@ internal static class BidOpsAiHttpSettingsFactory
 
     public static BidOpsAiHttpSettingsDiagnostics Diagnose(
         IConfiguration configuration,
-        BidOpsAiUse use)
+        BidOpsAiUse use,
+        string? providerOverride = null)
     {
-        var provider = FirstNonEmpty(configuration["BidOps:Ai:Provider"], "OpenAICompatible");
+        var provider = FirstNonEmpty(providerOverride, configuration["BidOps:Ai:Provider"], "CodexCli");
         var apiKey = ResolveApiKey(configuration);
         var model = FirstNonEmpty(configuration["BidOps:Ai:Model"], DefaultModel(provider));
         var endpoint = ResolveEndpoint(configuration, provider);
 
         return new BidOpsAiHttpSettingsDiagnostics(
             configuration.GetValue<bool>("BidOps:Ai:Enabled"),
-            IsEnabledForUse(configuration, use),
+            IsEnabledForUse(configuration, use, provider),
             provider.Trim(),
             IsSupportedProvider(provider),
             ResolveApiKeySource(configuration),
@@ -168,22 +203,28 @@ internal static class BidOpsAiHttpSettingsFactory
             !string.IsNullOrWhiteSpace(endpoint));
     }
 
-    private static bool IsEnabledForUse(IConfiguration configuration, BidOpsAiUse use)
+    public static bool TryCreate(
+        IConfiguration configuration,
+        BidOpsAiUse use,
+        out BidOpsAiHttpSettings settings)
+    {
+        return TryCreate(configuration, use, providerOverride: null, out settings);
+    }
+
+    private static bool IsEnabledForUse(IConfiguration configuration, BidOpsAiUse use, string provider)
     {
         return use switch
         {
             BidOpsAiUse.NoticeStaging => configuration.GetValue<bool?>("BidOps:Ai:UseForNoticeStaging") ?? true,
-            BidOpsAiUse.OutcomeSuppliers => configuration.GetValue<bool?>("BidOps:Ai:UseForOutcomeSuppliers") ?? IsDeepSeek(configuration),
+            BidOpsAiUse.OutcomeSuppliers => configuration.GetValue<bool?>("BidOps:Ai:UseForOutcomeSuppliers") ?? IsDeepSeekLike(provider),
             _ => false
         };
     }
 
-    private static bool IsDeepSeek(IConfiguration configuration)
+    private static bool IsDeepSeekLike(string provider)
     {
-        return string.Equals(
-            configuration["BidOps:Ai:Provider"],
-            "DeepSeek",
-            StringComparison.OrdinalIgnoreCase);
+        return string.Equals(provider, "DeepSeek", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(provider, "OpenAICompatible", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsSupportedProvider(string provider)

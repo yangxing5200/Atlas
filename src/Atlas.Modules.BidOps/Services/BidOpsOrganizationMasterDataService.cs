@@ -135,11 +135,12 @@ public sealed class BidOpsOrganizationMasterDataService : IBidOpsOrganizationMas
             if (!map.TryGetValue(normalized, out var buyer))
             {
                 var id = _idGenerator.NextId();
+                var now = DateTime.UtcNow;
                 buyer = new Buyer
                 {
                     Id = id,
                     TenantId = tenantId,
-                    BuyerNo = BuildNo("BUY", id),
+                    BuyerNo = BidOpsBusinessNumberBuilder.Build("BUY", id, now),
                     Name = Truncate(name, 300),
                     NameNormalized = Truncate(normalized, 191),
                     Region = Truncate(latest.Region, 128),
@@ -150,7 +151,7 @@ public sealed class BidOpsOrganizationMasterDataService : IBidOpsOrganizationMas
                     LastSeenAtUtc = latest.PublishTime ?? latest.CreatedAt,
                     Status = BidOpsBuyerStatuses.Active,
                     Remark = "Auto-created from public BidOps outcome/candidate notice.",
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = now
                 };
                 await _buyers.AddAsync(buyer, tenantId, ct);
                 map[normalized] = buyer;
@@ -205,11 +206,12 @@ public sealed class BidOpsOrganizationMasterDataService : IBidOpsOrganizationMas
             if (!map.TryGetValue(normalized, out var supplier))
             {
                 var id = _idGenerator.NextId();
+                var now = DateTime.UtcNow;
                 supplier = new Supplier
                 {
                     Id = id,
                     TenantId = tenantId,
-                    SupplierNo = BuildNo("SUP", id),
+                    SupplierNo = BidOpsBusinessNumberBuilder.Build("SUP", id, now),
                     Name = Truncate(name, 300),
                     Region = Truncate(latest.Region, 128),
                     Status = BidOpsSupplierStatuses.Active,
@@ -222,7 +224,7 @@ public sealed class BidOpsOrganizationMasterDataService : IBidOpsOrganizationMas
                     LastOutcomeNoticeId = latest.NoticeId,
                     LastOutcomeNoticeTitle = Truncate(latest.NoticeTitle, 500),
                     LastOutcomeAtUtc = latest.PublishTime ?? latest.CreatedAt,
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = now
                 };
                 await _suppliers.AddAsync(supplier, tenantId, ct);
                 map[normalized] = supplier;
@@ -428,7 +430,7 @@ public sealed class BidOpsOrganizationMasterDataService : IBidOpsOrganizationMas
         record.NoticeId = notice.Id;
         record.NoticeTitle = string.IsNullOrWhiteSpace(record.NoticeTitle) ? Truncate(notice.Title, 500) : record.NoticeTitle;
         record.NoticeType = string.IsNullOrWhiteSpace(record.NoticeType) ? Truncate(notice.NoticeType, 64) : record.NoticeType;
-        record.ProjectName = FirstMeaningful(record.ProjectName, notice.ProjectName, notice.Title);
+        record.ProjectName = FirstMeaningful(record.ProjectName, notice.ProjectName);
         record.ProjectCode = FirstMeaningful(record.ProjectCode, notice.ProjectCode);
         record.BuyerName = FirstMeaningful(record.BuyerName, notice.BuyerName);
         record.Region = FirstMeaningful(record.Region, notice.Region);
@@ -442,7 +444,10 @@ public sealed class BidOpsOrganizationMasterDataService : IBidOpsOrganizationMas
             record.LotNo = FirstMeaningful(record.LotNo, package.LotNo);
             record.LotName = FirstMeaningful(record.LotName, package.LotName);
             record.PackageNo = FirstMeaningful(record.PackageNo, package.PackageNo);
-            record.PackageName = FirstMeaningful(record.PackageName, package.PackageName);
+            record.PackageName = FirstPackageNameDistinctFromProject(
+                record.ProjectName,
+                record.PackageName,
+                package.PackageName);
             record.Category = FirstMeaningful(record.Category, package.Category);
         }
     }
@@ -509,11 +514,6 @@ public sealed class BidOpsOrganizationMasterDataService : IBidOpsOrganizationMas
                !string.Equals(normalized, "详见附件", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string BuildNo(string prefix, long id)
-    {
-        return $"{prefix}-{DateTime.UtcNow:yyyyMMdd}-{Math.Abs(id % 1_000_000):D6}";
-    }
-
     private static string ComputeSourceHash(params string[] values)
     {
         var joined = string.Join('\u001f', values.Select(x => x ?? string.Empty));
@@ -533,6 +533,30 @@ public sealed class BidOpsOrganizationMasterDataService : IBidOpsOrganizationMas
         return string.Empty;
     }
 
+    private static string FirstPackageNameDistinctFromProject(string? projectName, params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+            if (!string.IsNullOrWhiteSpace(cleaned) &&
+                !BidOpsTextQuality.IsUnknownMarker(cleaned) &&
+                !IsSameMeaningfulValue(cleaned, projectName))
+            {
+                return cleaned;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static bool IsSameMeaningfulValue(string? left, string? right)
+    {
+        var normalizedLeft = NormalizeLooseText(left);
+        var normalizedRight = NormalizeLooseText(right);
+        return !string.IsNullOrWhiteSpace(normalizedLeft) &&
+               string.Equals(normalizedLeft, normalizedRight, StringComparison.Ordinal);
+    }
+
     private static string NormalizeCode(string? value)
     {
         var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
@@ -541,6 +565,18 @@ public sealed class BidOpsOrganizationMasterDataService : IBidOpsOrganizationMas
 
         return new string(cleaned
                 .Where(x => !char.IsWhiteSpace(x) && !":：,，;；".Contains(x))
+                .ToArray())
+            .ToUpperInvariant();
+    }
+
+    private static string NormalizeLooseText(string? value)
+    {
+        var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+        if (string.IsNullOrWhiteSpace(cleaned))
+            return string.Empty;
+
+        return new string(cleaned
+                .Where(x => !char.IsWhiteSpace(x) && !"　:：,，;；。.!！".Contains(x))
                 .ToArray())
             .ToUpperInvariant();
     }

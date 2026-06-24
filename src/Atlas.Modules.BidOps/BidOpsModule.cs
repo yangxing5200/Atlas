@@ -7,6 +7,7 @@ using Atlas.Modules.BidOps.Ai;
 using Atlas.Modules.BidOps.BackgroundJobs;
 using Atlas.Modules.BidOps.Crawling;
 using Atlas.Modules.BidOps.Documents;
+using Atlas.Modules.BidOps.Entities;
 using Atlas.Modules.BidOps.Entities.Buyers;
 using Atlas.Modules.BidOps.Entities.Crawling;
 using Atlas.Modules.BidOps.Entities.Matching;
@@ -36,8 +37,12 @@ public sealed class BidOpsModule : AtlasModule
         context.Services.AddScoped<IBidOpsCrawlService, BidOpsCrawlService>();
         context.Services.AddScoped<IBidOpsRawIngestionService, BidOpsRawIngestionService>();
         context.Services.AddScoped<IBidOpsAiParsingService, BidOpsAiParsingService>();
+        context.Services.AddScoped<IBidOpsAiSettingsService, BidOpsAiSettingsService>();
+        context.Services.AddScoped<IBidOpsRuntimeControlService, BidOpsRuntimeControlService>();
         context.Services.AddScoped<IBidOpsAiCallDiagnostics, BidOpsAiCallDiagnostics>();
+        context.Services.AddScoped<IBidOpsCodexCliClient, BidOpsCodexCliClient>();
         context.Services.AddScoped<IBidOpsReviewService, BidOpsReviewService>();
+        context.Services.AddScoped<IBidOpsReviewQualityService, BidOpsReviewQualityService>();
         context.Services.AddScoped<IBidOpsOpportunityService, BidOpsOpportunityService>();
         context.Services.AddScoped<IBidOpsOpportunityMaintenanceService, BidOpsOpportunityMaintenanceService>();
         context.Services.AddScoped<IBidOpsSupplierService, BidOpsSupplierService>();
@@ -71,6 +76,8 @@ public sealed class BidOpsModule : AtlasModule
         context.Services.TryAddEnumerable(
             ServiceDescriptor.Singleton<IBidOpsCrawlAdapter, StateGridEcpCrawlAdapter>());
         context.Services.TryAddEnumerable(
+            ServiceDescriptor.Scoped<IBackgroundJobExecutionGate, BidOpsBackgroundJobExecutionGate>());
+        context.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IBackgroundJobHandler, ManualUrlImportJobHandler>());
         context.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IBackgroundJobHandler, RawAttachmentBackfillJobHandler>());
@@ -98,6 +105,8 @@ public sealed class BidOpsModule : AtlasModule
             ServiceDescriptor.Scoped<IBackgroundJobHandler, SupplierMatchRunJobHandler>());
         context.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IBackgroundJobHandler, OutcomeSupplierExtractJobHandler>());
+        context.Services.TryAddEnumerable(
+            ServiceDescriptor.Scoped<IBackgroundJobHandler, ReviewQualityBackfillJobHandler>());
         context.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IRecurringTask, BidOpsScheduledScanTask>());
         context.Services.TryAddEnumerable(
@@ -440,6 +449,11 @@ public sealed class BidOpsModule : AtlasModule
                 "BidOps dashboard",
                 supportedScopes: new[] { AtlasDataScopeType.AllTenant })
             .AddDataResource(
+                BidOpsDataResources.RuntimeSetting,
+                "BidOps runtime setting",
+                entityType: typeof(BidOpsRuntimeSetting).FullName,
+                supportedScopes: new[] { AtlasDataScopeType.AllTenant })
+            .AddDataResource(
                 BidOpsDataResources.CrawlSource,
                 "BidOps crawl source",
                 entityType: typeof(CrawlSource).FullName,
@@ -448,6 +462,11 @@ public sealed class BidOpsModule : AtlasModule
                 BidOpsDataResources.CrawlRunLog,
                 "BidOps crawl run log",
                 entityType: typeof(CrawlRunLog).FullName,
+                supportedScopes: new[] { AtlasDataScopeType.AllTenant })
+            .AddDataResource(
+                BidOpsDataResources.CrawlCheckpoint,
+                "BidOps crawl checkpoint",
+                entityType: typeof(CrawlCheckpoint).FullName,
                 supportedScopes: new[] { AtlasDataScopeType.AllTenant })
             .AddDataResource(
                 BidOpsDataResources.RawNotice,

@@ -27,7 +27,15 @@ public interface IBidOpsQueryService
 
     Task<PagedResult<ReviewTaskDto>> SearchReviewTasksAsync(ReviewTaskSearchQuery query, CancellationToken ct = default);
 
+    Task<ReviewCorrectionAnalysisDto> GetReviewCorrectionAnalysisAsync(
+        ReviewCorrectionAnalysisQuery query,
+        CancellationToken ct = default);
+
+    Task<ReviewEfficiencyMetricsDto> GetReviewEfficiencyMetricsAsync(CancellationToken ct = default);
+
     Task<PagedResult<ProcessingFailureDto>> SearchProcessingFailuresAsync(ProcessingFailureSearchQuery query, CancellationToken ct = default);
+
+    Task<IReadOnlyList<long>> GetReviewTaskBackgroundJobIdsAsync(long id, CancellationToken ct = default);
 
     Task<ReviewTaskDetailDto?> GetReviewTaskDetailAsync(long id, CancellationToken ct = default);
 

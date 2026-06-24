@@ -29,6 +29,20 @@ public enum ReviewTaskStatus
     ReparseRequired = 5
 }
 
+public enum ReviewQualityRiskLevel
+{
+    Low = 0,
+    Medium = 1,
+    High = 2
+}
+
+public enum ReviewRecommendation
+{
+    BatchConfirmCandidate = 0,
+    NeedsReview = 1,
+    NeedsReparse = 2
+}
+
 public enum DownloadStatus
 {
     Pending = 0,

@@ -20,17 +20,20 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
     private readonly IBidOpsOutcomeSupplierExtractionService _extraction;
     private readonly IBidOpsAiCallDiagnostics _diagnostics;
     private readonly ILogger<OutcomeSupplierExtractJobHandler> _logger;
+    private readonly IBackgroundJobProgressReporter? _progress;
 
     public OutcomeSupplierExtractJobHandler(
         IExecutionIdentityAccessor identityAccessor,
         IBidOpsOutcomeSupplierExtractionService extraction,
         IBidOpsAiCallDiagnostics diagnostics,
-        ILogger<OutcomeSupplierExtractJobHandler> logger)
+        ILogger<OutcomeSupplierExtractJobHandler> logger,
+        IBackgroundJobProgressReporter? progress = null)
     {
         _identityAccessor = identityAccessor ?? throw new ArgumentNullException(nameof(identityAccessor));
         _extraction = extraction ?? throw new ArgumentNullException(nameof(extraction));
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _progress = progress;
     }
 
     public string JobType => BidOpsBackgroundJobTypes.OutcomeSupplierExtract;
@@ -42,7 +45,13 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
         var payload = context.GetPayload<OutcomeSupplierExtractJobPayload>();
         using var identity = BidOpsJobIdentity.Begin(_identityAccessor, payload);
 
-        var result = await _extraction.ExtractRawNoticeAsync(payload.RawNoticeId, payload.ReviewerPrompt, ct);
+        var result = await RunWithProgressAsync(
+            context,
+            "outcome-supplier-extract",
+            "AI 正在重新抽取中标/候选厂家线索",
+            token => _extraction.ExtractRawNoticeAsync(payload.RawNoticeId, payload.ReviewerPrompt, token),
+            payload,
+            ct);
         _logger.LogInformation(
             "BidOps outcome supplier extract job saved {SavedCount} records for raw notice {RawNoticeId}; reviewerPrompt={HasReviewerPrompt}.",
             result.SavedCount,
@@ -52,6 +61,7 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
         return BackgroundJobExecutionResult.Success(JsonSerializer.Serialize(new
         {
             rawNoticeId = payload.RawNoticeId,
+            projectCode = payload.ProjectCode,
             result.IsOutcomeNotice,
             result.ExtractedCount,
             result.SavedCount,
@@ -61,7 +71,33 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
             result.SupplierUpdatedCount,
             result.Message,
             reviewerPrompt = !string.IsNullOrWhiteSpace(payload.ReviewerPrompt),
+            aiResponses = _diagnostics.Entries,
             deepSeekResponses = _diagnostics.Entries
         }, JsonOptions), BackgroundJobResultStorageLimits.AiDiagnosticsMaxCharacters);
+    }
+
+    private Task<TResult> RunWithProgressAsync<TResult>(
+        BackgroundJobExecutionContext context,
+        string stage,
+        string message,
+        Func<CancellationToken, Task<TResult>> operation,
+        OutcomeSupplierExtractJobPayload payload,
+        CancellationToken ct)
+    {
+        if (_progress == null)
+            return operation(ct);
+
+        return _progress.RunWithHeartbeatAsync(
+            context.Job.Id,
+            stage,
+            message,
+            operation,
+            new Dictionary<string, object?>
+            {
+                ["rawNoticeId"] = payload.RawNoticeId,
+                ["projectCode"] = payload.ProjectCode,
+                ["reviewerPrompt"] = !string.IsNullOrWhiteSpace(payload.ReviewerPrompt)
+            },
+            ct);
     }
 }

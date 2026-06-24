@@ -20,6 +20,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
     private const string BidOpsModuleName = "BidOps";
     private const string BidOpsStructuredParseJobType = "bidops.ai.structured-parse";
     private const string BidOpsOutcomeSupplierExtractJobType = "bidops.outcome.supplier-extract";
+    private const int BidOpsManualRetryPriority = 100;
 
     private readonly AtlasGlobalDbContext _dbContext;
     private readonly ICurrentIdentity _currentIdentity;
@@ -53,10 +54,42 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
         var builder = BuildQuery(query, bidOpsOnly, now).AsNoTracking();
 
         var total = await builder.CountAsync(ct);
-        var jobs = await builder
-            .OrderByDescending(x => x.Status == BackgroundJobStatus.Running)
-            .ThenByDescending(x => x.Status == BackgroundJobStatus.Pending)
-            .ThenByDescending(x => x.CreatedAt)
+        var jobs = await ApplyOrdering(builder, query)
+            .Skip((pageIndex - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return new PagedResult<BackgroundJobListItemDto>(
+            total,
+            jobs.Select(job => MapListItem(job, now)).ToList(),
+            pageIndex,
+            pageSize);
+    }
+
+    public async Task<PagedResult<BackgroundJobListItemDto>> SearchByIdsAsync(
+        IReadOnlyCollection<long> jobIds,
+        BackgroundJobSearchQuery query,
+        bool bidOpsOnly = false,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(jobIds);
+        var (pageIndex, pageSize) = NormalizePaging(query);
+        var normalizedIds = jobIds
+            .Where(x => x > 0)
+            .Distinct()
+            .Take(500)
+            .ToArray();
+        if (normalizedIds.Length == 0)
+            return new PagedResult<BackgroundJobListItemDto>(0, [], pageIndex, pageSize);
+
+        var now = DateTime.Now;
+        var builder = BuildQuery(query, bidOpsOnly, now)
+            .Where(x => normalizedIds.Contains(x.Id))
+            .AsNoTracking();
+
+        var total = await builder.CountAsync(ct);
+        var jobs = await ApplyOrdering(builder, query)
             .Skip((pageIndex - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(ct);
@@ -206,7 +239,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             StoreId = original.StoreId,
             Payload = original.Payload,
             Status = BackgroundJobStatus.Pending,
-            Priority = original.Priority,
+            Priority = bidOpsOnly ? Math.Max(original.Priority, BidOpsManualRetryPriority) : original.Priority,
             AvailableAtUtc = now,
             MaxAttempts = Math.Max(1, original.MaxAttempts > 0 ? original.MaxAttempts : _workerOptions.DefaultMaxAttempts),
             CreatedAt = now
@@ -272,10 +305,35 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
 
         if (job.Status == BackgroundJobStatus.Running)
         {
+            if (request.Force)
+            {
+                job.Status = BackgroundJobStatus.Canceled;
+                job.CompletedAtUtc = now;
+                job.NextAttemptAtUtc = null;
+                job.LockedAtUtc = null;
+                job.LockedBy = null;
+                job.CancellationRequestedAt ??= now;
+                job.CancellationRequestedBy = requestedBy;
+                job.CancellationReason = reason;
+                job.Result = BuildCancellationResult(reason, requested: false, force: true);
+                job.UpdatedAt = now;
+
+                await _dbContext.SaveChangesAsync(ct);
+
+                return new BackgroundJobCancelResultDto
+                {
+                    JobId = job.Id,
+                    Status = job.Status,
+                    StatusName = job.Status.ToString(),
+                    IsCancellationRequested = false,
+                    Message = "任务已强制终止。若处理器仍在执行外部 I/O，Worker 会通过取消令牌尽快停止并不会再覆盖取消状态。"
+                };
+            }
+
             job.CancellationRequestedAt ??= now;
             job.CancellationRequestedBy = requestedBy;
             job.CancellationReason = reason;
-            job.Result = BuildCancellationResult(reason, requested: true);
+            job.Result = BuildCancellationResult(reason, requested: true, force: false);
             job.UpdatedAt = now;
 
             await _dbContext.SaveChangesAsync(ct);
@@ -298,7 +356,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
         job.CancellationRequestedAt ??= now;
         job.CancellationRequestedBy = requestedBy;
         job.CancellationReason = reason;
-        job.Result = BuildCancellationResult(reason, requested: false);
+        job.Result = BuildCancellationResult(reason, requested: false, force: request.Force);
         job.UpdatedAt = now;
 
         await _dbContext.SaveChangesAsync(ct);
@@ -337,6 +395,14 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
         {
             var jobType = query.JobType.Trim();
             builder = builder.Where(x => x.JobType.Contains(jobType));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.ProjectCode))
+        {
+            var projectCode = query.ProjectCode.Trim();
+            builder = builder.Where(x =>
+                x.Payload.Contains(projectCode) ||
+                (x.Result != null && x.Result.Contains(projectCode)));
         }
 
         if (!string.IsNullOrWhiteSpace(query.SourceModule))
@@ -380,6 +446,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
                     x.JobType.Contains(keyword) ||
                     x.Queue.Contains(keyword) ||
                     x.JobName.Contains(keyword) ||
+                    x.Payload.Contains(keyword) ||
                     (x.DeduplicationKey != null && x.DeduplicationKey.Contains(keyword)) ||
                     (x.LastError != null && x.LastError.Contains(keyword)) ||
                     (x.Result != null && x.Result.Contains(keyword)));
@@ -411,6 +478,42 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
         }
 
         return builder;
+    }
+
+    private static IOrderedQueryable<BackgroundJob> ApplyOrdering(
+        IQueryable<BackgroundJob> query,
+        BackgroundJobSearchQuery searchQuery)
+    {
+        if (IsCompletedAtSort(searchQuery.SortBy))
+        {
+            var ordered = searchQuery.SortDescending == false
+                ? query
+                    .OrderBy(x => x.CompletedAtUtc == null)
+                    .ThenBy(x => x.CompletedAtUtc)
+                : query
+                    .OrderBy(x => x.CompletedAtUtc == null)
+                    .ThenByDescending(x => x.CompletedAtUtc);
+
+            return ordered
+                .ThenByDescending(x => x.Status == BackgroundJobStatus.Running)
+                .ThenByDescending(x => x.Status == BackgroundJobStatus.Pending)
+                .ThenByDescending(x => x.CreatedAt);
+        }
+
+        return query
+            .OrderByDescending(x => x.Status == BackgroundJobStatus.Running)
+            .ThenByDescending(x => x.Status == BackgroundJobStatus.Pending)
+            .ThenByDescending(x => x.CreatedAt);
+    }
+
+    private static bool IsCompletedAtSort(string? sortBy)
+    {
+        if (string.IsNullOrWhiteSpace(sortBy))
+            return false;
+
+        var normalized = sortBy.Trim();
+        return normalized.Equals(nameof(BackgroundJobListItemDto.CompletedAt), StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals(nameof(BackgroundJobListItemDto.CompletedAtUtc), StringComparison.OrdinalIgnoreCase);
     }
 
     private IQueryable<BackgroundJob> ApplyTenantScope(
@@ -449,6 +552,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             JobTypeName = BackgroundJobDisplayNames.ForJobType(job.JobType),
             Queue = job.Queue,
             JobName = job.JobName,
+            ProjectCode = ExtractProjectCode(job),
             DeduplicationKey = job.DeduplicationKey,
             TenantId = job.TenantId,
             StoreId = job.StoreId,
@@ -494,6 +598,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             JobTypeName = item.JobTypeName,
             Queue = item.Queue,
             JobName = item.JobName,
+            ProjectCode = item.ProjectCode,
             DeduplicationKey = item.DeduplicationKey,
             TenantId = item.TenantId,
             StoreId = item.StoreId,
@@ -580,9 +685,11 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
         return string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
     }
 
-    private static string BuildCancellationResult(string? reason, bool requested)
+    private static string BuildCancellationResult(string? reason, bool requested, bool force)
     {
-        var prefix = requested
+        var prefix = force
+            ? "Force canceled by operator."
+            : requested
             ? "Cancellation requested by operator."
             : "Canceled by operator.";
 
@@ -615,6 +722,80 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             return null;
 
         return milliseconds.Value / 1000;
+    }
+
+    private static string ExtractProjectCode(BackgroundJob job)
+    {
+        return FirstMeaningful(
+            ExtractJsonString(job.Payload, "projectCode"),
+            ExtractJsonString(job.Result, "projectCode"));
+    }
+
+    private static string ExtractJsonString(string? json, string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return string.Empty;
+
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            var value = ExtractJsonString(document.RootElement, propertyName);
+            return string.IsNullOrWhiteSpace(value) ? ExtractProjectCodeFromText(json) : value;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return ExtractProjectCodeFromText(json);
+        }
+    }
+
+    private static string ExtractJsonString(System.Text.Json.JsonElement element, string propertyName)
+    {
+        if (element.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase) &&
+                    property.Value.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    return property.Value.GetString()?.Trim() ?? string.Empty;
+                }
+
+                var nested = ExtractJsonString(property.Value, propertyName);
+                if (!string.IsNullOrWhiteSpace(nested))
+                    return nested;
+            }
+        }
+
+        if (element.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                var nested = ExtractJsonString(item, propertyName);
+                if (!string.IsNullOrWhiteSpace(nested))
+                    return nested;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string ExtractProjectCodeFromText(string text)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(
+            text,
+            "(?:projectCode|ProjectCode|采购编号|采购项目编号|项目编号)\\s*[\"'=:=：]?\\s*\"?(?<value>[A-Za-z0-9_.\\-_/（）()]{3,128})");
+        return match.Success ? match.Groups["value"].Value.Trim().Trim('"') : string.Empty;
+    }
+
+    private static string FirstMeaningful(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        }
+
+        return string.Empty;
     }
 
     private static int CountStatus(

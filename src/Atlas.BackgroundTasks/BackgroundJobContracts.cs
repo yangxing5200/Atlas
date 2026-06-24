@@ -24,7 +24,12 @@ public sealed class BackgroundJobWorkerOptions
     public string[] Queues { get; set; } = [BackgroundJobQueues.Default];
     public int PollIntervalSeconds { get; set; } = 5;
     public int BatchSize { get; set; } = 20;
+    public int MaxConcurrency { get; set; } = 1;
+    public Dictionary<string, int> JobTypeConcurrency { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public string[] IncludedJobTypes { get; set; } = [];
+    public string[] ExcludedJobTypes { get; set; } = [];
     public int ProcessingTimeoutSeconds { get; set; } = 300;
+    public int MaxRunningSeconds { get; set; } = 7200;
     public int CancellationCheckIntervalSeconds { get; set; } = 2;
     public int InitialRetryDelaySeconds { get; set; } = 10;
     public int MaxRetryDelaySeconds { get; set; } = 300;
@@ -119,6 +124,34 @@ public interface IBackgroundJobClient
         CancellationToken ct = default);
 
     Task<BackgroundJob?> FindAsync(long jobId, CancellationToken ct = default);
+}
+
+public sealed record BackgroundJobExecutionGateDecision(
+    bool IsAllowed,
+    string Reason = "",
+    DateTime? DeferUntil = null)
+{
+    public static BackgroundJobExecutionGateDecision Allow()
+    {
+        return new BackgroundJobExecutionGateDecision(true);
+    }
+
+    public static BackgroundJobExecutionGateDecision Defer(
+        string reason,
+        DateTime? deferUntil = null)
+    {
+        return new BackgroundJobExecutionGateDecision(false, reason, deferUntil);
+    }
+}
+
+/// <summary>
+/// Allows modules to temporarily defer background jobs before handler execution.
+/// </summary>
+public interface IBackgroundJobExecutionGate
+{
+    Task<BackgroundJobExecutionGateDecision> EvaluateAsync(
+        BackgroundJob job,
+        CancellationToken ct = default);
 }
 
 /// <summary>

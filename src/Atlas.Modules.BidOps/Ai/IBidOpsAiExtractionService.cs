@@ -55,7 +55,9 @@ public sealed record BidOpsNoticeAiExtractionRequest(
     DateTime? PublishTime,
     string Text,
     string Html,
-    IReadOnlyList<BidOpsAiAttachmentInput> Attachments);
+    IReadOnlyList<BidOpsAiAttachmentInput> Attachments,
+    string? ReviewerPrompt = null,
+    bool IsReparse = false);
 
 public interface IBidOpsAiExtractionService
 {

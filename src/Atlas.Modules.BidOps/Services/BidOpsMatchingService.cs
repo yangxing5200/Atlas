@@ -35,6 +35,7 @@ public sealed class BidOpsMatchingService : IBidOpsMatchingService
     private readonly IBackgroundJobClient _jobs;
     private readonly ICurrentIdentity _current;
     private readonly IIdGenerator _idGenerator;
+    private readonly IBidOpsRuntimeControlService _runtimeControl;
 
     public BidOpsMatchingService(
         IRepository<SupplierMatchRun> runs,
@@ -51,7 +52,8 @@ public sealed class BidOpsMatchingService : IBidOpsMatchingService
         IUnitOfWork unitOfWork,
         IBackgroundJobClient jobs,
         ICurrentIdentity current,
-        IIdGenerator idGenerator)
+        IIdGenerator idGenerator,
+        IBidOpsRuntimeControlService runtimeControl)
     {
         _runs = runs ?? throw new ArgumentNullException(nameof(runs));
         _results = results ?? throw new ArgumentNullException(nameof(results));
@@ -68,6 +70,7 @@ public sealed class BidOpsMatchingService : IBidOpsMatchingService
         _jobs = jobs ?? throw new ArgumentNullException(nameof(jobs));
         _current = current ?? throw new ArgumentNullException(nameof(current));
         _idGenerator = idGenerator ?? throw new ArgumentNullException(nameof(idGenerator));
+        _runtimeControl = runtimeControl ?? throw new ArgumentNullException(nameof(runtimeControl));
     }
 
     public async Task<StartSupplierMatchRunResponse> StartSupplierMatchRunAsync(
@@ -75,6 +78,7 @@ public sealed class BidOpsMatchingService : IBidOpsMatchingService
         StartSupplierMatchRunRequest request,
         CancellationToken ct = default)
     {
+        await _runtimeControl.EnsureTasksNotPausedAsync(ct);
         var tenantId = RequireTenantId();
         var userId = RequireUserId();
         var package = await GetPackageAsync(packageId, tracking: false, ct)
@@ -111,6 +115,7 @@ public sealed class BidOpsMatchingService : IBidOpsMatchingService
                     TenantId = tenantId,
                     StoreId = _current.StoreId,
                     DeduplicationKey = $"bidops:matching:supplier-match-run:{tenantId}:{runId}",
+                    Priority = BidOpsBackgroundJobPriorities.Manual,
                     MaxAttempts = 3,
                     Payload = new SupplierMatchRunJobPayload(
                         tenantId,

@@ -45,6 +45,9 @@ public sealed class AttachmentProcessJobHandler : IBackgroundJobHandler
             ct);
         var raw = await _rawNotices.GetByIdAsync(payload.RawNoticeId, ct);
         var contentHash = raw?.ContentHash ?? "unknown";
+        var projectCode = BidOpsJobProjectCode.FirstMeaningful(
+            payload.ProjectCode,
+            BidOpsJobProjectCode.FromRawNotice(raw));
         var parseDeduplicationKey = string.IsNullOrWhiteSpace(payload.ForceParseRunId)
             ? $"bidops:structured-parse:{BidOpsSystemValues.StructuredParserVersion}:{payload.TenantId}:{payload.RawNoticeId}:{contentHash}"
             : $"bidops:structured-parse:{BidOpsSystemValues.StructuredParserVersion}:{payload.TenantId}:{payload.RawNoticeId}:manual-reparse:{payload.ForceParseRunId}";
@@ -60,13 +63,16 @@ public sealed class AttachmentProcessJobHandler : IBackgroundJobHandler
                 TenantId = payload.TenantId,
                 StoreId = payload.StoreId,
                 DeduplicationKey = parseDeduplicationKey,
+                Priority = context.Job.Priority,
                 Payload = new StructuredParseJobPayload(
                     payload.TenantId,
                     payload.StoreId,
                     payload.UserId,
                     payload.UserName,
                     payload.RawNoticeId,
-                    payload.ForceParseRunId)
+                    payload.ForceParseRunId,
+                    payload.ReviewerPrompt,
+                    projectCode)
             },
             ct);
 
@@ -79,6 +85,6 @@ public sealed class AttachmentProcessJobHandler : IBackgroundJobHandler
             result.Failed);
 
         return BackgroundJobExecutionResult.Success(
-            $"rawNoticeId={result.RawNoticeId};attachments={result.Total};downloaded={result.Downloaded};extracted={result.Extracted};failed={result.Failed}");
+            $"rawNoticeId={result.RawNoticeId};projectCode={projectCode};attachments={result.Total};downloaded={result.Downloaded};extracted={result.Extracted};failed={result.Failed}");
     }
 }

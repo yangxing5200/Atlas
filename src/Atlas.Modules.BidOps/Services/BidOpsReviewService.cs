@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Atlas.BackgroundTasks;
 using Atlas.Core.Exceptions;
 using Atlas.Core.IdGenerators;
@@ -17,6 +18,8 @@ namespace Atlas.Modules.BidOps.Services;
 
 public sealed class BidOpsReviewService : IBidOpsReviewService
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
     private readonly IRepository<ReviewTask> _reviewTasks;
     private readonly IRepository<NoticeStaging> _noticeStaging;
     private readonly IRepository<PackageStaging> _packageStaging;
@@ -26,12 +29,14 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
     private readonly IRepository<TenderPackage> _packages;
     private readonly IRepository<RequirementItem> _requirements;
     private readonly IRepository<OutcomeSupplierRecord> _outcomeRecords;
+    private readonly IRepository<ReviewCorrectionSample> _correctionSamples;
     private readonly IBidOpsOrganizationMasterDataService _organizationMasterData;
     private readonly IBidOpsOutcomeSupplierExtractionService _outcomeSupplierExtraction;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IBackgroundJobClient _jobs;
     private readonly ICurrentIdentity _identity;
     private readonly IIdGenerator _idGenerator;
+    private readonly IBidOpsRuntimeControlService _runtimeControl;
 
     public BidOpsReviewService(
         IRepository<ReviewTask> reviewTasks,
@@ -43,12 +48,14 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         IRepository<TenderPackage> packages,
         IRepository<RequirementItem> requirements,
         IRepository<OutcomeSupplierRecord> outcomeRecords,
+        IRepository<ReviewCorrectionSample> correctionSamples,
         IBidOpsOrganizationMasterDataService organizationMasterData,
         IBidOpsOutcomeSupplierExtractionService outcomeSupplierExtraction,
         IUnitOfWork unitOfWork,
         IBackgroundJobClient jobs,
         ICurrentIdentity identity,
-        IIdGenerator idGenerator)
+        IIdGenerator idGenerator,
+        IBidOpsRuntimeControlService runtimeControl)
     {
         _reviewTasks = reviewTasks ?? throw new ArgumentNullException(nameof(reviewTasks));
         _noticeStaging = noticeStaging ?? throw new ArgumentNullException(nameof(noticeStaging));
@@ -59,12 +66,14 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         _packages = packages ?? throw new ArgumentNullException(nameof(packages));
         _requirements = requirements ?? throw new ArgumentNullException(nameof(requirements));
         _outcomeRecords = outcomeRecords ?? throw new ArgumentNullException(nameof(outcomeRecords));
+        _correctionSamples = correctionSamples ?? throw new ArgumentNullException(nameof(correctionSamples));
         _organizationMasterData = organizationMasterData ?? throw new ArgumentNullException(nameof(organizationMasterData));
         _outcomeSupplierExtraction = outcomeSupplierExtraction ?? throw new ArgumentNullException(nameof(outcomeSupplierExtraction));
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
         _jobs = jobs ?? throw new ArgumentNullException(nameof(jobs));
         _identity = identity ?? throw new ArgumentNullException(nameof(identity));
         _idGenerator = idGenerator ?? throw new ArgumentNullException(nameof(idGenerator));
+        _runtimeControl = runtimeControl ?? throw new ArgumentNullException(nameof(runtimeControl));
     }
 
     public async Task<NoticeDto> ApproveAsync(
@@ -79,6 +88,171 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         return await _unitOfWork.ExecuteInTransactionAsync(
             token => ApproveCoreAsync(reviewTaskId, request, token),
             ct);
+    }
+
+    public async Task<BulkReviewTaskActionResultDto> BulkApproveAsync(
+        BulkApproveReviewTasksRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var ids = NormalizeReviewTaskIds(request.ReviewTaskIds);
+        var result = new BulkReviewTaskActionResultDto { RequestedCount = ids.Count };
+        if (!TryParseEnum<ReviewQualityRiskLevel>(request.ExpectedRiskLevel, out var expectedRiskLevel))
+            expectedRiskLevel = ReviewQualityRiskLevel.Low;
+
+        foreach (var id in ids)
+        {
+            try
+            {
+                var task = await GetTaskForUpdateAsync(id, ct);
+                if (task.Status is not (ReviewTaskStatus.Pending or ReviewTaskStatus.InReview))
+                {
+                    AddBulkItem(result, id, false, true, "任务状态不是待审核/审核中，已跳过。");
+                    continue;
+                }
+
+                if (task.RiskLevel != expectedRiskLevel)
+                {
+                    AddBulkItem(result, id, false, false, $"当前风险等级为 {task.RiskLevel}，不满足批量确认条件。");
+                    continue;
+                }
+
+                if (task.HighRiskIssueCount > request.MaxHighRiskIssueCount)
+                {
+                    AddBulkItem(result, id, false, false, "存在高风险异常，不能批量确认。");
+                    continue;
+                }
+
+                var noticeStaging = await GetNoticeStagingForUpdateAsync(task.BizId, ct);
+                var raw = await GetRawForUpdateAsync(noticeStaging.RawNoticeId, ct);
+                var originalStatus = task.Status.ToString();
+                await ApproveAsync(id, new ReviewDecisionRequest { Remark = request.Remark }, ct);
+                await AddCorrectionSampleAsync(
+                    task,
+                    noticeStaging,
+                    raw,
+                    BidOpsReviewCorrectionSourceKinds.BulkApprove,
+                    nameof(ReviewTask.Status),
+                    originalStatus,
+                    ReviewTaskStatus.Approved.ToString(),
+                    string.Empty,
+                    string.Empty,
+                    null,
+                    request.Remark ?? "Low risk bulk approval.",
+                    ct);
+                await _unitOfWork.SaveChangesAsync(ct);
+                AddBulkItem(result, id, true, false, "批量确认成功。");
+            }
+            catch (Exception ex)
+            {
+                AddBulkItem(result, id, false, false, ex.Message);
+            }
+        }
+
+        return result;
+    }
+
+    public async Task<BulkReviewTaskActionResultDto> BatchReparseAsync(
+        BatchReviewTaskReparseRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var ids = NormalizeReviewTaskIds(request.ReviewTaskIds);
+        var prompt = NormalizeReviewerPrompt(request.Prompt);
+        var result = new BulkReviewTaskActionResultDto { RequestedCount = ids.Count };
+
+        foreach (var id in ids)
+        {
+            try
+            {
+                var task = await GetTaskForUpdateAsync(id, ct);
+                if (task.Status is ReviewTaskStatus.Approved or ReviewTaskStatus.Ignored or ReviewTaskStatus.Merged)
+                {
+                    AddBulkItem(result, id, false, true, "已完成或已合并任务不能重新解析。");
+                    continue;
+                }
+
+                var noticeStaging = await GetNoticeStagingForUpdateAsync(task.BizId, ct);
+                var raw = await GetRawForUpdateAsync(noticeStaging.RawNoticeId, ct);
+                if (raw.Status == RawNoticeStatus.Approved ||
+                    await _notices.FirstOrDefaultAsync(x => x.RawNoticeId == raw.Id, ct) != null)
+                {
+                    AddBulkItem(result, id, false, true, "已入库公告不能重新解析。");
+                    continue;
+                }
+
+                EnqueueJobDto job;
+                if (LooksLikeOutcomeReviewNotice(raw, noticeStaging))
+                {
+                    job = await EnqueueOutcomeAiReparseAsync(
+                        id,
+                        new ReviewOutcomeAiReparseRequest { Prompt = prompt },
+                        ct);
+                }
+                else
+                {
+                    job = await EnqueueRawNoticeReparseAsync(
+                        raw.Id,
+                        new ReparseRawNoticeRequest
+                        {
+                            Reason = string.IsNullOrWhiteSpace(request.Reason)
+                                ? "Batch AI reviewer prompt."
+                                : request.Reason,
+                            Prompt = prompt
+                        },
+                        ct);
+                }
+
+                AddBulkItem(result, id, true, false, $"已入队：{job.JobType}", job.JobId, job.JobType);
+            }
+            catch (Exception ex)
+            {
+                AddBulkItem(result, id, false, false, ex.Message);
+            }
+        }
+
+        return result;
+    }
+
+    public async Task<EnqueueJobDto> EnqueueReviewQualityBackfillAsync(
+        ReviewQualityBackfillRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        await _runtimeControl.EnsureTasksNotPausedAsync(ct);
+
+        var tenant = RequireTenant();
+        var userId = RequireUser();
+        var maxItems = Math.Clamp(request.MaxItems <= 0 ? 100 : request.MaxItems, 1, 500);
+        var runId = Guid.NewGuid().ToString("N");
+        var result = await _jobs.EnqueueAsync(
+            new EnqueueBackgroundJobRequest<ReviewQualityBackfillJobPayload>
+            {
+                JobType = BidOpsBackgroundJobTypes.ReviewQualityBackfill,
+                Queue = BidOpsBackgroundJobQueues.BidOps,
+                JobName = "BidOps review quality backfill",
+                TenantId = tenant,
+                StoreId = _identity.StoreId,
+                DeduplicationKey = $"bidops:review-quality-backfill:{tenant}:{runId}",
+                Priority = BidOpsBackgroundJobPriorities.Manual,
+                MaxAttempts = 1,
+                Payload = new ReviewQualityBackfillJobPayload(
+                    tenant,
+                    _identity.StoreId,
+                    userId,
+                    _identity.UserName,
+                    maxItems,
+                    request.NoticeType,
+                    request.RiskLevel,
+                    request.DryRun,
+                    request.SourceId,
+                    request.PauseSourceAware)
+            },
+            ct);
+
+        return new EnqueueJobDto(result.JobId, result.JobType, result.Queue, result.AlreadyExists);
     }
 
     private async Task<NoticeDto> ApproveCoreAsync(
@@ -239,6 +413,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        await _runtimeControl.EnsureTasksNotPausedAsync(ct);
 
         var tenant = RequireTenant();
         var userId = RequireUser();
@@ -253,7 +428,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         if (raw.Status == RawNoticeStatus.Approved ||
             await _notices.FirstOrDefaultAsync(x => x.RawNoticeId == raw.Id, ct) != null)
         {
-            throw new AtlasException("Approved BidOps raw notices cannot be AI-reparsed in MVP.");
+            throw new AtlasException("已入库或已审核通过的公告不能重新调用 DeepSeek 解析，请选择待审核公告或重新导入公开来源。");
         }
 
         var reparseRunId = Guid.NewGuid().ToString("N");
@@ -266,6 +441,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
                 TenantId = tenant,
                 StoreId = _identity.StoreId,
                 DeduplicationKey = $"bidops:review-outcome-ai-reparse:{tenant}:{raw.Id}:{reparseRunId}",
+                Priority = BidOpsBackgroundJobPriorities.Manual,
                 MaxAttempts = 3,
                 Payload = new OutcomeSupplierExtractJobPayload(
                     tenant,
@@ -273,9 +449,25 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
                     userId,
                     _identity.UserName,
                     raw.Id,
-                    prompt)
+                    prompt,
+                    noticeStaging.ProjectCode)
             },
             ct);
+
+        await AddCorrectionSampleAsync(
+            task,
+            noticeStaging,
+            raw,
+            BidOpsReviewCorrectionSourceKinds.ReparsePrompt,
+            nameof(ReviewOutcomeAiReparseRequest.Prompt),
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            BuildBackgroundJobEvidenceJson(result, "OutcomeAiReparse"),
+            prompt,
+            "Outcome supplier AI reparse prompt.",
+            ct);
+        await _unitOfWork.SaveChangesAsync(ct);
 
         return new EnqueueJobDto(result.JobId, result.JobType, result.Queue, result.AlreadyExists);
     }
@@ -302,7 +494,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
             SourceUrl = Truncate(context.Raw.DetailUrl, 1500),
             NoticeTitle = Truncate(context.Raw.Title, 500),
             NoticeType = Truncate(context.Raw.NoticeType, 64),
-            ProjectName = Truncate(FirstMeaningful(request.ProjectName, context.NoticeStaging.ProjectName, context.Raw.Title), 500),
+            ProjectName = Truncate(FirstMeaningful(request.ProjectName, context.NoticeStaging.ProjectName), 500),
             ProjectCode = Truncate(FirstMeaningful(request.ProjectCode, context.NoticeStaging.ProjectCode), 128),
             BuyerName = Truncate(FirstMeaningful(request.BuyerName, context.NoticeStaging.BuyerName), 300),
             Region = Truncate(context.NoticeStaging.Region, 128),
@@ -310,7 +502,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
             LotNo = Truncate(request.LotNo, 128),
             LotName = Truncate(request.LotName, 300),
             PackageNo = Truncate(request.PackageNo, 128),
-            PackageName = Truncate(FirstMeaningful(request.PackageName, request.LotName, context.NoticeStaging.ProjectName, context.Raw.Title), 500),
+            PackageName = Truncate(FirstMeaningful(request.PackageName, request.LotName), 500),
             Category = Truncate(request.Category, 128),
             SupplierName = Truncate(supplierName, 300),
             SupplierNameNormalized = supplierNameNormalized,
@@ -326,6 +518,19 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         record.SourceHash = ComputeManualSourceHash(record);
 
         await _outcomeRecords.AddAsync(record, ct);
+        await AddCorrectionSampleAsync(
+            context.Task,
+            context.NoticeStaging,
+            context.Raw,
+            BidOpsReviewCorrectionSourceKinds.ManualEdit,
+            "OutcomeSupplierRecord",
+            string.Empty,
+            SerializeOutcomeRecord(record),
+            string.Empty,
+            string.Empty,
+            null,
+            "Reviewer added outcome supplier record.",
+            ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
         return MapOutcomeRecord(record);
@@ -341,6 +546,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
 
         var context = await GetEditableOutcomeContextAsync(reviewTaskId, ct);
         var record = await GetOutcomeRecordForUpdateAsync(context.Raw, outcomeRecordId, ct);
+        var originalJson = SerializeOutcomeRecord(record);
         var supplierName = CleanRequired(request.SupplierName, "厂家名称");
         var supplierNameNormalized = Truncate(BidOpsOutcomeSupplierTextParser.NormalizeSupplierName(supplierName), 191);
         if (string.IsNullOrWhiteSpace(supplierNameNormalized))
@@ -353,14 +559,14 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         if (!string.Equals(record.BuyerName, buyerName, StringComparison.Ordinal))
             record.BuyerId = null;
 
-        record.ProjectName = Truncate(FirstMeaningful(request.ProjectName, context.NoticeStaging.ProjectName, context.Raw.Title), 500);
+        record.ProjectName = Truncate(FirstMeaningful(request.ProjectName, context.NoticeStaging.ProjectName), 500);
         record.ProjectCode = Truncate(FirstMeaningful(request.ProjectCode, context.NoticeStaging.ProjectCode), 128);
         record.BuyerName = buyerName;
         record.Region = Truncate(context.NoticeStaging.Region, 128);
         record.LotNo = Truncate(request.LotNo, 128);
         record.LotName = Truncate(request.LotName, 300);
         record.PackageNo = Truncate(request.PackageNo, 128);
-        record.PackageName = Truncate(FirstMeaningful(request.PackageName, request.LotName, context.NoticeStaging.ProjectName, context.Raw.Title), 500);
+        record.PackageName = Truncate(FirstMeaningful(request.PackageName, request.LotName), 500);
         record.Category = Truncate(request.Category, 128);
         record.SupplierName = Truncate(supplierName, 300);
         record.SupplierNameNormalized = supplierNameNormalized;
@@ -373,6 +579,19 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         record.ExtractionConfidence = 1m;
         record.SourceHash = ComputeManualSourceHash(record);
 
+        await AddCorrectionSampleAsync(
+            context.Task,
+            context.NoticeStaging,
+            context.Raw,
+            BidOpsReviewCorrectionSourceKinds.ManualEdit,
+            "OutcomeSupplierRecord",
+            originalJson,
+            SerializeOutcomeRecord(record),
+            string.Empty,
+            string.Empty,
+            null,
+            "Reviewer edited outcome supplier record.",
+            ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
         return MapOutcomeRecord(record);
@@ -385,8 +604,22 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
     {
         var context = await GetEditableOutcomeContextAsync(reviewTaskId, ct);
         var record = await GetOutcomeRecordForUpdateAsync(context.Raw, outcomeRecordId, ct);
+        var originalJson = SerializeOutcomeRecord(record);
 
         await _outcomeRecords.RemoveAsync(record, ct);
+        await AddCorrectionSampleAsync(
+            context.Task,
+            context.NoticeStaging,
+            context.Raw,
+            BidOpsReviewCorrectionSourceKinds.ManualEdit,
+            "OutcomeSupplierRecord",
+            originalJson,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            null,
+            "Reviewer deleted outcome supplier record.",
+            ct);
         await _unitOfWork.SaveChangesAsync(ct);
     }
 
@@ -396,22 +629,26 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        await _runtimeControl.EnsureTasksNotPausedAsync(ct);
 
         var tenant = RequireTenant();
         var userId = RequireUser();
         var raw = await GetRawForUpdateAsync(rawNoticeId, ct);
+        var reviewerPrompt = NormalizeOptionalReviewerPrompt(request.Prompt);
         if (raw.Status == RawNoticeStatus.Approved ||
             await _notices.FirstOrDefaultAsync(x => x.RawNoticeId == raw.Id, ct) != null)
         {
-            throw new AtlasException("Approved BidOps raw notices cannot be reparsed in MVP.");
+            throw new AtlasException("已入库或已审核通过的公告不能重新解析，请选择待审核公告或重新导入公开来源。");
         }
 
         var reason = BuildReparseReason(request.Reason);
         raw.Status = RawNoticeStatus.ParseQueued;
         raw.LastError = reason;
 
+        NoticeStaging? staging = null;
+        ReviewTask? task = null;
         var stagingQuery = await _noticeStaging.QueryTrackingAsync(ct);
-        var staging = await stagingQuery
+        staging = await stagingQuery
             .Where(x => x.RawNoticeId == raw.Id)
             .OrderByDescending(x => x.CreatedAt)
             .FirstOrDefaultAsync(ct);
@@ -422,7 +659,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
             staging.ReviewedAt = null;
 
             var taskQuery = await _reviewTasks.QueryTrackingAsync(ct);
-            var task = await taskQuery
+            task = await taskQuery
                 .Where(x => x.BizType == "NoticeStaging" && x.BizId == staging.Id)
                 .OrderByDescending(x => x.CreatedAt)
                 .FirstOrDefaultAsync(ct);
@@ -448,6 +685,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
                 TenantId = tenant,
                 StoreId = _identity.StoreId,
                 DeduplicationKey = $"bidops:manual-reparse:{tenant}:{raw.Id}:{reparseRunId}",
+                Priority = BidOpsBackgroundJobPriorities.Manual,
                 MaxAttempts = 3,
                 Payload = new AttachmentProcessJobPayload(
                     tenant,
@@ -455,11 +693,161 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
                     userId,
                     _identity.UserName,
                     raw.Id,
-                    reparseRunId)
+                    reparseRunId,
+                    reviewerPrompt,
+                    BidOpsJobProjectCode.FirstMeaningful(staging?.ProjectCode, BidOpsJobProjectCode.FromRawNotice(raw)))
             },
             ct);
 
+        if (staging != null && task != null)
+        {
+            await AddCorrectionSampleAsync(
+                task,
+                staging,
+                raw,
+                BidOpsReviewCorrectionSourceKinds.ReparsePrompt,
+                nameof(ReparseRawNoticeRequest.Prompt),
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                BuildBackgroundJobEvidenceJson(result, "RawNoticeReparse"),
+                reviewerPrompt,
+                reason,
+                ct);
+            await _unitOfWork.SaveChangesAsync(ct);
+        }
+
         return new EnqueueJobDto(result.JobId, result.JobType, result.Queue, result.AlreadyExists);
+    }
+
+    private static List<long> NormalizeReviewTaskIds(IEnumerable<long>? reviewTaskIds)
+    {
+        return (reviewTaskIds ?? [])
+            .Where(x => x > 0)
+            .Distinct()
+            .Take(100)
+            .ToList();
+    }
+
+    private static void AddBulkItem(
+        BulkReviewTaskActionResultDto result,
+        long reviewTaskId,
+        bool succeeded,
+        bool skipped,
+        string message,
+        long? jobId = null,
+        string? jobType = null)
+    {
+        result.Items.Add(new BulkReviewTaskActionItemDto
+        {
+            ReviewTaskId = reviewTaskId,
+            Succeeded = succeeded,
+            Skipped = skipped,
+            Message = message,
+            JobId = jobId,
+            JobType = jobType
+        });
+
+        if (succeeded)
+            result.SucceededCount++;
+        else if (skipped)
+            result.SkippedCount++;
+        else
+            result.FailedCount++;
+    }
+
+    private async Task AddCorrectionSampleAsync(
+        ReviewTask task,
+        NoticeStaging noticeStaging,
+        RawNotice raw,
+        string sourceKind,
+        string fieldName,
+        string originalValue,
+        string correctedValue,
+        string originalHeader,
+        string originalRowJson,
+        string? reviewerPrompt,
+        string reason,
+        CancellationToken ct)
+    {
+        await _correctionSamples.AddAsync(new ReviewCorrectionSample
+        {
+            Id = _idGenerator.NextId(),
+            TenantId = raw.TenantId,
+            ReviewTaskId = task.Id,
+            RawNoticeId = raw.Id,
+            NoticeType = Truncate(FirstMeaningful(noticeStaging.NoticeType, raw.NoticeType), 64),
+            SourceKind = Truncate(sourceKind, 64),
+            FieldName = Truncate(fieldName, 128),
+            OriginalValue = originalValue ?? string.Empty,
+            CorrectedValue = correctedValue ?? string.Empty,
+            OriginalHeader = Truncate(originalHeader, 300),
+            OriginalRowJson = originalRowJson ?? string.Empty,
+            ReviewerPrompt = reviewerPrompt ?? string.Empty,
+            Reason = Truncate(reason, 1000),
+            CreatedBy = _identity.UserId,
+            CreatedAt = DateTime.UtcNow
+        }, ct);
+    }
+
+    private static string SerializeOutcomeRecord(OutcomeSupplierRecord record)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            record.Id,
+            record.RawNoticeId,
+            record.ProjectName,
+            record.ProjectCode,
+            record.BuyerName,
+            record.LotNo,
+            record.LotName,
+            record.PackageNo,
+            record.PackageName,
+            record.Category,
+            record.SupplierName,
+            record.OutcomeType,
+            record.Rank,
+            record.AwardAmount,
+            record.ProcurementAgencyServiceFeeAmount,
+            record.EvidenceText
+        }, JsonOptions);
+    }
+
+    private static string BuildBackgroundJobEvidenceJson(
+        BackgroundJobEnqueueResult result,
+        string action)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            backgroundJobId = result.JobId,
+            result.JobType,
+            result.Queue,
+            Status = result.Status.ToString(),
+            result.AlreadyExists,
+            action
+        }, JsonOptions);
+    }
+
+    private static bool LooksLikeOutcomeReviewNotice(RawNotice raw, NoticeStaging noticeStaging)
+    {
+        var text = string.Join(' ', raw.NoticeType, raw.Title, noticeStaging.NoticeType, noticeStaging.ProjectName);
+        return text.Contains("Award", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("Result", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("Candidate", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("Shortlist", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("中标", StringComparison.Ordinal) ||
+               text.Contains("成交", StringComparison.Ordinal) ||
+               text.Contains("结果", StringComparison.Ordinal) ||
+               text.Contains("候选", StringComparison.Ordinal) ||
+               text.Contains("入围", StringComparison.Ordinal);
+    }
+
+    private static bool TryParseEnum<TEnum>(string? value, out TEnum result)
+        where TEnum : struct
+    {
+        result = default;
+        return !string.IsNullOrWhiteSpace(value) &&
+               Enum.TryParse(value.Trim(), true, out result);
     }
 
     private async Task<ReviewTask> GetTaskForUpdateAsync(long reviewTaskId, CancellationToken ct)
@@ -597,7 +985,16 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
     {
         var value = prompt?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(value))
-            throw new AtlasException("请输入给 DeepSeek 的调整提示词。");
+            throw new AtlasException("请输入给 AI 的调整提示词。");
+
+        return value.Length <= 4000 ? value : value[..4000];
+    }
+
+    private static string? NormalizeOptionalReviewerPrompt(string? prompt)
+    {
+        var value = prompt?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
 
         return value.Length <= 4000 ? value : value[..4000];
     }
@@ -738,6 +1135,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
             record.SupplierNameNormalized,
             record.ProjectCode,
             record.LotNo,
+            record.LotName,
             record.PackageNo,
             record.OutcomeType,
             record.Rank?.ToString() ?? string.Empty);

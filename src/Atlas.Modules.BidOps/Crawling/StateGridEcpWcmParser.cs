@@ -17,6 +17,10 @@ public sealed record StateGridEcpApiNotice(
     string PublishOrgName,
     string ProjectCode);
 
+public sealed record StateGridEcpNoticeListPage(
+    IReadOnlyList<StateGridEcpApiNotice> Notices,
+    int? TotalCount);
+
 public static partial class StateGridEcpWcmParser
 {
     private const int MaxTextLength = 200_000;
@@ -70,8 +74,16 @@ public static partial class StateGridEcpWcmParser
         string portalBaseUrl,
         int maxItems)
     {
+        return ParseNoticeListPage(json, portalBaseUrl, maxItems).Notices;
+    }
+
+    public static StateGridEcpNoticeListPage ParseNoticeListPage(
+        string json,
+        string portalBaseUrl,
+        int maxItems)
+    {
         if (string.IsNullOrWhiteSpace(json))
-            return Array.Empty<StateGridEcpApiNotice>();
+            return new StateGridEcpNoticeListPage(Array.Empty<StateGridEcpApiNotice>(), null);
 
         maxItems = Math.Clamp(maxItems, 1, 50);
         using var document = JsonDocument.Parse(json);
@@ -81,7 +93,7 @@ public static partial class StateGridEcpWcmParser
             !TryGetProperty(resultValue, "noteList", out var noteList) ||
             noteList.ValueKind != JsonValueKind.Array)
         {
-            return Array.Empty<StateGridEcpApiNotice>();
+            return new StateGridEcpNoticeListPage(Array.Empty<StateGridEcpApiNotice>(), TryGetTotalCount(document.RootElement));
         }
 
         var notices = new List<StateGridEcpApiNotice>();
@@ -127,7 +139,7 @@ public static partial class StateGridEcpWcmParser
                 break;
         }
 
-        return notices;
+        return new StateGridEcpNoticeListPage(notices, TryGetTotalCount(document.RootElement));
     }
 
     public static StateGridNoticeDocument ParseNoticeDetail(
@@ -265,6 +277,64 @@ public static partial class StateGridEcpWcmParser
             string.IsNullOrWhiteSpace(hint)
                 ? "State Grid ECP API returned an unsuccessful response."
                 : $"State Grid ECP API returned an unsuccessful response: {hint}");
+    }
+
+    private static int? TryGetTotalCount(JsonElement root)
+    {
+        var value = FindFirstIntByName(
+            root,
+            "total",
+            "totalCount",
+            "totalNum",
+            "totalNumber",
+            "recordCount",
+            "recordsTotal",
+            "count");
+        return value is > 0 ? value : null;
+    }
+
+    private static int? FindFirstIntByName(JsonElement element, params string[] names)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (names.Any(name => string.Equals(name, property.Name, StringComparison.OrdinalIgnoreCase)) &&
+                    TryGetInt(property.Value, out var exactValue))
+                {
+                    return exactValue;
+                }
+            }
+
+            foreach (var property in element.EnumerateObject())
+            {
+                var nested = FindFirstIntByName(property.Value, names);
+                if (nested.HasValue)
+                    return nested;
+            }
+        }
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                var nested = FindFirstIntByName(item, names);
+                if (nested.HasValue)
+                    return nested;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryGetInt(JsonElement element, out int value)
+    {
+        value = 0;
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out value))
+            return true;
+
+        var text = GetElementString(element);
+        return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
     }
 
     private static string BuildPortalDetailUrl(

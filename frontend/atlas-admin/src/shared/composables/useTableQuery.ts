@@ -14,9 +14,9 @@ const emptyResult = <T>(): PagedResult<T> => ({
 export function useTableQuery<T, Q extends { pageIndex: number; pageSize: number }>(
   fetcher: (query: Q) => Promise<PagedResult<T>>,
   initialQuery: Q,
-  options: { immediate?: boolean } = {},
+  options: { immediate?: boolean; storageKey?: string; storageVersion?: number } = {},
 ) {
-  const query = reactive({ ...initialQuery }) as Q
+  const query = reactive({ ...initialQuery, ...loadCachedQuery(initialQuery, options) }) as Q
   const result = reactive<PagedResult<T>>(emptyResult<T>())
   const loading = ref(false)
 
@@ -34,6 +34,7 @@ export function useTableQuery<T, Q extends { pageIndex: number; pageSize: number
   async function search() {
     query.pageIndex = 1
     await loadData()
+    saveCachedQuery(query, options)
   }
 
   async function reset(partial?: Partial<Q>) {
@@ -64,5 +65,54 @@ function normalizePagedResult<T>(value: PagedResult<T>): PagedResult<T> {
     pageIndex: Number(value.pageIndex || 1),
     pageSize: Number(value.pageSize || 20),
     totalPages: Number(value.totalPages || 0),
+  }
+}
+
+function loadCachedQuery<Q extends { pageIndex: number; pageSize: number }>(
+  initialQuery: Q,
+  options: { storageKey?: string; storageVersion?: number },
+): Partial<Q> {
+  if (!options.storageKey || typeof window === 'undefined')
+    return {}
+
+  try {
+    const raw = window.localStorage.getItem(options.storageKey)
+    if (!raw)
+      return {}
+
+    const parsed = JSON.parse(raw) as { version?: number; query?: Record<string, unknown> }
+    if (parsed.version !== (options.storageVersion ?? 1) || !parsed.query)
+      return {}
+
+    const cached: Partial<Q> = {}
+    for (const key of Object.keys(initialQuery) as Array<keyof Q>) {
+      if (Object.prototype.hasOwnProperty.call(parsed.query, String(key))) {
+        cached[key] = parsed.query[String(key)] as Q[keyof Q]
+      }
+    }
+
+    return cached
+  } catch {
+    return {}
+  }
+}
+
+function saveCachedQuery<Q extends { pageIndex: number; pageSize: number }>(
+  query: Q,
+  options: { storageKey?: string; storageVersion?: number },
+) {
+  if (!options.storageKey || typeof window === 'undefined')
+    return
+
+  try {
+    window.localStorage.setItem(
+      options.storageKey,
+      JSON.stringify({
+        version: options.storageVersion ?? 1,
+        query: toRaw(query),
+      }),
+    )
+  } catch {
+    // Ignore storage quota/privacy-mode failures; the table should still work normally.
   }
 }

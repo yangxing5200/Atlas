@@ -154,7 +154,7 @@ async function openStoredFile(row: RawAttachmentDto, download: boolean) {
             class="open-link"
           >
             <el-icon><View /></el-icon>
-            <span>来源</span>
+            <span>源文件</span>
           </el-link>
           <el-link
             v-if="row.hasExtractedText && rawNoticeId"

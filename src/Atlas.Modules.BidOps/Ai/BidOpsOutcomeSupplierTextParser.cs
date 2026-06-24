@@ -772,10 +772,10 @@ public static class BidOpsOutcomeSupplierTextParser
             if (!string.IsNullOrWhiteSpace(unit))
                 return ParseAmount(candidate.Groups["amount"].Value, unit, tableContext.AmountUnit);
 
-            if (tableContext.AmountUnit == AmountUnitHint.Unknown)
-                continue;
-
-            firstContextAmount ??= ParseAmount(candidate.Groups["amount"].Value, string.Empty, tableContext.AmountUnit);
+            var fallbackUnit = tableContext.AmountUnit == AmountUnitHint.Unknown
+                ? AmountUnitHint.Yuan
+                : tableContext.AmountUnit;
+            firstContextAmount ??= ParseAmount(candidate.Groups["amount"].Value, string.Empty, fallbackUnit);
         }
 
         return firstNumericWasRateOrScore ? null : firstContextAmount;

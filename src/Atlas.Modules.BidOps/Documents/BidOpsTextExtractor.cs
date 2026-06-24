@@ -1,9 +1,11 @@
 using System.IO.Compression;
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
+using ExcelDataReader;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
@@ -69,6 +71,19 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
             return Trim(ExtractXlsxText(stream));
         }
 
+        if (extension == "xls" ||
+            normalizedContentType.Contains("vnd.ms-excel", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                return Trim(ExtractLegacyExcelText(stream));
+            }
+            catch
+            {
+                return Trim(await ExtractLegacyBinaryTextAsync(stream, cancellationToken));
+            }
+        }
+
         if (extension == "zip" ||
             normalizedContentType.Contains("zip", StringComparison.OrdinalIgnoreCase))
         {
@@ -81,9 +96,8 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
             return Trim(ExtractPdfText(stream));
         }
 
-        if (extension is "doc" or "xls" ||
-            normalizedContentType.Contains("msword", StringComparison.OrdinalIgnoreCase) ||
-            normalizedContentType.Contains("vnd.ms-excel", StringComparison.OrdinalIgnoreCase))
+        if (extension == "doc" ||
+            normalizedContentType.Contains("msword", StringComparison.OrdinalIgnoreCase))
         {
             return Trim(await ExtractLegacyBinaryTextAsync(stream, cancellationToken));
         }
@@ -290,7 +304,8 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
         foreach (var token in new[]
                  {
                      "分标编号", "分标名称", "包号", "包名称", "采购范围", "服务期", "框架协议有效期", "实施地点",
-                     "分标"
+                     "分标", "采购编号", "项目单位", "项目名称", "子项目名称", "项目概况", "最高限价", "子项最高限价",
+                     "报价方式", "需求单位", "物资名称", "数量", "工期", "首批交货日期"
                  })
         {
             if (headerText.Contains(NormalizeHeaderText(token), StringComparison.OrdinalIgnoreCase))
@@ -359,29 +374,30 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
         if (stream.CanSeek)
             stream.Position = 0;
 
-        using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+        using var archive = OpenReadZipArchive(stream);
         var sharedStrings = ReadSharedStrings(archive);
         var sheetNamesByPath = ReadSheetNamesByPath(archive);
         var builder = new StringBuilder();
+        var tableIndex = 1;
 
         foreach (var entry in archive.Entries
                      .Where(x => x.FullName.StartsWith("xl/worksheets/", StringComparison.OrdinalIgnoreCase) &&
                                  x.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
                      .OrderBy(x => x.FullName, StringComparer.OrdinalIgnoreCase))
         {
-            var sheetText = ExtractWorksheetText(entry, sharedStrings);
-            if (string.IsNullOrWhiteSpace(sheetText))
+            var normalizedPath = NormalizeArchivePath(entry.FullName);
+            var sheetName = sheetNamesByPath.TryGetValue(normalizedPath, out var name)
+                ? name
+                : Path.GetFileNameWithoutExtension(entry.Name);
+            var rows = ExtractWorksheetRows(entry, sharedStrings);
+            if (rows.Count == 0)
                 continue;
 
             if (builder.Length > 0)
                 builder.AppendLine().AppendLine();
 
-            var normalizedPath = NormalizeArchivePath(entry.FullName);
-            var sheetName = sheetNamesByPath.TryGetValue(normalizedPath, out var name)
-                ? name
-                : Path.GetFileNameWithoutExtension(entry.Name);
-            builder.AppendLine($"Sheet: {sheetName}");
-            builder.Append(sheetText);
+            AppendMarkdownTable(builder, tableIndex, $"Sheet: {sheetName}", rows);
+            tableIndex++;
 
             if (builder.Length >= MaxExtractedTextLength)
                 break;
@@ -402,11 +418,10 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
         if (stream.CanSeek)
             stream.Position = 0;
 
-        using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+        using var archive = OpenReadZipArchive(stream);
         var builder = new StringBuilder();
         var entries = archive.Entries
             .Where(x => !string.IsNullOrWhiteSpace(x.Name))
-            .OrderBy(x => x.FullName, StringComparer.OrdinalIgnoreCase)
             .Take(MaxArchiveEntries)
             .ToList();
 
@@ -550,34 +565,44 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
         return result;
     }
 
-    private static string ExtractWorksheetText(
+    private static IReadOnlyList<IReadOnlyList<string>> ExtractWorksheetRows(
         ZipArchiveEntry entry,
         IReadOnlyList<string> sharedStrings)
     {
         var document = LoadXml(entry);
         var rows = document.Root?
             .Descendants(SpreadsheetNamespace + "row") ?? Enumerable.Empty<XElement>();
-        var builder = new StringBuilder();
+        var result = new List<IReadOnlyList<string>>();
 
         foreach (var row in rows)
         {
-            var cells = row
-                .Elements(SpreadsheetNamespace + "c")
-                .Select(x => ReadCellText(x, sharedStrings))
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .ToList();
-            if (cells.Count == 0)
+            var cellsByColumn = new SortedDictionary<int, string>();
+            var fallbackColumn = 0;
+            foreach (var cell in row.Elements(SpreadsheetNamespace + "c"))
+            {
+                var columnIndex = TryGetSpreadsheetColumnIndex((string?)cell.Attribute("r"));
+                if (columnIndex < 0)
+                    columnIndex = fallbackColumn;
+
+                cellsByColumn[columnIndex] = ReadCellText(cell, sharedStrings);
+                fallbackColumn = columnIndex + 1;
+            }
+
+            if (cellsByColumn.Count == 0 ||
+                cellsByColumn.Values.All(string.IsNullOrWhiteSpace))
+            {
                 continue;
+            }
 
-            if (builder.Length > 0)
-                builder.AppendLine();
+            var maxColumn = cellsByColumn.Keys.Max();
+            var cells = Enumerable.Repeat(string.Empty, maxColumn + 1).ToList();
+            foreach (var (column, value) in cellsByColumn)
+                cells[column] = value;
 
-            builder.AppendJoin('\t', cells);
-            if (builder.Length >= MaxExtractedTextLength)
-                break;
+            result.Add(TrimTrailingEmptyCells(cells));
         }
 
-        return builder.ToString();
+        return result;
     }
 
     private static string ReadCellText(
@@ -603,6 +628,92 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
         }
 
         return NormalizeWhitespace(cell.Element(SpreadsheetNamespace + "v")?.Value ?? string.Empty);
+    }
+
+    private static string ExtractLegacyExcelText(Stream stream)
+    {
+        if (stream.CanSeek)
+            stream.Position = 0;
+
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        using var reader = ExcelReaderFactory.CreateReader(
+            stream,
+            new ExcelReaderConfiguration
+            {
+                FallbackEncoding = GetChineseEncoding(),
+                LeaveOpen = true
+            });
+
+        var builder = new StringBuilder();
+        var tableIndex = 1;
+        do
+        {
+            var rows = new List<IReadOnlyList<string>>();
+            while (reader.Read())
+            {
+                var cells = new List<string>(reader.FieldCount);
+                for (var i = 0; i < reader.FieldCount; i++)
+                    cells.Add(FormatExcelCell(reader.GetValue(i)));
+
+                if (cells.Any(x => !string.IsNullOrWhiteSpace(x)))
+                    rows.Add(TrimTrailingEmptyCells(cells));
+            }
+
+            if (rows.Count == 0)
+                continue;
+
+            if (builder.Length > 0)
+                builder.AppendLine().AppendLine();
+
+            AppendMarkdownTable(builder, tableIndex, $"Sheet: {reader.Name}", rows);
+            tableIndex++;
+
+            if (builder.Length >= MaxExtractedTextLength)
+                break;
+        } while (reader.NextResult());
+
+        return NormalizePdfWhitespace(builder.ToString());
+    }
+
+    private static string FormatExcelCell(object? value)
+    {
+        return value switch
+        {
+            null => string.Empty,
+            DateTime date => date.TimeOfDay == TimeSpan.Zero
+                ? date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+                : date.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+            IFormattable formattable => NormalizeWhitespace(formattable.ToString(null, CultureInfo.InvariantCulture) ?? string.Empty),
+            _ => NormalizeWhitespace(value.ToString() ?? string.Empty)
+        };
+    }
+
+    private static List<string> TrimTrailingEmptyCells(List<string> cells)
+    {
+        var last = cells.Count - 1;
+        while (last >= 0 && string.IsNullOrWhiteSpace(cells[last]))
+            last--;
+
+        return last < 0 ? [] : cells.Take(last + 1).ToList();
+    }
+
+    private static int TryGetSpreadsheetColumnIndex(string? cellReference)
+    {
+        if (string.IsNullOrWhiteSpace(cellReference))
+            return -1;
+
+        var index = 0;
+        var hasColumn = false;
+        foreach (var ch in cellReference.Trim())
+        {
+            if (!char.IsLetter(ch))
+                break;
+
+            index = index * 26 + (char.ToUpperInvariant(ch) - 'A' + 1);
+            hasColumn = true;
+        }
+
+        return hasColumn ? index - 1 : -1;
     }
 
     private static XDocument LoadXml(ZipArchiveEntry entry)
@@ -763,6 +874,51 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
     private static string NormalizeArchivePath(string value)
     {
         return value.Replace('\\', '/').Trim();
+    }
+
+    private static ZipArchive OpenReadZipArchive(Stream stream)
+    {
+        if (stream.CanSeek)
+            stream.Position = 0;
+
+        var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+        if (!ArchiveEntryNamesLookGarbled(archive))
+            return archive;
+
+        archive.Dispose();
+        if (stream.CanSeek)
+            stream.Position = 0;
+
+        return new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true, entryNameEncoding: GetChineseEncoding());
+    }
+
+    private static bool ArchiveEntryNamesLookGarbled(ZipArchive archive)
+    {
+        return archive.Entries
+            .Take(20)
+            .Select(x => x.FullName)
+            .Any(LooksLikeMojibakeArchiveName);
+    }
+
+    private static bool LooksLikeMojibakeArchiveName(string value)
+    {
+        if (value.Contains('\uFFFD', StringComparison.Ordinal))
+            return true;
+
+        var suspicious = 0;
+        foreach (var ch in value)
+        {
+            if (ch is >= '\u2500' and <= '\u257F' or 'Ã' or 'Â' or 'Ä' or 'Å' or 'Ð' or 'Ñ' or 'Ö' or '×' or 'Ê' or 'Ë' or '¾' or '¼')
+                suspicious++;
+        }
+
+        return suspicious >= 2;
+    }
+
+    private static Encoding GetChineseEncoding()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        return Encoding.GetEncoding("GB18030");
     }
 
     private static string NormalizeHeaderText(string value)

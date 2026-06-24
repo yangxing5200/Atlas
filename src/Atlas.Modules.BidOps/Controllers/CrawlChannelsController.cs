@@ -56,4 +56,67 @@ public sealed class CrawlChannelsController : ControllerBase
     {
         return Accepted(await _crawl.EnqueueMockScanAsync(id, ct));
     }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.CrawlManage)]
+    [HttpPost("{id:long}/enabled")]
+    public async Task<IActionResult> SetEnabledAsync(
+        long id,
+        [FromBody] SetCrawlChannelEnabledRequest request,
+        CancellationToken ct)
+    {
+        await _crawl.SetChannelEnabledAsync(id, request.Enabled, request.Reason, ct);
+        return NoContent();
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.CrawlImport)]
+    [HttpPost("{id:long}/backfill")]
+    public async Task<ActionResult<EnqueueJobDto>> StartBackfillAsync(
+        long id,
+        [FromBody] StartCrawlBackfillRequest request,
+        CancellationToken ct)
+    {
+        return Accepted(await _crawl.StartBackfillAsync(id, request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.CrawlImport)]
+    [HttpPost("{id:long}/checkpoint/continue")]
+    public async Task<ActionResult<EnqueueJobDto>> ContinueCheckpointAsync(
+        long id,
+        [FromBody] ContinueCrawlCheckpointRequest request,
+        CancellationToken ct)
+    {
+        return Accepted(await _crawl.ContinueCheckpointAsync(id, request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.CrawlManage)]
+    [HttpPost("{id:long}/checkpoint/pause")]
+    public async Task<IActionResult> PauseCheckpointAsync(
+        long id,
+        [FromBody] PauseCrawlCheckpointRequest request,
+        CancellationToken ct)
+    {
+        await _crawl.PauseCheckpointAsync(id, request, ct);
+        return NoContent();
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.CrawlImport)]
+    [HttpPost("{id:long}/checkpoint/resume")]
+    public async Task<ActionResult<EnqueueJobDto>> ResumeCheckpointAsync(
+        long id,
+        [FromBody] ContinueCrawlCheckpointRequest request,
+        CancellationToken ct)
+    {
+        return Accepted(await _crawl.ResumeCheckpointAsync(id, request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.CrawlManage)]
+    [HttpPost("{id:long}/checkpoint/reset")]
+    public async Task<IActionResult> ResetCheckpointAsync(
+        long id,
+        [FromBody] ResetCrawlCheckpointRequest request,
+        CancellationToken ct)
+    {
+        await _crawl.ResetCheckpointAsync(id, request, ct);
+        return NoContent();
+    }
 }

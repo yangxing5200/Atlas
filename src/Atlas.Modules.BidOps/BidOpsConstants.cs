@@ -46,6 +46,7 @@ public static class BidOpsDataResources
     public const string Dashboard = "bidops.dashboard";
     public const string CrawlSource = "bidops.crawl-source";
     public const string CrawlRunLog = "bidops.crawl-run-log";
+    public const string CrawlCheckpoint = "bidops.crawl-checkpoint";
     public const string RawNotice = "bidops.raw-notice";
     public const string ReviewTask = "bidops.review-task";
     public const string Notice = "bidops.notice";
@@ -61,6 +62,50 @@ public static class BidOpsDataResources
     public const string Pursuit = "bidops.pursuit";
     public const string PursuitTask = "bidops.pursuit-task";
     public const string Operation = "bidops.operation";
+    public const string RuntimeSetting = "bidops.runtime-setting";
+}
+
+public static class BidOpsCrawlModes
+{
+    public const string Incremental = "Incremental";
+    public const string Backfill = "Backfill";
+}
+
+public static class BidOpsCrawlCursorKinds
+{
+    public const string PageIndex = "PageIndex";
+}
+
+public static class BidOpsCrawlCheckpointStatuses
+{
+    public const string Idle = "Idle";
+    public const string Running = "Running";
+    public const string Paused = "Paused";
+    public const string Completed = "Completed";
+    public const string Failed = "Failed";
+}
+
+public static class BidOpsCrawlRunStatuses
+{
+    public const string Running = "Running";
+    public const string Succeeded = "Succeeded";
+    public const string Failed = "Failed";
+    public const string Canceled = "Canceled";
+}
+
+public static class BidOpsCrawlScheduleModes
+{
+    public const string Interval = "Interval";
+    public const string Daily = "Daily";
+}
+
+public static class BidOpsRawIngestionStatuses
+{
+    public const string Created = "Created";
+    public const string Changed = "Changed";
+    public const string Refreshed = "Refreshed";
+    public const string IdentityUpdated = "IdentityUpdated";
+    public const string Skipped = "Skipped";
 }
 
 public static class BidOpsBackgroundJobQueues
@@ -84,6 +129,13 @@ public static class BidOpsBackgroundJobTypes
     public const string SupplierEvidenceExpiryScan = "bidops.supplier.evidence-expiry-scan";
     public const string SupplierMatchRun = "bidops.matching.supplier-match-run";
     public const string OutcomeSupplierExtract = "bidops.outcome.supplier-extract";
+    public const string ReviewQualityBackfill = "bidops.review.quality-backfill";
+}
+
+public static class BidOpsBackgroundJobPriorities
+{
+    public const int Automatic = 0;
+    public const int Manual = 100;
 }
 
 public static class BidOpsCrawlSourceTypes
@@ -96,9 +148,34 @@ public static class BidOpsCrawlSourceTypes
 public static class BidOpsSystemValues
 {
     public const string ModuleName = "BidOps";
+    public const string AiProviderRuntimeSettingKey = "ai.provider";
+    public const string CodexCliModelRuntimeSettingKey = "ai.codex-cli.model";
+    public const string CodexCliReasoningEffortRuntimeSettingKey = "ai.codex-cli.reasoning-effort";
+    public const string CodexCliComplexModelRuntimeSettingKey = "ai.codex-cli.complex.model";
+    public const string CodexCliComplexReasoningEffortRuntimeSettingKey = "ai.codex-cli.complex.reasoning-effort";
+    public const string CodexCliManualReparseModelRuntimeSettingKey = "ai.codex-cli.manual-reparse.model";
+    public const string CodexCliManualReparseReasoningEffortRuntimeSettingKey = "ai.codex-cli.manual-reparse.reasoning-effort";
+    public const string CodexCliReviewerPromptModelRuntimeSettingKey = "ai.codex-cli.reviewer-prompt.model";
+    public const string CodexCliReviewerPromptReasoningEffortRuntimeSettingKey = "ai.codex-cli.reviewer-prompt.reasoning-effort";
+    public const string TaskPauseRuntimeSettingKey = "runtime.task-pause";
+    public const string AiProviderDeepSeek = "DeepSeek";
+    public const string AiProviderCodexCli = "CodexCli";
+    public const string DefaultCodexCliModel = "gpt-5.5";
+    public const string DefaultCodexCliReasoningEffort = "low";
+    public const string DefaultCodexCliComplexReasoningEffort = "medium";
+    public const string DefaultCodexCliManualReparseReasoningEffort = "medium";
+    public const string DefaultCodexCliReviewerPromptReasoningEffort = "xhigh";
     public const string ManualSourceCode = "manual";
     public const string MockSourceCode = "mock-public";
     public const string StateGridEcpSourceCode = "state-grid-ecp";
     public const string LocalStorageProvider = "Local";
     public const string StructuredParserVersion = "v2";
+}
+
+public static class BidOpsCodexCliScenarios
+{
+    public const string Default = "default";
+    public const string Complex = "complex";
+    public const string ManualReparse = "manual-reparse";
+    public const string ReviewerPrompt = "reviewer-prompt";
 }

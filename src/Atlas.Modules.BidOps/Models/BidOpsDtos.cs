@@ -30,6 +30,9 @@ public sealed class CrawlChannelDto
     public string Region { get; set; } = string.Empty;
     public string Industry { get; set; } = string.Empty;
     public bool Enabled { get; set; }
+    public string ScheduleMode { get; set; } = string.Empty;
+    public int? ScanIntervalMinutes { get; set; }
+    public string DailyScanTime { get; set; } = string.Empty;
     public DateTime? LastScanTime { get; set; }
     public DateTime? LastSuccessTime { get; set; }
     public string LastError { get; set; } = string.Empty;
@@ -159,9 +162,128 @@ public sealed class ReviewTaskDto
     public int PackageCount { get; set; }
     public int RequirementCount { get; set; }
     public int RejectRiskCount { get; set; }
+    public int QualityScore { get; set; } = 100;
+    public string RiskLevel { get; set; } = "Low";
+    public int QualityIssueCount { get; set; }
+    public int HighRiskIssueCount { get; set; }
+    public string ReviewRecommendation { get; set; } = "BatchConfirmCandidate";
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
     public DateTime? ReviewedAt { get; set; }
+}
+
+public sealed class ReviewQualityIssueDto
+{
+    public long Id { get; set; }
+    public long ReviewTaskId { get; set; }
+    public long RawNoticeId { get; set; }
+    public long NoticeStagingId { get; set; }
+    public long? PackageStagingId { get; set; }
+    public long? OutcomeSupplierRecordId { get; set; }
+    public long? ProcurementDetailStagingId { get; set; }
+    public string IssueType { get; set; } = string.Empty;
+    public string Severity { get; set; } = string.Empty;
+    public string FieldName { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public string EvidenceJson { get; set; } = string.Empty;
+    public bool IsResolved { get; set; }
+    public long? ResolvedBy { get; set; }
+    public DateTime? ResolvedAt { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+public sealed class BulkReviewTaskActionItemDto
+{
+    public long ReviewTaskId { get; set; }
+    public bool Succeeded { get; set; }
+    public bool Skipped { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public long? JobId { get; set; }
+    public string? JobType { get; set; }
+}
+
+public sealed class BulkReviewTaskActionResultDto
+{
+    public int RequestedCount { get; set; }
+    public int SucceededCount { get; set; }
+    public int FailedCount { get; set; }
+    public int SkippedCount { get; set; }
+    public List<BulkReviewTaskActionItemDto> Items { get; set; } = [];
+}
+
+public sealed class ReviewCorrectionSampleDto
+{
+    public long Id { get; set; }
+    public long ReviewTaskId { get; set; }
+    public long RawNoticeId { get; set; }
+    public string NoticeType { get; set; } = string.Empty;
+    public string SourceKind { get; set; } = string.Empty;
+    public string FieldName { get; set; } = string.Empty;
+    public string OriginalValue { get; set; } = string.Empty;
+    public string CorrectedValue { get; set; } = string.Empty;
+    public string OriginalHeader { get; set; } = string.Empty;
+    public string OriginalRowJson { get; set; } = string.Empty;
+    public string ReviewerPrompt { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+    public long? CreatedBy { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+public sealed class ReviewCorrectionBucketDto
+{
+    public string Key { get; set; } = string.Empty;
+    public int Count { get; set; }
+}
+
+public sealed class ReviewCorrectionAnalysisDto
+{
+    public DateTime GeneratedAtUtc { get; set; }
+    public int TotalSamples { get; set; }
+    public List<ReviewCorrectionBucketDto> TopFields { get; set; } = [];
+    public List<ReviewCorrectionBucketDto> TopOriginalHeaders { get; set; } = [];
+    public List<ReviewCorrectionBucketDto> AmountUnitIssues { get; set; } = [];
+    public List<ReviewCorrectionBucketDto> RequirementIssues { get; set; } = [];
+    public List<ReviewCorrectionBucketDto> ReparsePromptPatterns { get; set; } = [];
+    public List<ReviewCorrectionSampleDto> RecentSamples { get; set; } = [];
+}
+
+public sealed class ReviewEfficiencyMetricsDto
+{
+    public DateTime GeneratedAtUtc { get; set; }
+    public int TodayNewReviewTasks { get; set; }
+    public int PendingReviewTasks { get; set; }
+    public int LowRiskCount { get; set; }
+    public int MediumRiskCount { get; set; }
+    public int HighRiskCount { get; set; }
+    public decimal LowRiskRatio { get; set; }
+    public int BulkApprovedToday { get; set; }
+    public decimal AverageHandlingMinutes { get; set; }
+    public int ReparsePromptSamplesToday { get; set; }
+}
+
+public sealed class ReviewQualityBackfillSampleDto
+{
+    public long ReviewTaskId { get; set; }
+    public long? RawNoticeId { get; set; }
+    public string NoticeType { get; set; } = string.Empty;
+    public int BeforeQualityScore { get; set; }
+    public string BeforeRiskLevel { get; set; } = string.Empty;
+    public int AfterQualityScore { get; set; }
+    public string AfterRiskLevel { get; set; } = string.Empty;
+    public int IssueCount { get; set; }
+    public bool Updated { get; set; }
+    public string Message { get; set; } = string.Empty;
+}
+
+public sealed class ReviewQualityBackfillResultDto
+{
+    public int RequestedMaxItems { get; set; }
+    public int ScannedCount { get; set; }
+    public int CandidateCount { get; set; }
+    public int UpdatedCount { get; set; }
+    public int SkippedCount { get; set; }
+    public bool DryRun { get; set; }
+    public List<ReviewQualityBackfillSampleDto> Samples { get; set; } = [];
 }
 
 public sealed class ProcessingFailureDto
@@ -224,6 +346,74 @@ public sealed class RequirementStagingDto
     public decimal AiConfidence { get; set; }
 }
 
+public sealed class ProcurementDetailStagingDto
+{
+    public long Id { get; set; }
+    public long NoticeStagingId { get; set; }
+    public long? PackageStagingId { get; set; }
+    public long RawNoticeId { get; set; }
+    public long? RawAttachmentId { get; set; }
+    public int? TableIndex { get; set; }
+    public int? RowIndex { get; set; }
+    public string SourceSheetName { get; set; } = string.Empty;
+    public string ProjectCode { get; set; } = string.Empty;
+    public string ProjectName { get; set; } = string.Empty;
+    public string ProcurementApplicationNo { get; set; } = string.Empty;
+    public string LineItemNo { get; set; } = string.Empty;
+    public string MaterialCode { get; set; } = string.Empty;
+    public string LotSequence { get; set; } = string.Empty;
+    public string LotNo { get; set; } = string.Empty;
+    public string LotName { get; set; } = string.Empty;
+    public string EcpLotName { get; set; } = string.Empty;
+    public string PackageNo { get; set; } = string.Empty;
+    public string PackageName { get; set; } = string.Empty;
+    public string PackageType { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public string ProcurementMethod { get; set; } = string.Empty;
+    public string BuyerName { get; set; } = string.Empty;
+    public string ProjectUnit { get; set; } = string.Empty;
+    public string ConstructionUnit { get; set; } = string.Empty;
+    public string ProcurementContent { get; set; } = string.Empty;
+    public string ScopeText { get; set; } = string.Empty;
+    public string ProjectOverview { get; set; } = string.Empty;
+    public string Location { get; set; } = string.Empty;
+    public string VoltageLevel { get; set; } = string.Empty;
+    public decimal? ProcurementAmount { get; set; }
+    public decimal? BudgetAmount { get; set; }
+    public decimal? ItemEstimatedAmount { get; set; }
+    public decimal? PackageEstimatedAmount { get; set; }
+    public decimal? MaxPrice { get; set; }
+    public decimal? MaxPriceRatePercent { get; set; }
+    public decimal? TaxRatePercent { get; set; }
+    public decimal? ResponseGuaranteeAmount { get; set; }
+    public string QuoteMode { get; set; } = string.Empty;
+    public string SettlementMode { get; set; } = string.Empty;
+    public DateTime? PlannedStartDate { get; set; }
+    public DateTime? PlannedCompletionDate { get; set; }
+    public int? ServicePeriodDays { get; set; }
+    public string ServicePeriodText { get; set; } = string.Empty;
+    public string QualificationRequirement { get; set; } = string.Empty;
+    public string PerformanceRequirement { get; set; } = string.Empty;
+    public string PersonnelRequirement { get; set; } = string.Empty;
+    public string OtherRequirement { get; set; } = string.Empty;
+    public string JointVentureAllowed { get; set; } = string.Empty;
+    public string SubcontractAllowed { get; set; } = string.Empty;
+    public string AwardLimit { get; set; } = string.Empty;
+    public string TechnicalSpecId { get; set; } = string.Empty;
+    public string ContractTemplate { get; set; } = string.Empty;
+    public decimal? BusinessWeight { get; set; }
+    public decimal? TechnicalWeight { get; set; }
+    public decimal? PriceWeight { get; set; }
+    public string PriceCalculationMethod { get; set; } = string.Empty;
+    public string PriceParameter { get; set; } = string.Empty;
+    public string Remarks { get; set; } = string.Empty;
+    public string OriginalHeaderJson { get; set; } = string.Empty;
+    public string OriginalRowJson { get; set; } = string.Empty;
+    public string NormalizedFieldsJson { get; set; } = string.Empty;
+    public decimal AiConfidence { get; set; }
+    public ReviewStatus ReviewStatus { get; set; }
+}
+
 public sealed class ReviewBuyerInfoDto
 {
     public long? BuyerId { get; set; }
@@ -248,6 +438,8 @@ public sealed class ReviewTaskDetailDto
     public ReviewBuyerInfoDto? Buyer { get; set; }
     public List<OutcomeSupplierRecordDto> OutcomeSuppliers { get; set; } = [];
     public List<PackageStagingDto> Packages { get; set; } = [];
+    public List<ProcurementDetailStagingDto> ProcurementDetails { get; set; } = [];
+    public List<ReviewQualityIssueDto> QualityIssues { get; set; } = [];
     public List<RawAttachmentDto> Attachments { get; set; } = [];
 }
 
@@ -295,6 +487,77 @@ public sealed class TenderPackageDto
     public string Status { get; set; } = string.Empty;
     public int RequirementCount { get; set; }
     public int RejectRiskCount { get; set; }
+    public List<ProcurementDetailDto> ProcurementDetails { get; set; } = [];
+    public DateTime CreatedAt { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+}
+
+public sealed class ProcurementDetailDto
+{
+    public long Id { get; set; }
+    public long NoticeId { get; set; }
+    public long? TenderPackageId { get; set; }
+    public long? ProcurementDetailStagingId { get; set; }
+    public long RawNoticeId { get; set; }
+    public long? RawAttachmentId { get; set; }
+    public int? TableIndex { get; set; }
+    public int? RowIndex { get; set; }
+    public string SourceSheetName { get; set; } = string.Empty;
+    public string ProjectCode { get; set; } = string.Empty;
+    public string ProjectName { get; set; } = string.Empty;
+    public string ProcurementApplicationNo { get; set; } = string.Empty;
+    public string LineItemNo { get; set; } = string.Empty;
+    public string MaterialCode { get; set; } = string.Empty;
+    public string LotSequence { get; set; } = string.Empty;
+    public string LotNo { get; set; } = string.Empty;
+    public string LotName { get; set; } = string.Empty;
+    public string EcpLotName { get; set; } = string.Empty;
+    public string PackageNo { get; set; } = string.Empty;
+    public string PackageName { get; set; } = string.Empty;
+    public string PackageType { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public string ProcurementMethod { get; set; } = string.Empty;
+    public string BuyerName { get; set; } = string.Empty;
+    public string ProjectUnit { get; set; } = string.Empty;
+    public string ConstructionUnit { get; set; } = string.Empty;
+    public string ProcurementContent { get; set; } = string.Empty;
+    public string ScopeText { get; set; } = string.Empty;
+    public string ProjectOverview { get; set; } = string.Empty;
+    public string Location { get; set; } = string.Empty;
+    public string VoltageLevel { get; set; } = string.Empty;
+    public decimal? ProcurementAmount { get; set; }
+    public decimal? BudgetAmount { get; set; }
+    public decimal? ItemEstimatedAmount { get; set; }
+    public decimal? PackageEstimatedAmount { get; set; }
+    public decimal? MaxPrice { get; set; }
+    public decimal? MaxPriceRatePercent { get; set; }
+    public decimal? TaxRatePercent { get; set; }
+    public decimal? ResponseGuaranteeAmount { get; set; }
+    public string QuoteMode { get; set; } = string.Empty;
+    public string SettlementMode { get; set; } = string.Empty;
+    public DateTime? PlannedStartDate { get; set; }
+    public DateTime? PlannedCompletionDate { get; set; }
+    public int? ServicePeriodDays { get; set; }
+    public string ServicePeriodText { get; set; } = string.Empty;
+    public string QualificationRequirement { get; set; } = string.Empty;
+    public string PerformanceRequirement { get; set; } = string.Empty;
+    public string PersonnelRequirement { get; set; } = string.Empty;
+    public string OtherRequirement { get; set; } = string.Empty;
+    public string JointVentureAllowed { get; set; } = string.Empty;
+    public string SubcontractAllowed { get; set; } = string.Empty;
+    public string AwardLimit { get; set; } = string.Empty;
+    public string TechnicalSpecId { get; set; } = string.Empty;
+    public string ContractTemplate { get; set; } = string.Empty;
+    public decimal? BusinessWeight { get; set; }
+    public decimal? TechnicalWeight { get; set; }
+    public decimal? PriceWeight { get; set; }
+    public string PriceCalculationMethod { get; set; } = string.Empty;
+    public string PriceParameter { get; set; } = string.Empty;
+    public string Remarks { get; set; } = string.Empty;
+    public string OriginalHeaderJson { get; set; } = string.Empty;
+    public string OriginalRowJson { get; set; } = string.Empty;
+    public string NormalizedFieldsJson { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
 }
@@ -473,6 +736,40 @@ public sealed class OutcomeSupplierRecordDto
     public string Currency { get; set; } = string.Empty;
     public string EvidenceText { get; set; } = string.Empty;
     public decimal ExtractionConfidence { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+public sealed class LifecyclePackageLinkDto
+{
+    public long Id { get; set; }
+    public long? ProcurementDetailId { get; set; }
+    public long? ProcurementDetailStagingId { get; set; }
+    public long? TenderPackageId { get; set; }
+    public long? CandidateOutcomeRecordId { get; set; }
+    public long? AwardOutcomeRecordId { get; set; }
+    public long? ProcurementRawNoticeId { get; set; }
+    public long? CandidateRawNoticeId { get; set; }
+    public long? AwardRawNoticeId { get; set; }
+    public string ProjectCode { get; set; } = string.Empty;
+    public string ProjectName { get; set; } = string.Empty;
+    public string LotNo { get; set; } = string.Empty;
+    public string LotName { get; set; } = string.Empty;
+    public string PackageNo { get; set; } = string.Empty;
+    public string PackageName { get; set; } = string.Empty;
+    public string SupplierName { get; set; } = string.Empty;
+    public decimal? FinalAwardAmount { get; set; }
+    public string FinalAwardAmountSource { get; set; } = string.Empty;
+    public string Currency { get; set; } = string.Empty;
+    public decimal MatchScore { get; set; }
+    public string MatchType { get; set; } = string.Empty;
+    public string LinkStatus { get; set; } = string.Empty;
+    public bool RequiresManualReview { get; set; }
+    public string MatchReasonsJson { get; set; } = string.Empty;
+    public string MissingFieldsJson { get; set; } = string.Empty;
+    public string EvidenceJson { get; set; } = string.Empty;
+    public string ManualRemark { get; set; } = string.Empty;
+    public long? ConfirmedBy { get; set; }
+    public DateTime? ConfirmedAt { get; set; }
     public DateTime CreatedAt { get; set; }
 }
 

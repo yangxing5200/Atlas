@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Atlas.Core.Authorization;
 using Atlas.Data.Abstractions;
 using Atlas.Models.Tenant.Responses;
@@ -37,10 +38,14 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
     private readonly IRepository<NoticeStaging> _noticeStaging;
     private readonly IRepository<PackageStaging> _packageStaging;
     private readonly IRepository<RequirementStaging> _requirementStaging;
+    private readonly IRepository<ReviewQualityIssue> _reviewQualityIssues;
+    private readonly IRepository<ReviewCorrectionSample> _reviewCorrectionSamples;
     private readonly IRepository<Buyer> _buyers;
     private readonly IRepository<OutcomeSupplierRecord> _outcomeRecords;
     private readonly IRepository<Notice> _notices;
     private readonly IRepository<TenderPackage> _packages;
+    private readonly IRepository<ProcurementDetailStaging> _procurementDetailStaging;
+    private readonly IRepository<ProcurementDetail> _procurementDetails;
     private readonly IRepository<RequirementItem> _requirements;
     private readonly IBidOpsFileStore _fileStore;
     private readonly ILogger<BidOpsQueryService> _logger;
@@ -55,10 +60,14 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         IRepository<NoticeStaging> noticeStaging,
         IRepository<PackageStaging> packageStaging,
         IRepository<RequirementStaging> requirementStaging,
+        IRepository<ReviewQualityIssue> reviewQualityIssues,
+        IRepository<ReviewCorrectionSample> reviewCorrectionSamples,
         IRepository<Buyer> buyers,
         IRepository<OutcomeSupplierRecord> outcomeRecords,
         IRepository<Notice> notices,
         IRepository<TenderPackage> packages,
+        IRepository<ProcurementDetailStaging> procurementDetailStaging,
+        IRepository<ProcurementDetail> procurementDetails,
         IRepository<RequirementItem> requirements,
         IBidOpsFileStore fileStore,
         ILogger<BidOpsQueryService> logger)
@@ -72,10 +81,14 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         _noticeStaging = noticeStaging ?? throw new ArgumentNullException(nameof(noticeStaging));
         _packageStaging = packageStaging ?? throw new ArgumentNullException(nameof(packageStaging));
         _requirementStaging = requirementStaging ?? throw new ArgumentNullException(nameof(requirementStaging));
+        _reviewQualityIssues = reviewQualityIssues ?? throw new ArgumentNullException(nameof(reviewQualityIssues));
+        _reviewCorrectionSamples = reviewCorrectionSamples ?? throw new ArgumentNullException(nameof(reviewCorrectionSamples));
         _buyers = buyers ?? throw new ArgumentNullException(nameof(buyers));
         _outcomeRecords = outcomeRecords ?? throw new ArgumentNullException(nameof(outcomeRecords));
         _notices = notices ?? throw new ArgumentNullException(nameof(notices));
         _packages = packages ?? throw new ArgumentNullException(nameof(packages));
+        _procurementDetailStaging = procurementDetailStaging ?? throw new ArgumentNullException(nameof(procurementDetailStaging));
+        _procurementDetails = procurementDetails ?? throw new ArgumentNullException(nameof(procurementDetails));
         _requirements = requirements ?? throw new ArgumentNullException(nameof(requirements));
         _fileStore = fileStore ?? throw new ArgumentNullException(nameof(fileStore));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -142,6 +155,9 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
                 Region = x.Region,
                 Industry = x.Industry,
                 Enabled = x.Enabled,
+                ScheduleMode = x.ScheduleMode,
+                ScanIntervalMinutes = x.ScanIntervalMinutes,
+                DailyScanTime = x.DailyScanTime,
                 LastScanTime = x.LastScanTime,
                 LastSuccessTime = x.LastSuccessTime,
                 LastError = x.LastError
@@ -396,11 +412,31 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         if (!string.IsNullOrWhiteSpace(query.Keyword))
         {
             var keyword = query.Keyword.Trim();
-            builder = builder.Where(x => x.TaskTitle.Contains(keyword));
+            var keywordNoticeStagingIds = await FindReviewNoticeStagingIdsBySearchTermAsync(
+                keyword,
+                includeNoticeSummaryFields: true,
+                ct);
+            builder = keywordNoticeStagingIds.Count == 0
+                ? builder.Where(x => x.TaskTitle.Contains(keyword))
+                : builder.Where(x =>
+                    x.TaskTitle.Contains(keyword) ||
+                    (x.BizType == "NoticeStaging" && keywordNoticeStagingIds.Contains(x.BizId)));
         }
 
         if (query.Status.HasValue)
             builder = builder.Where(x => x.Status == query.Status.Value);
+
+        if (!string.IsNullOrWhiteSpace(query.ProjectCode))
+        {
+            var projectCode = query.ProjectCode.Trim();
+            var projectCodeNoticeStagingIds = await FindReviewNoticeStagingIdsBySearchTermAsync(
+                projectCode,
+                includeNoticeSummaryFields: false,
+                ct);
+            builder = projectCodeNoticeStagingIds.Count == 0
+                ? builder.Where(x => false)
+                : builder.Where(x => x.BizType == "NoticeStaging" && projectCodeNoticeStagingIds.Contains(x.BizId));
+        }
 
         if (!string.IsNullOrWhiteSpace(query.NoticeType))
         {
@@ -415,9 +451,41 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
                 : builder.Where(x => x.BizType == "NoticeStaging" && noticeStagingIds.Contains(x.BizId));
         }
 
+        if (TryParseEnum<ReviewQualityRiskLevel>(query.RiskLevel, out var riskLevel))
+            builder = builder.Where(x => x.RiskLevel == riskLevel);
+
+        if (query.MinQualityScore.HasValue)
+            builder = builder.Where(x => x.QualityScore >= query.MinQualityScore.Value);
+
+        if (query.MaxQualityScore.HasValue)
+            builder = builder.Where(x => x.QualityScore <= query.MaxQualityScore.Value);
+
+        if (query.HasHighRiskIssue.HasValue)
+        {
+            builder = query.HasHighRiskIssue.Value
+                ? builder.Where(x => x.HighRiskIssueCount > 0)
+                : builder.Where(x => x.HighRiskIssueCount == 0);
+        }
+
+        if (TryParseEnum<ReviewRecommendation>(query.ReviewRecommendation, out var recommendation))
+            builder = builder.Where(x => x.ReviewRecommendation == recommendation);
+
+        if (!string.IsNullOrWhiteSpace(query.IssueType))
+        {
+            var issueType = query.IssueType.Trim();
+            var issueQuery = await _reviewQualityIssues.QueryDataScopeAsync(BidOpsDataResources.ReviewTask, AtlasDataScopeType.AllTenant, ct);
+            var reviewTaskIds = await issueQuery
+                .Where(x => x.IssueType == issueType && !x.IsResolved)
+                .SelectToListAsync(x => x.ReviewTaskId, ct);
+
+            builder = reviewTaskIds.Count == 0
+                ? builder.Where(x => false)
+                : builder.Where(x => reviewTaskIds.Contains(x.Id));
+        }
+
         var total = await builder.CountAsync(ct);
         var tasks = await builder
-            .OrderByDescending(x => x.CreatedAt)
+            .OrderByDescending(x => (int)x.RiskLevel * 10000 + x.HighRiskIssueCount * 100 + (100 - x.QualityScore))
             .Skip((pageIndex - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(ct);
@@ -425,6 +493,115 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         await EnrichReviewTaskSummariesAsync(items, ct);
 
         return new PagedResult<ReviewTaskDto>(total, items, pageIndex, pageSize);
+    }
+
+    public async Task<ReviewCorrectionAnalysisDto> GetReviewCorrectionAnalysisAsync(
+        ReviewCorrectionAnalysisQuery query,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var builder = await _reviewCorrectionSamples.QueryDataScopeAsync(BidOpsDataResources.ReviewTask, AtlasDataScopeType.AllTenant, ct);
+        if (!string.IsNullOrWhiteSpace(query.SourceKind))
+        {
+            var sourceKind = query.SourceKind.Trim();
+            builder = builder.Where(x => x.SourceKind == sourceKind);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.NoticeType))
+        {
+            var noticeType = query.NoticeType.Trim();
+            builder = builder.Where(x => x.NoticeType == noticeType);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.FieldName))
+        {
+            var fieldName = query.FieldName.Trim();
+            builder = builder.Where(x => x.FieldName == fieldName);
+        }
+
+        if (query.From.HasValue)
+            builder = builder.Where(x => x.CreatedAt >= query.From.Value);
+        if (query.To.HasValue)
+            builder = builder.Where(x => x.CreatedAt <= query.To.Value);
+
+        var samples = await builder
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(2000)
+            .ToListAsync(ct);
+
+        if (!string.IsNullOrWhiteSpace(query.Keyword))
+        {
+            var keyword = query.Keyword.Trim();
+            samples = samples
+                .Where(x =>
+                    x.FieldName.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                    x.OriginalHeader.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                    x.OriginalValue.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                    x.CorrectedValue.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                    x.ReviewerPrompt.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                    x.Reason.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        return new ReviewCorrectionAnalysisDto
+        {
+            GeneratedAtUtc = DateTime.UtcNow,
+            TotalSamples = samples.Count,
+            TopFields = BuildBuckets(samples.Select(x => x.FieldName)),
+            TopOriginalHeaders = BuildBuckets(samples.Select(x => x.OriginalHeader)),
+            AmountUnitIssues = BuildBuckets(samples
+                .Where(IsAmountCorrectionSample)
+                .Select(x => FirstNonEmpty(x.OriginalHeader, x.FieldName))),
+            RequirementIssues = BuildBuckets(samples
+                .Where(IsRequirementCorrectionSample)
+                .Select(x => FirstNonEmpty(x.FieldName, x.OriginalHeader))),
+            ReparsePromptPatterns = BuildBuckets(samples
+                .Where(x => x.SourceKind == BidOpsReviewCorrectionSourceKinds.ReparsePrompt)
+                .Select(x => SummarizePromptPattern(x.ReviewerPrompt))),
+            RecentSamples = samples
+                .Take(20)
+                .Select(MapReviewCorrectionSample)
+                .ToList()
+        };
+    }
+
+    public async Task<ReviewEfficiencyMetricsDto> GetReviewEfficiencyMetricsAsync(CancellationToken ct = default)
+    {
+        var today = DateTime.UtcNow.Date;
+        var taskBuilder = await _reviewTasks.QueryDataScopeAsync(BidOpsDataResources.ReviewTask, AtlasDataScopeType.AllTenant, ct);
+        var tasks = await taskBuilder.ToListAsync(ct);
+        var pendingTasks = tasks
+            .Where(x => x.Status is ReviewTaskStatus.Pending or ReviewTaskStatus.InReview or ReviewTaskStatus.ReparseRequired)
+            .ToList();
+        var reviewedToday = tasks
+            .Where(x => x.ReviewedAt.HasValue && x.ReviewedAt.Value >= today)
+            .ToList();
+
+        var correctionBuilder = await _reviewCorrectionSamples.QueryDataScopeAsync(BidOpsDataResources.ReviewTask, AtlasDataScopeType.AllTenant, ct);
+        var todaySamples = await correctionBuilder
+            .Where(x => x.CreatedAt >= today)
+            .ToListAsync(ct);
+
+        var averageHandlingMinutes = reviewedToday.Count == 0
+            ? 0m
+            : (decimal)reviewedToday.Average(x => Math.Max(0, (x.ReviewedAt!.Value - x.CreatedAt).TotalMinutes));
+
+        return new ReviewEfficiencyMetricsDto
+        {
+            GeneratedAtUtc = DateTime.UtcNow,
+            TodayNewReviewTasks = tasks.Count(x => x.CreatedAt >= today),
+            PendingReviewTasks = pendingTasks.Count,
+            LowRiskCount = pendingTasks.Count(x => x.RiskLevel == ReviewQualityRiskLevel.Low),
+            MediumRiskCount = pendingTasks.Count(x => x.RiskLevel == ReviewQualityRiskLevel.Medium),
+            HighRiskCount = pendingTasks.Count(x => x.RiskLevel == ReviewQualityRiskLevel.High),
+            LowRiskRatio = pendingTasks.Count == 0
+                ? 0
+                : Math.Round(pendingTasks.Count(x => x.RiskLevel == ReviewQualityRiskLevel.Low) * 100m / pendingTasks.Count, 2),
+            BulkApprovedToday = todaySamples.Count(x => x.SourceKind == BidOpsReviewCorrectionSourceKinds.BulkApprove),
+            AverageHandlingMinutes = Math.Round((decimal)averageHandlingMinutes, 2),
+            ReparsePromptSamplesToday = todaySamples.Count(x => x.SourceKind == BidOpsReviewCorrectionSourceKinds.ReparsePrompt)
+        };
     }
 
     public async Task<PagedResult<ProcessingFailureDto>> SearchProcessingFailuresAsync(
@@ -464,6 +641,36 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         return new PagedResult<ProcessingFailureDto>(total, items, pageIndex, pageSize);
     }
 
+    public async Task<IReadOnlyList<long>> GetReviewTaskBackgroundJobIdsAsync(long id, CancellationToken ct = default)
+    {
+        var task = await _reviewTasks.GetByIdAsync(id, ct);
+        if (task == null)
+            return [];
+
+        var sampleQuery = await _reviewCorrectionSamples.QueryDataScopeAsync(
+            BidOpsDataResources.ReviewTask,
+            AtlasDataScopeType.AllTenant,
+            ct);
+        var evidenceItems = await sampleQuery
+            .Where(x =>
+                x.ReviewTaskId == id &&
+                x.SourceKind == BidOpsReviewCorrectionSourceKinds.ReparsePrompt &&
+                x.OriginalRowJson.Contains("backgroundJobId"))
+            .OrderByDescending(x => x.CreatedAt)
+            .Select(x => x.OriginalRowJson)
+            .ToListAsync(ct);
+
+        var jobIds = new List<long>();
+        var seen = new HashSet<long>();
+        foreach (var evidenceJson in evidenceItems)
+        {
+            if (TryReadBackgroundJobId(evidenceJson, out var jobId) && seen.Add(jobId))
+                jobIds.Add(jobId);
+        }
+
+        return jobIds;
+    }
+
     public async Task<ReviewTaskDetailDto?> GetReviewTaskDetailAsync(long id, CancellationToken ct = default)
     {
         var task = await _reviewTasks.GetByIdAsync(id, ct);
@@ -479,6 +686,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             : null;
 
         var packageDtos = new List<PackageStagingDto>();
+        var procurementDetailDtos = new List<ProcurementDetailStagingDto>();
         if (notice != null)
         {
             var packagesQuery = await _packageStaging.QueryDataScopeAsync(BidOpsDataResources.ReviewTask, AtlasDataScopeType.AllTenant, ct);
@@ -518,6 +726,17 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
                         .ToList()
                 })
                 .ToList();
+
+            var procurementDetailQuery = await _procurementDetailStaging.QueryDataScopeAsync(BidOpsDataResources.ReviewTask, AtlasDataScopeType.AllTenant, ct);
+            var procurementDetails = await procurementDetailQuery
+                .Where(x => x.NoticeStagingId == notice.Id)
+                .ToListAsync(ct);
+            procurementDetailDtos = procurementDetails
+                .OrderBy(x => x.TableIndex ?? int.MaxValue)
+                .ThenBy(x => x.RowIndex ?? int.MaxValue)
+                .ThenBy(x => x.Id)
+                .Select(MapProcurementDetailStaging)
+                .ToList();
         }
 
         var rawDto = raw == null ? null : Map(raw);
@@ -533,6 +752,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             outcomeRecords = await BuildOutcomeSupplierPreviewRecordsAsync(raw, ct);
 
         var buyer = await BuildReviewBuyerInfoAsync(notice, raw, packageDtos.Count, outcomeRecords, ct);
+        var qualityIssues = await ListReviewQualityIssuesAsync(task.Id, ct);
 
         var taskDto = Map(task);
         if (notice != null)
@@ -546,8 +766,80 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             Buyer = buyer,
             OutcomeSuppliers = outcomeRecords.Select(MapOutcomeRecord).ToList(),
             Packages = packageDtos,
+            ProcurementDetails = procurementDetailDtos,
+            QualityIssues = qualityIssues.Select(MapReviewQualityIssue).ToList(),
             Attachments = attachments.ToList()
         };
+    }
+
+    private async Task<List<ReviewQualityIssue>> ListReviewQualityIssuesAsync(long reviewTaskId, CancellationToken ct)
+    {
+        var builder = await _reviewQualityIssues.QueryDataScopeAsync(BidOpsDataResources.ReviewTask, AtlasDataScopeType.AllTenant, ct);
+        var issues = await builder
+            .Where(x => x.ReviewTaskId == reviewTaskId)
+            .ToListAsync(ct);
+        return issues
+            .OrderBy(x => x.IsResolved)
+            .ThenByDescending(x => x.Severity)
+            .ThenBy(x => x.CreatedAt)
+            .ThenBy(x => x.Id)
+            .ToList();
+    }
+
+    private async Task<List<long>> FindReviewNoticeStagingIdsBySearchTermAsync(
+        string searchTerm,
+        bool includeNoticeSummaryFields,
+        CancellationToken ct)
+    {
+        var term = searchTerm.Trim();
+        if (string.IsNullOrWhiteSpace(term))
+            return [];
+
+        var ids = new HashSet<long>();
+
+        var noticeQuery = await _noticeStaging.QueryDataScopeAsync(BidOpsDataResources.ReviewTask, AtlasDataScopeType.AllTenant, ct);
+        var noticeIds = includeNoticeSummaryFields
+            ? await noticeQuery
+                .Where(x =>
+                    x.ProjectCode.Contains(term) ||
+                    x.ProjectName.Contains(term) ||
+                    x.BuyerName.Contains(term))
+                .SelectToListAsync(x => x.Id, ct)
+            : await noticeQuery
+                .Where(x => x.ProjectCode.Contains(term))
+                .SelectToListAsync(x => x.Id, ct);
+        foreach (var id in noticeIds)
+            ids.Add(id);
+
+        var procurementDetailQuery = await _procurementDetailStaging.QueryDataScopeAsync(
+            BidOpsDataResources.ReviewTask,
+            AtlasDataScopeType.AllTenant,
+            ct);
+        var procurementNoticeIds = await procurementDetailQuery
+            .Where(x => x.ProjectCode.Contains(term))
+            .SelectToListAsync(x => x.NoticeStagingId, ct);
+        foreach (var id in procurementNoticeIds)
+            ids.Add(id);
+
+        var outcomeQuery = await _outcomeRecords.QueryDataScopeAsync(BidOpsDataResources.ReviewTask, AtlasDataScopeType.AllTenant, ct);
+        var outcomeRawNoticeIds = await outcomeQuery
+            .Where(x => x.ProjectCode.Contains(term))
+            .SelectToListAsync(x => x.RawNoticeId, ct);
+        if (outcomeRawNoticeIds.Count > 0)
+        {
+            var rawNoticeIds = outcomeRawNoticeIds.Distinct().ToArray();
+            var outcomeNoticeQuery = await _noticeStaging.QueryDataScopeAsync(
+                BidOpsDataResources.ReviewTask,
+                AtlasDataScopeType.AllTenant,
+                ct);
+            var outcomeNoticeIds = await outcomeNoticeQuery
+                .Where(x => rawNoticeIds.Contains(x.RawNoticeId))
+                .SelectToListAsync(x => x.Id, ct);
+            foreach (var id in outcomeNoticeIds)
+                ids.Add(id);
+        }
+
+        return ids.ToList();
     }
 
     private async Task EnrichReviewTaskSummariesAsync(List<ReviewTaskDto> tasks, CancellationToken ct)
@@ -628,6 +920,64 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         task.RejectRiskCount = packages.Sum(x => x.Requirements.Count(requirement => requirement.IsRejectRisk));
     }
 
+    private static bool TryParseEnum<TEnum>(string? value, out TEnum result)
+        where TEnum : struct, Enum
+    {
+        result = default;
+        return !string.IsNullOrWhiteSpace(value) &&
+               Enum.TryParse(value.Trim(), ignoreCase: true, out result);
+    }
+
+    private static List<ReviewCorrectionBucketDto> BuildBuckets(IEnumerable<string?> values, int take = 10)
+    {
+        return values
+            .Select(x => string.IsNullOrWhiteSpace(x) ? "未标注" : x.Trim())
+            .GroupBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .Select(x => new ReviewCorrectionBucketDto
+            {
+                Key = x.Key,
+                Count = x.Count()
+            })
+            .OrderByDescending(x => x.Count)
+            .ThenBy(x => x.Key)
+            .Take(take)
+            .ToList();
+    }
+
+    private static bool IsAmountCorrectionSample(ReviewCorrectionSample sample)
+    {
+        var text = string.Join(' ', sample.FieldName, sample.OriginalHeader, sample.Reason, sample.OriginalValue, sample.CorrectedValue);
+        return ContainsAny(text, "Amount", "Price", "金额", "限价", "报价", "万元", "折扣", "费率", "%", "％");
+    }
+
+    private static bool IsRequirementCorrectionSample(ReviewCorrectionSample sample)
+    {
+        var text = string.Join(' ', sample.FieldName, sample.OriginalHeader, sample.Reason, sample.OriginalValue, sample.CorrectedValue);
+        return ContainsAny(text, "Requirement", "Qualification", "Performance", "Personnel", "资质", "资格", "业绩", "人员");
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        }
+
+        return "未标注";
+    }
+
+    private static string SummarizePromptPattern(string? prompt)
+    {
+        var value = string.IsNullOrWhiteSpace(prompt) ? "未填写提示词" : prompt.Trim();
+        return value.Length <= 80 ? value : value[..80];
+    }
+
+    private static bool ContainsAny(string value, params string[] tokens)
+    {
+        return tokens.Any(token => value.Contains(token, StringComparison.OrdinalIgnoreCase));
+    }
+
     private async Task<string> ReadRawTextContentAsync(RawNotice raw, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(raw.TextContentStorageKey))
@@ -701,14 +1051,14 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
                 SourceUrl = Truncate(raw.DetailUrl, 1500),
                 NoticeTitle = Truncate(raw.Title, 500),
                 NoticeType = Truncate(raw.NoticeType, 64),
-                ProjectName = Truncate(FirstMeaningful(extract.ProjectName, raw.Title), 500),
+                ProjectName = Truncate(extract.ProjectName, 500),
                 ProjectCode = Truncate(extract.ProjectCode, 128),
                 BuyerName = Truncate(extract.BuyerName, 300),
                 PublishTime = raw.PublishTime,
                 LotNo = Truncate(extract.LotNo, 128),
                 LotName = Truncate(extract.LotName, 300),
                 PackageNo = Truncate(extract.PackageNo, 128),
-                PackageName = Truncate(FirstMeaningful(extract.PackageName, extract.LotName, raw.Title), 500),
+                PackageName = Truncate(ClearIfSameMeaningfulValue(extract.PackageName, extract.ProjectName), 500),
                 Category = Truncate(extract.Category, 128),
                 SupplierName = supplierName,
                 SupplierNameNormalized = supplierNameNormalized,
@@ -1275,7 +1625,8 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
 
         var notice = await GetPackageNoticeAsync(package.NoticeId, ct);
         var requirements = await ListRequirementEntitiesAsync(package.Id, ct);
-        return MapPackage(package, notice, requirements);
+        var procurementDetails = await ListProcurementDetailEntitiesAsync(package.Id, ct);
+        return MapPackage(package, notice, requirements, procurementDetails);
     }
 
     public async Task<IReadOnlyList<PackageTimelineItemDto>> GetPackageTimelineAsync(long id, CancellationToken ct = default)
@@ -1381,10 +1732,168 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             .ToListAsync(ct);
     }
 
+    private async Task<List<ProcurementDetail>> ListProcurementDetailEntitiesAsync(long packageId, CancellationToken ct)
+    {
+        var builder = await _procurementDetails.QueryDataScopeAsync(BidOpsDataResources.TenderPackage, AtlasDataScopeType.AllTenant, ct);
+        var details = await builder
+            .Where(x => x.TenderPackageId == packageId)
+            .ToListAsync(ct);
+        return details
+            .OrderBy(x => x.TableIndex ?? int.MaxValue)
+            .ThenBy(x => x.RowIndex ?? int.MaxValue)
+            .ThenBy(x => x.Id)
+            .ToList();
+    }
+
+    private static ProcurementDetailStagingDto MapProcurementDetailStaging(ProcurementDetailStaging detail)
+    {
+        return new ProcurementDetailStagingDto
+        {
+            Id = detail.Id,
+            NoticeStagingId = detail.NoticeStagingId,
+            PackageStagingId = detail.PackageStagingId,
+            RawNoticeId = detail.RawNoticeId,
+            RawAttachmentId = detail.RawAttachmentId,
+            TableIndex = detail.TableIndex,
+            RowIndex = detail.RowIndex,
+            SourceSheetName = detail.SourceSheetName,
+            ProjectCode = detail.ProjectCode,
+            ProjectName = detail.ProjectName,
+            ProcurementApplicationNo = detail.ProcurementApplicationNo,
+            LineItemNo = detail.LineItemNo,
+            MaterialCode = detail.MaterialCode,
+            LotSequence = detail.LotSequence,
+            LotNo = detail.LotNo,
+            LotName = detail.LotName,
+            EcpLotName = detail.EcpLotName,
+            PackageNo = detail.PackageNo,
+            PackageName = detail.PackageName,
+            PackageType = detail.PackageType,
+            Category = detail.Category,
+            ProcurementMethod = detail.ProcurementMethod,
+            BuyerName = detail.BuyerName,
+            ProjectUnit = detail.ProjectUnit,
+            ConstructionUnit = detail.ConstructionUnit,
+            ProcurementContent = detail.ProcurementContent,
+            ScopeText = detail.ScopeText,
+            ProjectOverview = detail.ProjectOverview,
+            Location = detail.Location,
+            VoltageLevel = detail.VoltageLevel,
+            ProcurementAmount = detail.ProcurementAmount,
+            BudgetAmount = detail.BudgetAmount,
+            ItemEstimatedAmount = detail.ItemEstimatedAmount,
+            PackageEstimatedAmount = detail.PackageEstimatedAmount,
+            MaxPrice = detail.MaxPrice,
+            MaxPriceRatePercent = detail.MaxPriceRatePercent,
+            TaxRatePercent = detail.TaxRatePercent,
+            ResponseGuaranteeAmount = detail.ResponseGuaranteeAmount,
+            QuoteMode = detail.QuoteMode,
+            SettlementMode = detail.SettlementMode,
+            PlannedStartDate = detail.PlannedStartDate,
+            PlannedCompletionDate = detail.PlannedCompletionDate,
+            ServicePeriodDays = detail.ServicePeriodDays,
+            ServicePeriodText = detail.ServicePeriodText,
+            QualificationRequirement = detail.QualificationRequirement,
+            PerformanceRequirement = detail.PerformanceRequirement,
+            PersonnelRequirement = detail.PersonnelRequirement,
+            OtherRequirement = detail.OtherRequirement,
+            JointVentureAllowed = detail.JointVentureAllowed,
+            SubcontractAllowed = detail.SubcontractAllowed,
+            AwardLimit = detail.AwardLimit,
+            TechnicalSpecId = detail.TechnicalSpecId,
+            ContractTemplate = detail.ContractTemplate,
+            BusinessWeight = detail.BusinessWeight,
+            TechnicalWeight = detail.TechnicalWeight,
+            PriceWeight = detail.PriceWeight,
+            PriceCalculationMethod = detail.PriceCalculationMethod,
+            PriceParameter = detail.PriceParameter,
+            Remarks = detail.Remarks,
+            OriginalHeaderJson = detail.OriginalHeaderJson,
+            OriginalRowJson = detail.OriginalRowJson,
+            NormalizedFieldsJson = detail.NormalizedFieldsJson,
+            AiConfidence = detail.AiConfidence,
+            ReviewStatus = detail.ReviewStatus
+        };
+    }
+
+    private static ProcurementDetailDto MapProcurementDetail(ProcurementDetail detail)
+    {
+        return new ProcurementDetailDto
+        {
+            Id = detail.Id,
+            NoticeId = detail.NoticeId,
+            TenderPackageId = detail.TenderPackageId,
+            ProcurementDetailStagingId = detail.ProcurementDetailStagingId,
+            RawNoticeId = detail.RawNoticeId,
+            RawAttachmentId = detail.RawAttachmentId,
+            TableIndex = detail.TableIndex,
+            RowIndex = detail.RowIndex,
+            SourceSheetName = detail.SourceSheetName,
+            ProjectCode = detail.ProjectCode,
+            ProjectName = detail.ProjectName,
+            ProcurementApplicationNo = detail.ProcurementApplicationNo,
+            LineItemNo = detail.LineItemNo,
+            MaterialCode = detail.MaterialCode,
+            LotSequence = detail.LotSequence,
+            LotNo = detail.LotNo,
+            LotName = detail.LotName,
+            EcpLotName = detail.EcpLotName,
+            PackageNo = detail.PackageNo,
+            PackageName = detail.PackageName,
+            PackageType = detail.PackageType,
+            Category = detail.Category,
+            ProcurementMethod = detail.ProcurementMethod,
+            BuyerName = detail.BuyerName,
+            ProjectUnit = detail.ProjectUnit,
+            ConstructionUnit = detail.ConstructionUnit,
+            ProcurementContent = detail.ProcurementContent,
+            ScopeText = detail.ScopeText,
+            ProjectOverview = detail.ProjectOverview,
+            Location = detail.Location,
+            VoltageLevel = detail.VoltageLevel,
+            ProcurementAmount = detail.ProcurementAmount,
+            BudgetAmount = detail.BudgetAmount,
+            ItemEstimatedAmount = detail.ItemEstimatedAmount,
+            PackageEstimatedAmount = detail.PackageEstimatedAmount,
+            MaxPrice = detail.MaxPrice,
+            MaxPriceRatePercent = detail.MaxPriceRatePercent,
+            TaxRatePercent = detail.TaxRatePercent,
+            ResponseGuaranteeAmount = detail.ResponseGuaranteeAmount,
+            QuoteMode = detail.QuoteMode,
+            SettlementMode = detail.SettlementMode,
+            PlannedStartDate = detail.PlannedStartDate,
+            PlannedCompletionDate = detail.PlannedCompletionDate,
+            ServicePeriodDays = detail.ServicePeriodDays,
+            ServicePeriodText = detail.ServicePeriodText,
+            QualificationRequirement = detail.QualificationRequirement,
+            PerformanceRequirement = detail.PerformanceRequirement,
+            PersonnelRequirement = detail.PersonnelRequirement,
+            OtherRequirement = detail.OtherRequirement,
+            JointVentureAllowed = detail.JointVentureAllowed,
+            SubcontractAllowed = detail.SubcontractAllowed,
+            AwardLimit = detail.AwardLimit,
+            TechnicalSpecId = detail.TechnicalSpecId,
+            ContractTemplate = detail.ContractTemplate,
+            BusinessWeight = detail.BusinessWeight,
+            TechnicalWeight = detail.TechnicalWeight,
+            PriceWeight = detail.PriceWeight,
+            PriceCalculationMethod = detail.PriceCalculationMethod,
+            PriceParameter = detail.PriceParameter,
+            Remarks = detail.Remarks,
+            OriginalHeaderJson = detail.OriginalHeaderJson,
+            OriginalRowJson = detail.OriginalRowJson,
+            NormalizedFieldsJson = detail.NormalizedFieldsJson,
+            Status = detail.Status,
+            CreatedAt = detail.CreatedAt,
+            UpdatedAt = detail.UpdatedAt
+        };
+    }
+
     private static TenderPackageDto MapPackage(
         TenderPackage package,
         Notice? notice,
-        IReadOnlyCollection<RequirementItem> requirements)
+        IReadOnlyCollection<RequirementItem> requirements,
+        IReadOnlyCollection<ProcurementDetail>? procurementDetails = null)
     {
         return new TenderPackageDto
         {
@@ -1412,6 +1921,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             Status = package.Status,
             RequirementCount = requirements.Count,
             RejectRiskCount = requirements.Count(x => x.IsRejectRisk),
+            ProcurementDetails = procurementDetails?.Select(MapProcurementDetail).ToList() ?? [],
             CreatedAt = package.CreatedAt,
             UpdatedAt = package.UpdatedAt
         };
@@ -1501,10 +2011,79 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             Status = task.Status,
             Decision = task.Decision,
             Remark = task.Remark,
+            QualityScore = task.QualityScore,
+            RiskLevel = task.RiskLevel.ToString(),
+            QualityIssueCount = task.QualityIssueCount,
+            HighRiskIssueCount = task.HighRiskIssueCount,
+            ReviewRecommendation = task.ReviewRecommendation.ToString(),
             CreatedAt = task.CreatedAt,
             UpdatedAt = task.UpdatedAt,
             ReviewedAt = task.ReviewedAt
         };
+    }
+
+    private static ReviewQualityIssueDto MapReviewQualityIssue(ReviewQualityIssue issue)
+    {
+        return new ReviewQualityIssueDto
+        {
+            Id = issue.Id,
+            ReviewTaskId = issue.ReviewTaskId,
+            RawNoticeId = issue.RawNoticeId,
+            NoticeStagingId = issue.NoticeStagingId,
+            PackageStagingId = issue.PackageStagingId,
+            OutcomeSupplierRecordId = issue.OutcomeSupplierRecordId,
+            ProcurementDetailStagingId = issue.ProcurementDetailStagingId,
+            IssueType = issue.IssueType,
+            Severity = issue.Severity.ToString(),
+            FieldName = issue.FieldName,
+            Message = issue.Message,
+            EvidenceJson = issue.EvidenceJson,
+            IsResolved = issue.IsResolved,
+            ResolvedBy = issue.ResolvedBy,
+            ResolvedAt = issue.ResolvedAt,
+            CreatedAt = issue.CreatedAt
+        };
+    }
+
+    private static ReviewCorrectionSampleDto MapReviewCorrectionSample(ReviewCorrectionSample sample)
+    {
+        return new ReviewCorrectionSampleDto
+        {
+            Id = sample.Id,
+            ReviewTaskId = sample.ReviewTaskId,
+            RawNoticeId = sample.RawNoticeId,
+            NoticeType = sample.NoticeType,
+            SourceKind = sample.SourceKind,
+            FieldName = sample.FieldName,
+            OriginalValue = sample.OriginalValue,
+            CorrectedValue = sample.CorrectedValue,
+            OriginalHeader = sample.OriginalHeader,
+            OriginalRowJson = sample.OriginalRowJson,
+            ReviewerPrompt = sample.ReviewerPrompt,
+            Reason = sample.Reason,
+            CreatedBy = sample.CreatedBy,
+            CreatedAt = sample.CreatedAt
+        };
+    }
+
+    private static bool TryReadBackgroundJobId(string? evidenceJson, out long jobId)
+    {
+        jobId = 0;
+        if (string.IsNullOrWhiteSpace(evidenceJson))
+            return false;
+
+        try
+        {
+            using var document = JsonDocument.Parse(evidenceJson);
+            return document.RootElement.ValueKind == JsonValueKind.Object &&
+                   document.RootElement.TryGetProperty("backgroundJobId", out var property) &&
+                   property.TryGetInt64(out jobId) &&
+                   jobId > 0;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private static NoticeStagingDto Map(NoticeStaging notice)
@@ -1592,6 +2171,29 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         }
 
         return string.Empty;
+    }
+
+    private static string ClearIfSameMeaningfulValue(string? value, string? other)
+    {
+        var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+        var normalized = NormalizeLooseText(cleaned);
+        var otherNormalized = NormalizeLooseText(other);
+        return !string.IsNullOrWhiteSpace(normalized) &&
+               string.Equals(normalized, otherNormalized, StringComparison.Ordinal)
+            ? string.Empty
+            : cleaned;
+    }
+
+    private static string NormalizeLooseText(string? value)
+    {
+        var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+        if (string.IsNullOrWhiteSpace(cleaned))
+            return string.Empty;
+
+        return new string(cleaned
+                .Where(x => !char.IsWhiteSpace(x) && !"　:：,，;；。.!！".Contains(x))
+                .ToArray())
+            .ToUpperInvariant();
     }
 
     private static string Truncate(string? value, int maxLength)

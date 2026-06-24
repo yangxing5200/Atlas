@@ -1,6 +1,7 @@
 using Atlas.BackgroundTasks;
 using Atlas.Core.Services;
 using Atlas.Modules.BidOps.Models;
+using Atlas.Modules.BidOps.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -11,17 +12,20 @@ public sealed class BidOpsSupplierMaintenanceTask : IRecurringTask
     private readonly IConfiguration _configuration;
     private readonly IExecutionIdentityAccessor _identityAccessor;
     private readonly IBackgroundJobClient _jobs;
+    private readonly IBidOpsRuntimeControlService _runtimeControl;
     private readonly ILogger<BidOpsSupplierMaintenanceTask> _logger;
 
     public BidOpsSupplierMaintenanceTask(
         IConfiguration configuration,
         IExecutionIdentityAccessor identityAccessor,
         IBackgroundJobClient jobs,
+        IBidOpsRuntimeControlService runtimeControl,
         ILogger<BidOpsSupplierMaintenanceTask> logger)
     {
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _identityAccessor = identityAccessor ?? throw new ArgumentNullException(nameof(identityAccessor));
         _jobs = jobs ?? throw new ArgumentNullException(nameof(jobs));
+        _runtimeControl = runtimeControl ?? throw new ArgumentNullException(nameof(runtimeControl));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -63,6 +67,12 @@ public sealed class BidOpsSupplierMaintenanceTask : IRecurringTask
 
         foreach (var tenantId in tenantIds)
         {
+            if (await _runtimeControl.IsTaskPausedAsync(tenantId, ct))
+            {
+                _logger.LogInformation("BidOps supplier maintenance skipped for tenant {TenantId} because global task pause is enabled.", tenantId);
+                continue;
+            }
+
             using var identity = _identityAccessor.Begin(new ExecutionIdentitySnapshot(
                 tenantId,
                 StoreId: null,
