@@ -372,7 +372,13 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
         foreach (var award in awards)
         {
             var packageCandidates = candidates
-                .Where(candidate => PackageContextMatches(award.LotNo, award.NormalizedPackageNo, candidate.LotNo, candidate.NormalizedPackageNo))
+                .Where(candidate => PackageContextMatches(
+                    award.LotNo,
+                    award.LotName,
+                    award.NormalizedPackageNo,
+                    candidate.LotNo,
+                    null,
+                    candidate.NormalizedPackageNo))
                 .Where(candidate => ProjectMatches(award.ProjectCode, award.ProjectName, candidate.ProjectCode, candidate.ProjectName))
                 .OrderBy(candidate => candidate.Rank ?? 99)
                 .ThenByDescending(candidate => candidate.FinalQuoteAmount.HasValue)
@@ -383,7 +389,13 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
                 .ThenBy(candidate => candidate.Rank ?? 99)
                 .FirstOrDefault();
             var packageTenders = tenders
-                .Where(tender => PackageContextMatches(award.LotNo, award.NormalizedPackageNo, tender.LotNo, tender.NormalizedPackageNo))
+                .Where(tender => PackageContextMatches(
+                    award.LotNo,
+                    award.LotName,
+                    award.NormalizedPackageNo,
+                    tender.LotNo,
+                    tender.LotName,
+                    tender.NormalizedPackageNo))
                 .Where(tender => ProjectMatches(award.ProjectCode, award.ProjectName, tender.ProjectCode, tender.ProjectName))
                 .ToList();
             var tender = MergeTenderEvidence(packageTenders, award, matchedCandidate);
@@ -536,20 +548,48 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
 
     private static bool PackageContextMatches(
         string? awardLotNo,
+        string? awardLotName,
         string? awardPackageNo,
         string? otherLotNo,
+        string? otherLotName,
         string? otherPackageNo)
     {
         if (!PackageMatches(awardPackageNo, otherPackageNo))
             return false;
 
-        if (string.IsNullOrWhiteSpace(awardLotNo) || string.IsNullOrWhiteSpace(otherLotNo))
+        var awardHasLotContext = !string.IsNullOrWhiteSpace(awardLotNo) || !string.IsNullOrWhiteSpace(awardLotName);
+        var otherHasLotContext = !string.IsNullOrWhiteSpace(otherLotNo) || !string.IsNullOrWhiteSpace(otherLotName);
+        if (!awardHasLotContext || !otherHasLotContext)
             return true;
 
-        return string.Equals(
-            BidOpsTextQuality.CleanExtractedValue(awardLotNo),
-            BidOpsTextQuality.CleanExtractedValue(otherLotNo),
-            StringComparison.OrdinalIgnoreCase);
+        var matchedAnyLotContext = false;
+        if (!string.IsNullOrWhiteSpace(awardLotNo) && !string.IsNullOrWhiteSpace(otherLotNo))
+        {
+            if (!string.Equals(
+                    BidOpsTextQuality.CleanExtractedValue(awardLotNo),
+                    BidOpsTextQuality.CleanExtractedValue(otherLotNo),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            matchedAnyLotContext = true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(awardLotName) && !string.IsNullOrWhiteSpace(otherLotName))
+        {
+            if (!string.Equals(
+                    BidOpsTextQuality.CleanExtractedValue(awardLotName),
+                    BidOpsTextQuality.CleanExtractedValue(otherLotName),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            matchedAnyLotContext = true;
+        }
+
+        return matchedAnyLotContext;
     }
 
     private static bool ProjectMatches(

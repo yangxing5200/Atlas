@@ -5,6 +5,7 @@ using Atlas.Modules.BidOps.Entities.Crawling;
 using Atlas.Modules.BidOps.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 
@@ -21,6 +22,8 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
     private readonly IRepository<CrawlSource> _sources;
     private readonly IRepository<CrawlChannel> _channels;
     private readonly IRepository<CrawlRunLog> _logs;
+    private readonly IRepository<CrawlCheckpoint> _checkpoints;
+    private readonly IRepository<CrawlRun> _runs;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IBidOpsRawIngestionService _ingestion;
     private readonly IReadOnlyList<IBidOpsCrawlAdapter> _adapters;
@@ -33,6 +36,8 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         IRepository<CrawlSource> sources,
         IRepository<CrawlChannel> channels,
         IRepository<CrawlRunLog> logs,
+        IRepository<CrawlCheckpoint> checkpoints,
+        IRepository<CrawlRun> runs,
         IUnitOfWork unitOfWork,
         IBidOpsRawIngestionService ingestion,
         IEnumerable<IBidOpsCrawlAdapter> adapters,
@@ -44,6 +49,8 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         _sources = sources ?? throw new ArgumentNullException(nameof(sources));
         _channels = channels ?? throw new ArgumentNullException(nameof(channels));
         _logs = logs ?? throw new ArgumentNullException(nameof(logs));
+        _checkpoints = checkpoints ?? throw new ArgumentNullException(nameof(checkpoints));
+        _runs = runs ?? throw new ArgumentNullException(nameof(runs));
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
         _ingestion = ingestion ?? throw new ArgumentNullException(nameof(ingestion));
         _adapters = adapters?.ToArray() ?? throw new ArgumentNullException(nameof(adapters));
@@ -60,27 +67,47 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         long? backgroundJobId,
         CancellationToken ct = default)
     {
+        return await CrawlAsync(
+            new StateGridEcpCrawlRequest(channelId, BidOpsCrawlModes.Incremental),
+            backgroundJobId,
+            ct);
+    }
+
+    public async Task<StateGridEcpCrawlResult> CrawlAsync(
+        StateGridEcpCrawlRequest request,
+        long? backgroundJobId,
+        CancellationToken ct = default)
+    {
         var channelQuery = await _channels.QueryTrackingAsync(ct);
-        var channel = await channelQuery.Where(x => x.Id == channelId).FirstOrDefaultAsync(ct);
+        var channel = await channelQuery.Where(x => x.Id == request.ChannelId).FirstOrDefaultAsync(ct);
         if (channel == null)
-            throw new AtlasException($"BidOps crawl channel does not exist: {channelId}");
+            throw new AtlasException($"BidOps crawl channel does not exist: {request.ChannelId}");
 
         var source = await GetSourceAsync(channel.SourceId, ct);
         EnsureCanRun(source, channel);
         EnsureAdapterCanRun(source);
         EnsureRateLimit(source, channel);
 
+        var checkpoint = await ResolveCheckpointAsync(source, channel, request, ct);
+        var run = await CreateRunAsync(source, channel, checkpoint, request, backgroundJobId, ct);
         channel.LastScanTime = DateTime.UtcNow;
 
         try
         {
-            return StateGridEcpWcmParser.TryGetMenuId(channel.ListUrl, out var menuId)
-                ? await CrawlWcmApiChannelAsync(source, channel, menuId, backgroundJobId, ct)
-                : await CrawlHtmlChannelAsync(source, channel, backgroundJobId, ct);
+            var result = StateGridEcpWcmParser.TryGetMenuId(channel.ListUrl, out var menuId)
+                ? await CrawlWcmApiChannelAsync(source, channel, checkpoint, run, menuId, request, backgroundJobId, ct)
+                : await CrawlHtmlChannelAsync(source, channel, checkpoint, run, backgroundJobId, ct);
+
+            ApplyRunSuccess(run, result);
+            ApplyCheckpointSuccess(checkpoint, result);
+            await _unitOfWork.SaveChangesAsync(ct);
+            return result;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             channel.LastError = ex.Message;
+            ApplyRunFailure(run, ex.Message);
+            ApplyCheckpointFailure(checkpoint, ex.Message);
             await AddLogAsync(source.Id, channel.Id, backgroundJobId, "Failed", ex.Message, ct);
             await _unitOfWork.SaveChangesAsync(ct);
             _logger.LogWarning(ex, "State Grid ECP crawl failed for channel {ChannelId}.", channel.Id);
@@ -163,12 +190,136 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
     private async Task<StateGridEcpCrawlResult> CrawlWcmApiChannelAsync(
         CrawlSource source,
         CrawlChannel channel,
+        CrawlCheckpoint checkpoint,
+        CrawlRun run,
         string menuId,
+        StateGridEcpCrawlRequest request,
         long? backgroundJobId,
         CancellationToken ct)
     {
-        var notices = await FetchApiNoticeListAsync(source, menuId, ct);
-        if (notices.Count == 0)
+        var startPage = ResolveStartPage(request, checkpoint);
+        var pageSize = ResolvePageSize(request);
+        var maxPages = ResolveMaxPages(request);
+        var endPage = startPage;
+        var pagesScanned = 0;
+        var discovered = 0;
+        var created = 0;
+        var changed = 0;
+        var skipped = 0;
+        var failed = 0;
+        var totalRemoteCount = default(int?);
+        var rangeCompleted = false;
+        var rawIds = new List<long>();
+        var publishTimes = new List<DateTime>();
+
+        for (var pageIndex = startPage; pageIndex < startPage + maxPages; pageIndex++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var page = await FetchApiNoticeListAsync(source, menuId, pageIndex, pageSize, ct);
+            totalRemoteCount ??= page.TotalCount;
+            endPage = pageIndex;
+            pagesScanned++;
+
+            if (page.Notices.Count == 0)
+            {
+                rangeCompleted = true;
+                break;
+            }
+
+            foreach (var notice in page.Notices)
+            {
+                ct.ThrowIfCancellationRequested();
+                discovered++;
+                if (notice.PublishTime.HasValue)
+                    publishTimes.Add(notice.PublishTime.Value);
+
+                if (request.RangeEndPublishTime.HasValue &&
+                    notice.PublishTime.HasValue &&
+                    notice.PublishTime.Value > request.RangeEndPublishTime.Value)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (request.RangeStartPublishTime.HasValue &&
+                    notice.PublishTime.HasValue &&
+                    notice.PublishTime.Value < request.RangeStartPublishTime.Value)
+                {
+                    rangeCompleted = true;
+                    skipped++;
+                    break;
+                }
+
+                var existingRawNoticeId = await _ingestion.FindExistingRawNoticeIdByUrlAsync(
+                    channel.NoticeType,
+                    notice.DetailUrl,
+                    ct);
+                if (existingRawNoticeId.HasValue)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                await DelayForRateLimitAsync(source, ct);
+
+                try
+                {
+                    var document = await FetchApiDetailDocumentAsync(source, channel, notice, backgroundJobId, ct);
+                    var ingest = await _ingestion.IngestPublicNoticeWithResultAsync(
+                        new RawIngestionCommand(
+                            source.Id,
+                            channel.Id,
+                            notice.DetailUrl,
+                            document.Title,
+                            channel.NoticeType,
+                            document.Text,
+                            document.Html,
+                            document.PublishTime,
+                            MapAttachments(document.Attachments)),
+                        backgroundJobId,
+                        OperationName,
+                        ct);
+                    if (ingest.ShouldProcess)
+                        rawIds.Add(ingest.RawNoticeId);
+
+                    if (ingest.Status == BidOpsRawIngestionStatuses.Created)
+                        created++;
+                    else if (ingest.Status is BidOpsRawIngestionStatuses.Changed or BidOpsRawIngestionStatuses.Refreshed)
+                        changed++;
+                    else
+                        skipped++;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    failed++;
+                    await AddLogAsync(
+                        source.Id,
+                        channel.Id,
+                        backgroundJobId,
+                        "NoticeFailed",
+                        $"Failed to ingest State Grid API notice {notice.NoticeId}: {ex.Message}",
+                        ct);
+                }
+            }
+
+            if (rangeCompleted ||
+                page.Notices.Count < pageSize ||
+                (totalRemoteCount.HasValue && pageIndex * pageSize >= totalRemoteCount.Value) ||
+                IsIncrementalDuplicateStop(request, page.Notices.Count, created, changed, failed))
+            {
+                break;
+            }
+        }
+
+        var remainingEstimate = totalRemoteCount.HasValue
+            ? Math.Max(0, totalRemoteCount.Value - endPage * pageSize)
+            : (int?)null;
+        var isCompleted = rangeCompleted || remainingEstimate == 0;
+        var nextCursor = string.Equals(NormalizeMode(request.Mode), BidOpsCrawlModes.Incremental, StringComparison.OrdinalIgnoreCase)
+            ? "1"
+            : (isCompleted ? endPage.ToString(CultureInfo.InvariantCulture) : (endPage + 1).ToString(CultureInfo.InvariantCulture));
+
+        if (discovered == 0)
         {
             channel.LastSuccessTime = DateTime.UtcNow;
             channel.LastError = string.Empty;
@@ -179,45 +330,20 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
                 "Skipped",
                 $"No public State Grid notices were returned for menu {menuId}.",
                 ct);
-            await _unitOfWork.SaveChangesAsync(ct);
-            return new StateGridEcpCrawlResult(source.Id, channel.Id, 0, 0, Array.Empty<long>());
-        }
-
-        var rawIds = new List<long>();
-        foreach (var notice in notices)
-        {
-            ct.ThrowIfCancellationRequested();
-            await DelayForRateLimitAsync(source, ct);
-
-            try
-            {
-                var document = await FetchApiDetailDocumentAsync(source, channel, notice, backgroundJobId, ct);
-                var rawId = await _ingestion.IngestPublicNoticeAsync(
-                    new RawIngestionCommand(
-                        source.Id,
-                        channel.Id,
-                        notice.DetailUrl,
-                        document.Title,
-                        channel.NoticeType,
-                        document.Text,
-                        document.Html,
-                        document.PublishTime,
-                        MapAttachments(document.Attachments)),
-                    backgroundJobId,
-                    OperationName,
-                    ct);
-                rawIds.Add(rawId);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                await AddLogAsync(
-                    source.Id,
-                    channel.Id,
-                    backgroundJobId,
-                    "NoticeFailed",
-                    $"Failed to ingest State Grid API notice {notice.NoticeId}: {ex.Message}",
-                    ct);
-            }
+            return new StateGridEcpCrawlResult(
+                source.Id,
+                channel.Id,
+                0,
+                0,
+                Array.Empty<long>(),
+                PageSize: pageSize,
+                PageCount: pagesScanned,
+                StartPage: startPage,
+                EndPage: endPage,
+                TotalRemoteCount: totalRemoteCount,
+                RemainingEstimate: remainingEstimate,
+                NextCursor: nextCursor,
+                IsCompleted: isCompleted);
         }
 
         channel.LastSuccessTime = DateTime.UtcNow;
@@ -227,16 +353,35 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
             channel.Id,
             backgroundJobId,
             "Succeeded",
-            $"State Grid WCM API crawl completed. menu={menuId}, discovered={notices.Count}, ingested={rawIds.Count}.",
+            $"State Grid WCM API crawl completed. menu={menuId}, mode={NormalizeMode(request.Mode)}, pages={startPage}-{endPage}, discovered={discovered}, created={created}, changed={changed}, skipped={skipped}, failed={failed}.",
             ct);
-        await _unitOfWork.SaveChangesAsync(ct);
-
-        return new StateGridEcpCrawlResult(source.Id, channel.Id, notices.Count, rawIds.Count, rawIds);
+        return new StateGridEcpCrawlResult(
+            source.Id,
+            channel.Id,
+            discovered,
+            created + changed,
+            rawIds,
+            created,
+            changed,
+            skipped,
+            failed,
+            startPage,
+            endPage,
+            pageSize,
+            pagesScanned,
+            totalRemoteCount,
+            remainingEstimate,
+            nextCursor,
+            publishTimes.Count == 0 ? null : publishTimes.Max(),
+            publishTimes.Count == 0 ? null : publishTimes.Min(),
+            isCompleted);
     }
 
     private async Task<StateGridEcpCrawlResult> CrawlHtmlChannelAsync(
         CrawlSource source,
         CrawlChannel channel,
+        CrawlCheckpoint checkpoint,
+        CrawlRun run,
         long? backgroundJobId,
         CancellationToken ct)
     {
@@ -261,14 +406,38 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
                 "Skipped",
                 $"No public State Grid notice links were discovered from {listUri}.",
                 ct);
-            await _unitOfWork.SaveChangesAsync(ct);
-            return new StateGridEcpCrawlResult(source.Id, channel.Id, 0, 0, Array.Empty<long>());
+            return new StateGridEcpCrawlResult(
+                source.Id,
+                channel.Id,
+                0,
+                0,
+                Array.Empty<long>(),
+                PageCount: 1,
+                IsCompleted: true);
         }
 
         var rawIds = new List<long>();
+        var created = 0;
+        var changed = 0;
+        var skipped = 0;
+        var failed = 0;
+        var publishTimes = notices
+            .Where(x => x.PublishTime.HasValue)
+            .Select(x => x.PublishTime!.Value)
+            .ToList();
         foreach (var notice in notices)
         {
             ct.ThrowIfCancellationRequested();
+            var existingRawNoticeId = await _ingestion.FindExistingRawNoticeIdByUrlAsync(
+                channel.NoticeType,
+                notice.DetailUrl,
+                ct);
+            if (existingRawNoticeId.HasValue)
+            {
+                skipped++;
+                continue;
+            }
+
             await DelayForRateLimitAsync(source, ct);
 
             try
@@ -284,7 +453,7 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
                     Attachments = StateGridEcpHtmlParser.DiscoverAttachments(detailHtml, detailUri)
                 };
 
-                var rawId = await _ingestion.IngestPublicNoticeAsync(
+                var ingest = await _ingestion.IngestPublicNoticeWithResultAsync(
                     new RawIngestionCommand(
                         source.Id,
                         channel.Id,
@@ -298,10 +467,19 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
                     backgroundJobId,
                     OperationName,
                     ct);
-                rawIds.Add(rawId);
+                if (ingest.ShouldProcess)
+                    rawIds.Add(ingest.RawNoticeId);
+
+                if (ingest.Status == BidOpsRawIngestionStatuses.Created)
+                    created++;
+                else if (ingest.Status is BidOpsRawIngestionStatuses.Changed or BidOpsRawIngestionStatuses.Refreshed)
+                    changed++;
+                else
+                    skipped++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                failed++;
                 await AddLogAsync(
                     source.Id,
                     channel.Id,
@@ -319,11 +497,24 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
             channel.Id,
             backgroundJobId,
             "Succeeded",
-            $"State Grid HTML crawl completed. discovered={notices.Length}, ingested={rawIds.Count}.",
+            $"State Grid HTML crawl completed. discovered={notices.Length}, created={created}, changed={changed}, skipped={skipped}, failed={failed}.",
             ct);
-        await _unitOfWork.SaveChangesAsync(ct);
 
-        return new StateGridEcpCrawlResult(source.Id, channel.Id, notices.Length, rawIds.Count, rawIds);
+        return new StateGridEcpCrawlResult(
+            source.Id,
+            channel.Id,
+            notices.Length,
+            created + changed,
+            rawIds,
+            created,
+            changed,
+            skipped,
+            failed,
+            PageSize: notices.Length,
+            PageCount: 1,
+            HighWatermarkPublishTime: publishTimes.Count == 0 ? null : publishTimes.Max(),
+            LowWatermarkPublishTime: publishTimes.Count == 0 ? null : publishTimes.Min(),
+            IsCompleted: true);
     }
 
     private async Task<CrawlSource> GetSourceAsync(long sourceId, CancellationToken ct)
@@ -411,15 +602,17 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
             : content[..MaxResponseCharacters];
     }
 
-    private async Task<IReadOnlyList<StateGridEcpApiNotice>> FetchApiNoticeListAsync(
+    private async Task<StateGridEcpNoticeListPage> FetchApiNoticeListAsync(
         CrawlSource source,
         string menuId,
+        int pageIndex,
+        int pageSize,
         CancellationToken ct)
     {
         var payload = JsonSerializer.Serialize(new
         {
-            index = 1,
-            size = _maxNoticesPerScan,
+            index = pageIndex,
+            size = pageSize,
             firstPageMenuId = menuId,
             purOrgStatus = string.Empty,
             purOrgCode = string.Empty,
@@ -430,7 +623,198 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
             orgName = string.Empty
         });
         var json = await PostJsonAsync(BuildApiUri(source, "index/noteList"), source, payload, ct);
-        return StateGridEcpWcmParser.ParseNoticeList(json, source.BaseUrl, _maxNoticesPerScan);
+        return StateGridEcpWcmParser.ParseNoticeListPage(json, source.BaseUrl, pageSize);
+    }
+
+    private async Task<CrawlCheckpoint> ResolveCheckpointAsync(
+        CrawlSource source,
+        CrawlChannel channel,
+        StateGridEcpCrawlRequest request,
+        CancellationToken ct)
+    {
+        var mode = NormalizeMode(request.Mode);
+        var query = await _checkpoints.QueryTrackingAsync(ct);
+        var checkpoint = request.CheckpointId.HasValue
+            ? await query.Where(x => x.Id == request.CheckpointId.Value).FirstOrDefaultAsync(ct)
+            : await query
+                .Where(x => x.ChannelId == channel.Id && x.Mode == mode)
+                .FirstOrDefaultAsync(ct);
+
+        if (checkpoint == null)
+        {
+            checkpoint = new CrawlCheckpoint
+            {
+                Id = _idGenerator.NextId(),
+                SourceId = source.Id,
+                ChannelId = channel.Id,
+                Mode = mode,
+                Status = BidOpsCrawlCheckpointStatuses.Idle,
+                CursorKind = BidOpsCrawlCursorKinds.PageIndex,
+                NextCursor = Math.Max(1, request.StartPage ?? 1).ToString(CultureInfo.InvariantCulture),
+                RangeStartPublishTime = request.RangeStartPublishTime,
+                RangeEndPublishTime = request.RangeEndPublishTime
+            };
+            await _checkpoints.AddAsync(checkpoint, ct);
+        }
+
+        if (checkpoint.ChannelId != channel.Id || checkpoint.SourceId != source.Id)
+            throw new AtlasException("BidOps crawl checkpoint does not match the requested crawl channel.");
+
+        if (checkpoint.Status == BidOpsCrawlCheckpointStatuses.Paused)
+            throw new AtlasException("BidOps crawl checkpoint is paused.");
+
+        var now = DateTime.UtcNow;
+        checkpoint.Status = BidOpsCrawlCheckpointStatuses.Running;
+        checkpoint.StartedAt ??= now;
+        checkpoint.LastRunAt = now;
+        checkpoint.CompletedAt = null;
+        checkpoint.PausedAt = null;
+        checkpoint.PauseReason = string.Empty;
+        checkpoint.LastError = string.Empty;
+        checkpoint.RangeStartPublishTime = request.RangeStartPublishTime ?? checkpoint.RangeStartPublishTime;
+        checkpoint.RangeEndPublishTime = request.RangeEndPublishTime ?? checkpoint.RangeEndPublishTime;
+        return checkpoint;
+    }
+
+    private async Task<CrawlRun> CreateRunAsync(
+        CrawlSource source,
+        CrawlChannel channel,
+        CrawlCheckpoint checkpoint,
+        StateGridEcpCrawlRequest request,
+        long? backgroundJobId,
+        CancellationToken ct)
+    {
+        var run = new CrawlRun
+        {
+            Id = _idGenerator.NextId(),
+            SourceId = source.Id,
+            ChannelId = channel.Id,
+            CheckpointId = checkpoint.Id,
+            BackgroundJobId = backgroundJobId,
+            Mode = checkpoint.Mode,
+            Status = BidOpsCrawlRunStatuses.Running,
+            StartCursor = ResolveStartPage(request, checkpoint).ToString(CultureInfo.InvariantCulture),
+            PageSize = ResolvePageSize(request),
+            StartedAt = DateTime.UtcNow
+        };
+        await _runs.AddAsync(run, ct);
+        return run;
+    }
+
+    private static void ApplyRunSuccess(CrawlRun run, StateGridEcpCrawlResult result)
+    {
+        run.Status = BidOpsCrawlRunStatuses.Succeeded;
+        run.EndCursor = result.EndPage.ToString(CultureInfo.InvariantCulture);
+        run.PageSize = result.PageSize;
+        run.PageCount = result.PageCount;
+        run.DiscoveredCount = result.Discovered;
+        run.CreatedCount = result.Created;
+        run.ChangedCount = result.Changed;
+        run.DuplicateCount = result.Skipped;
+        run.FailedItemCount = result.Failed;
+        run.TotalRemoteCount = result.TotalRemoteCount;
+        run.RemainingEstimate = result.RemainingEstimate;
+        run.CompletedAt = DateTime.UtcNow;
+        run.Message = $"discovered={result.Discovered};created={result.Created};changed={result.Changed};skipped={result.Skipped};failed={result.Failed};remaining={result.RemainingEstimate?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}";
+    }
+
+    private static void ApplyRunFailure(CrawlRun run, string error)
+    {
+        run.Status = BidOpsCrawlRunStatuses.Failed;
+        run.CompletedAt = DateTime.UtcNow;
+        run.Message = Truncate(error, 2000);
+    }
+
+    private static void ApplyCheckpointSuccess(CrawlCheckpoint checkpoint, StateGridEcpCrawlResult result)
+    {
+        checkpoint.Status = result.IsCompleted && checkpoint.Mode == BidOpsCrawlModes.Backfill
+            ? BidOpsCrawlCheckpointStatuses.Completed
+            : BidOpsCrawlCheckpointStatuses.Idle;
+        checkpoint.NextCursor = result.NextCursor;
+        checkpoint.LastSuccessfulCursor = result.EndPage.ToString(CultureInfo.InvariantCulture);
+        checkpoint.TotalRemoteCount = result.TotalRemoteCount ?? checkpoint.TotalRemoteCount;
+        checkpoint.ScannedItemCount += result.Discovered;
+        checkpoint.CreatedCount += result.Created;
+        checkpoint.ChangedCount += result.Changed;
+        checkpoint.DuplicateCount += result.Skipped;
+        checkpoint.FailedItemCount += result.Failed;
+        checkpoint.RemainingEstimate = checkpoint.Mode == BidOpsCrawlModes.Incremental ? 0 : result.RemainingEstimate;
+        checkpoint.LastRunAt = DateTime.UtcNow;
+        checkpoint.CompletedAt = checkpoint.Status == BidOpsCrawlCheckpointStatuses.Completed ? DateTime.UtcNow : null;
+        checkpoint.LastError = string.Empty;
+
+        if (result.HighWatermarkPublishTime.HasValue &&
+            (!checkpoint.HighWatermarkPublishTime.HasValue ||
+             result.HighWatermarkPublishTime.Value > checkpoint.HighWatermarkPublishTime.Value))
+        {
+            checkpoint.HighWatermarkPublishTime = result.HighWatermarkPublishTime;
+        }
+
+        if (result.LowWatermarkPublishTime.HasValue &&
+            (!checkpoint.LowWatermarkPublishTime.HasValue ||
+             result.LowWatermarkPublishTime.Value < checkpoint.LowWatermarkPublishTime.Value))
+        {
+            checkpoint.LowWatermarkPublishTime = result.LowWatermarkPublishTime;
+        }
+
+        if (checkpoint.Mode == BidOpsCrawlModes.Incremental)
+            checkpoint.NextCursor = "1";
+    }
+
+    private static void ApplyCheckpointFailure(CrawlCheckpoint checkpoint, string error)
+    {
+        checkpoint.Status = BidOpsCrawlCheckpointStatuses.Failed;
+        checkpoint.LastRunAt = DateTime.UtcNow;
+        checkpoint.LastError = Truncate(error, 2000);
+    }
+
+    private int ResolvePageSize(StateGridEcpCrawlRequest request)
+    {
+        return Math.Clamp(request.PageSize ?? _maxNoticesPerScan, 1, MaxNoticesPerScanLimit);
+    }
+
+    private static int ResolveMaxPages(StateGridEcpCrawlRequest request)
+    {
+        return Math.Clamp(request.MaxPages ?? 1, 1, 20);
+    }
+
+    private static int ResolveStartPage(StateGridEcpCrawlRequest request, CrawlCheckpoint checkpoint)
+    {
+        if (request.StartPage.HasValue)
+            return Math.Max(1, request.StartPage.Value);
+
+        return int.TryParse(checkpoint.NextCursor, NumberStyles.Integer, CultureInfo.InvariantCulture, out var page) && page > 0
+            ? page
+            : 1;
+    }
+
+    private static bool IsIncrementalDuplicateStop(
+        StateGridEcpCrawlRequest request,
+        int pageItemCount,
+        int created,
+        int changed,
+        int failed)
+    {
+        return string.Equals(NormalizeMode(request.Mode), BidOpsCrawlModes.Incremental, StringComparison.OrdinalIgnoreCase) &&
+               pageItemCount > 0 &&
+               created == 0 &&
+               changed == 0 &&
+               failed == 0;
+    }
+
+    private static string NormalizeMode(string? value)
+    {
+        return string.Equals(value, BidOpsCrawlModes.Backfill, StringComparison.OrdinalIgnoreCase)
+            ? BidOpsCrawlModes.Backfill
+            : BidOpsCrawlModes.Incremental;
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+            return value;
+
+        return value[..maxLength];
     }
 
     private async Task<StateGridNoticeDocument> FetchApiDetailDocumentAsync(

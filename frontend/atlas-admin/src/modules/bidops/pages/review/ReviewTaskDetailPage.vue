@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Edit, Plus, RefreshRight } from '@element-plus/icons-vue'
+import { Delete, Edit, Plus, RefreshRight, View } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { rawNoticesApi } from '@/api/bidops/rawNotices.api'
 import { reviewTasksApi } from '@/api/bidops/reviewTasks.api'
@@ -15,15 +15,27 @@ import RawNoticePreview from '../../components/RawNoticePreview.vue'
 import PermissionButton from '../../components/PermissionButton.vue'
 import RequirementTable from '../../components/RequirementTable.vue'
 import ReviewDecisionPanel from '../../components/ReviewDecisionPanel.vue'
+import RiskLevelTag from '../../components/RiskLevelTag.vue'
 import { BIDOPS_PERMISSIONS } from '../../constants'
+import JobStatusTag from '@/modules/operations/components/JobStatusTag.vue'
+import type { BackgroundJobListItemDto } from '@/modules/operations/types'
+import { formatDuration, formatJobType } from '@/modules/operations/utils/display'
 import type {
   OutcomeSupplierRecordDto,
   PackageStagingDto,
   RequirementStagingDto,
+  ReviewQualityIssueDto,
   ReviewOutcomeSupplierRecordEditRequest,
   ReviewTaskDetailDto,
 } from '../../types'
-import { formatCategory, formatCommonStatus, formatNoticeType, formatPackageNo } from '../../utils/display'
+import {
+  formatCategory,
+  formatCommonStatus,
+  formatNoticeType,
+  formatPackageNo,
+  formatQualityIssueType,
+  formatReviewRecommendation,
+} from '../../utils/display'
 
 interface OutcomeEditForm {
   projectName: string
@@ -37,7 +49,7 @@ interface OutcomeEditForm {
   supplierName: string
   outcomeType: string
   rank: number | null
-  awardAmountWan: number | null
+  awardAmount: number | null
   procurementAgencyServiceFeeAmount: number | null
   evidenceText: string
 }
@@ -50,9 +62,13 @@ const decisionRequest = useRequest()
 const rawReparseRequest = useRequest()
 const outcomeAiReparseRequest = useRequest()
 const outcomeEditRequest = useRequest()
+const backgroundJobsRequest = useRequest()
+const procurementAiPrompt = ref('')
 const outcomeAiPrompt = ref('')
 const outcomeAiJobId = ref('')
 const rawReparseJobId = ref('')
+const backgroundJobs = ref<BackgroundJobListItemDto[]>([])
+const backgroundJobTotal = ref(0)
 const outcomeEditVisible = ref(false)
 const outcomeEditMode = ref<'create' | 'edit'>('create')
 const editingOutcomeId = ref('')
@@ -68,17 +84,42 @@ const buyer = computed(() => detail.value?.buyer)
 const outcomeSuppliers = computed(() => detail.value?.outcomeSuppliers || [])
 const packages = computed(() => detail.value?.packages || [])
 const attachments = computed(() => detail.value?.attachments || [])
+const qualityIssues = computed(() => detail.value?.qualityIssues || [])
+const activeQualityIssues = computed(() => qualityIssues.value.filter((item) => !item.isResolved))
 const allRequirements = computed(() => packages.value.flatMap((pkg) => pkg.requirements || []))
 const rejectRiskCount = computed(() => allRequirements.value.filter((item) => item.isRejectRisk).length)
 const mandatoryCount = computed(() => allRequirements.value.filter((item) => item.isMandatory).length)
 const noticeKind = computed(() => detectNoticeKind())
 const awardRows = computed(() => outcomeSuppliers.value.slice())
 const candidateRows = computed(() => outcomeSuppliers.value.slice())
+const awardColumnVisible = computed(() => ({
+  projectCode: hasAnyOutcomeColumnValue(awardRows.value, outcomeProjectCode),
+  projectName: hasAnyOutcomeColumnValue(awardRows.value, outcomeProjectName),
+  lotNo: hasAnyOutcomeColumnValue(awardRows.value, outcomeLotNo),
+  lotName: hasAnyOutcomeColumnValue(awardRows.value, outcomeLotName),
+  packageNo: hasAnyOutcomeColumnValue(awardRows.value, outcomePackageNo),
+  outcomeType: hasAnyOutcomeColumnValue(awardRows.value, (row) => formatCommonStatus(row.outcomeType)),
+}))
+const candidateColumnVisible = computed(() => ({
+  projectCode: hasAnyOutcomeColumnValue(candidateRows.value, outcomeProjectCode),
+  projectName: hasAnyOutcomeColumnValue(candidateRows.value, outcomeProjectName),
+  lotNo: hasAnyOutcomeColumnValue(candidateRows.value, outcomeLotNo),
+  lotName: hasAnyOutcomeColumnValue(candidateRows.value, outcomeLotName),
+  packageNo: hasAnyOutcomeColumnValue(candidateRows.value, outcomePackageNo),
+  packageName: hasAnyOutcomeColumnValue(candidateRows.value, outcomePackageName),
+  rank: hasAnyOutcomeColumnValue(candidateRows.value, (row) => formatRank(row.rank)),
+  awardAmount: hasAnyOutcomeColumnValue(candidateRows.value, (row) => formatMoney(row.awardAmount)),
+  evidenceText: hasAnyOutcomeColumnValue(candidateRows.value, outcomeReviewSummary),
+}))
 const procurementPackages = computed(() =>
   packages.value
     .slice()
     .sort((left, right) => compareText(packageSortKey(left), packageSortKey(right))),
 )
+const canReparseRawNotice = computed(() =>
+  Boolean(rawNotice.value && !isApprovedRawNoticeStatus(rawNotice.value.status) && isEditableReviewTaskStatus(task.value?.status)),
+)
+const canAdjustProcurementAi = computed(() => canReparseRawNotice.value && noticeKind.value === 'procurement')
 const canAdjustOutcomeAi = computed(() => Boolean(notice.value) && (noticeKind.value === 'award' || noticeKind.value === 'candidate'))
 const canEditOutcomeRows = computed(() =>
   Boolean(notice.value && rawNotice.value && !isApprovedRawNoticeStatus(rawNotice.value.status) && isEditableReviewTaskStatus(task.value?.status)),
@@ -96,13 +137,41 @@ async function loadData() {
     detail.value = await reviewTasksApi.get(taskId.value)
   } catch {
     detail.value = null
+    backgroundJobs.value = []
+    backgroundJobTotal.value = 0
   } finally {
     loading.value = false
+  }
+
+  if (detail.value) {
+    await loadBackgroundJobs()
+  }
+}
+
+async function loadBackgroundJobs() {
+  if (!taskId.value) return
+
+  try {
+    const result = await backgroundJobsRequest.run(() =>
+      reviewTasksApi.jobs(taskId.value, {
+        pageIndex: 1,
+        pageSize: 20,
+      }),
+    )
+    backgroundJobs.value = result.items || []
+    backgroundJobTotal.value = Number(result.total || 0)
+  } catch {
+    backgroundJobs.value = []
+    backgroundJobTotal.value = 0
   }
 }
 
 function confidencePercent(value?: number | null) {
   return `${Math.round(Number(value || 0) * 100)}%`
+}
+
+function qualityScoreValue() {
+  return Number.isFinite(Number(task.value?.qualityScore)) ? Number(task.value?.qualityScore) : 100
 }
 
 function projectTitle() {
@@ -134,6 +203,21 @@ function packageRequirements(pkg: PackageStagingDto): RequirementStagingDto[] {
   return pkg.requirements || []
 }
 
+function issueTarget(issue: ReviewQualityIssueDto) {
+  if (issue.packageStagingId) {
+    const pkg = packages.value.find((item) => String(item.id) === String(issue.packageStagingId))
+    if (pkg) {
+      return [pkg.lotNo, formatPackageNo(pkg.packageNo), pkg.packageName]
+        .filter((item) => item && item !== '-')
+        .join(' / ')
+    }
+  }
+
+  if (issue.procurementDetailStagingId) return `采购明细 ${issue.procurementDetailStagingId}`
+  if (issue.outcomeSupplierRecordId) return `中标线索 ${issue.outcomeSupplierRecordId}`
+  return issue.fieldName || '-'
+}
+
 function organizationState(exists?: boolean, willCreate?: boolean) {
   if (exists) return '已存在'
   if (willCreate) return '审核通过后创建'
@@ -145,7 +229,8 @@ function supplierState(row: OutcomeSupplierRecordDto) {
 }
 
 function isEditableReviewTaskStatus(status?: unknown) {
-  return status !== 3 && status !== '3' && status !== 'Approved' && status !== 'Ignored'
+  const value = String(status ?? '').trim()
+  return !['2', '3', '4', 'Approved', 'Ignored', 'Merged'].includes(value)
 }
 
 function isApprovedRawNoticeStatus(status?: unknown) {
@@ -189,18 +274,12 @@ function formatRank(value?: number | null) {
   return value ? String(value) : '-'
 }
 
-function formatWanYuan(value?: number | null) {
-  const number = Number(value)
-  if (value === null || value === undefined || Number.isNaN(number)) return '-'
-
-  return (number / 10000).toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  })
-}
-
 function outcomeProjectCode(row: OutcomeSupplierRecordDto) {
   return displayText(row.projectCode, notice.value?.projectCode, task.value?.projectCode)
+}
+
+function outcomeProjectName(row: OutcomeSupplierRecordDto) {
+  return displayText(row.projectName)
 }
 
 function outcomeLotNo(row: OutcomeSupplierRecordDto) {
@@ -227,20 +306,51 @@ function outcomeReviewSummary(row: OutcomeSupplierRecordDto) {
   return displayText(row.evidenceText)
 }
 
+function hasAnyOutcomeColumnValue(
+  rows: OutcomeSupplierRecordDto[],
+  getValue: (row: OutcomeSupplierRecordDto) => unknown,
+) {
+  if (rows.length === 0) return true
+  return rows.some((row) => hasDisplayValue(getValue(row)))
+}
+
+function hasDisplayValue(value: unknown) {
+  if (value === null || value === undefined) return false
+  const text = normalizeText(value)
+  return Boolean(text && text !== '-' && text !== '待补录')
+}
+
 function matchedPackageForOutcome(row: OutcomeSupplierRecordDto) {
   const packageNo = normalizeCode(row.packageNo)
   const lotNo = normalizeCode(row.lotNo)
+  const lotName = normalizeText(row.lotName)
   const packageName = normalizeText(row.packageName)
 
-  return packages.value.find((pkg) => {
-    if (packageNo && normalizeCode(pkg.packageNo) === packageNo) return true
-    if (lotNo && normalizeCode(pkg.lotNo) === lotNo) return true
-    if (packageName) {
+  if (packageNo && lotNo) {
+    return packages.value.find((pkg) => normalizeCode(pkg.packageNo) === packageNo && normalizeCode(pkg.lotNo) === lotNo)
+  }
+
+  if (packageNo && lotName) {
+    return uniquePackageMatch((pkg) => normalizeCode(pkg.packageNo) === packageNo && normalizeText(pkg.lotName) === lotName)
+  }
+
+  if (lotNo) {
+    return uniquePackageMatch((pkg) => normalizeCode(pkg.lotNo) === lotNo)
+  }
+
+  if (packageName) {
+    return uniquePackageMatch((pkg) => {
       const candidate = normalizeText(pkg.packageName)
-      return candidate.includes(packageName) || packageName.includes(candidate)
-    }
-    return false
-  })
+      return Boolean(candidate && (candidate.includes(packageName) || packageName.includes(candidate)))
+    })
+  }
+
+  return undefined
+}
+
+function uniquePackageMatch(predicate: (pkg: PackageStagingDto) => boolean) {
+  const matches = packages.value.filter(predicate)
+  return matches.length === 1 ? matches[0] : undefined
 }
 
 function packageSortKey(pkg: PackageStagingDto) {
@@ -255,7 +365,7 @@ function normalizeCode(value?: string | null) {
   return normalizeText(value).replace(/[\s:：,，;；]/g, '').toUpperCase()
 }
 
-function normalizeText(value?: string | null) {
+function normalizeText(value?: unknown) {
   return String(value || '').trim()
 }
 
@@ -281,7 +391,7 @@ function createEmptyOutcomeForm(): OutcomeEditForm {
     supplierName: '',
     outcomeType: 'Candidate',
     rank: null,
-    awardAmountWan: null,
+    awardAmount: null,
     procurementAgencyServiceFeeAmount: null,
     evidenceText: '',
   }
@@ -290,6 +400,10 @@ function createEmptyOutcomeForm(): OutcomeEditForm {
 function openJob(jobId: string) {
   if (!jobId) return
   void router.push(`/bidops/operations/jobs/${jobId}`)
+}
+
+function jobDiagnosticPreview(row: BackgroundJobListItemDto) {
+  return row.lastErrorPreview || row.resultPreview || '-'
 }
 
 function defaultOutcomeType() {
@@ -303,7 +417,7 @@ function openCreateOutcome() {
   editingOutcomeId.value = ''
   outcomeEditForm.value = {
     ...createEmptyOutcomeForm(),
-    projectName: notice.value?.projectName || task.value?.projectName || rawNotice.value?.title || '',
+    projectName: '',
     projectCode: notice.value?.projectCode || task.value?.projectCode || '',
     buyerName: notice.value?.buyerName || task.value?.buyerName || '',
     outcomeType: defaultOutcomeType(),
@@ -318,7 +432,7 @@ function openEditOutcome(row: OutcomeSupplierRecordDto) {
   editingOutcomeId.value = id && id !== '0' ? id : ''
   outcomeEditMode.value = editingOutcomeId.value ? 'edit' : 'create'
   outcomeEditForm.value = {
-    projectName: row.projectName || notice.value?.projectName || task.value?.projectName || '',
+    projectName: row.projectName || '',
     projectCode: row.projectCode || notice.value?.projectCode || task.value?.projectCode || '',
     buyerName: row.buyerName || notice.value?.buyerName || task.value?.buyerName || '',
     lotNo: row.lotNo || '',
@@ -329,7 +443,7 @@ function openEditOutcome(row: OutcomeSupplierRecordDto) {
     supplierName: row.supplierName || '',
     outcomeType: row.outcomeType || defaultOutcomeType(),
     rank: row.rank ?? null,
-    awardAmountWan: yuanToWan(row.awardAmount),
+    awardAmount: row.awardAmount ?? null,
     procurementAgencyServiceFeeAmount: row.procurementAgencyServiceFeeAmount ?? null,
     evidenceText: row.evidenceText || '',
   }
@@ -381,28 +495,16 @@ function buildOutcomeEditPayload(form: OutcomeEditForm): ReviewOutcomeSupplierRe
     supplierName: form.supplierName.trim(),
     outcomeType: form.outcomeType,
     rank: form.rank,
-    awardAmount: wanToYuan(form.awardAmountWan),
+    awardAmount: form.awardAmount,
     procurementAgencyServiceFeeAmount: form.procurementAgencyServiceFeeAmount,
     evidenceText: form.evidenceText.trim(),
   }
 }
 
-function yuanToWan(value?: number | null) {
-  const number = Number(value)
-  if (value === null || value === undefined || Number.isNaN(number)) return null
-  return Number((number / 10000).toFixed(6))
-}
-
-function wanToYuan(value?: number | null) {
-  const number = Number(value)
-  if (value === null || value === undefined || Number.isNaN(number)) return null
-  return Number((number * 10000).toFixed(2))
-}
-
 async function submitOutcomeAiReparse() {
   const prompt = outcomeAiPrompt.value.trim()
   if (!prompt) {
-    ElMessage.warning('请输入给 DeepSeek 的调整提示词')
+    ElMessage.warning('请输入给 AI 的调整提示词')
     return
   }
 
@@ -410,18 +512,47 @@ async function submitOutcomeAiReparse() {
     reviewTasksApi.outcomeAiReparse(taskId.value, { prompt }),
   )
   outcomeAiJobId.value = String(job.jobId || '')
-  ElMessage.success(`已提交 DeepSeek 重新解析任务：${outcomeAiJobId.value}`)
+  ElMessage.success(`已提交 AI 重新解析任务：${outcomeAiJobId.value}`)
+  await loadBackgroundJobs()
+  scheduleDetailRefresh()
+}
+
+async function submitProcurementAiReparse() {
+  if (!rawNotice.value || !canReparseRawNotice.value) {
+    ElMessage.warning('已入库或已完成审核的公告不能重新解析')
+    return
+  }
+
+  const prompt = procurementAiPrompt.value.trim()
+  if (!prompt) {
+    ElMessage.warning('请输入给 AI 的调整提示词')
+    return
+  }
+
+  const job = await rawReparseRequest.run(() =>
+    rawNoticesApi.reparse(rawNotice.value!.id, {
+      reason: 'Review task procurement AI prompt',
+      prompt,
+    }),
+  )
+  rawReparseJobId.value = String(job.jobId || '')
+  ElMessage.success(job.alreadyExists ? `重解析任务已存在：${rawReparseJobId.value}` : `已提交 AI 重新解析任务：${rawReparseJobId.value}`)
+  await loadBackgroundJobs()
   scheduleDetailRefresh()
 }
 
 async function reparseRawNotice() {
-  if (!rawNotice.value || isApprovedRawNoticeStatus(rawNotice.value.status)) return
+  if (!rawNotice.value || !canReparseRawNotice.value) {
+    ElMessage.warning('已入库或已完成审核的公告不能重新解析')
+    return
+  }
 
   const job = await rawReparseRequest.run(() =>
     rawNoticesApi.reparse(rawNotice.value!.id, { reason: 'Review task detail page' }),
   )
   rawReparseJobId.value = String(job.jobId || '')
   ElMessage.success(job.alreadyExists ? `重解析任务已存在：${rawReparseJobId.value}` : `已提交重解析任务：${rawReparseJobId.value}`)
+  await loadBackgroundJobs()
   scheduleDetailRefresh()
 }
 
@@ -487,7 +618,7 @@ onUnmounted(() => {
   <PageContainer title="审核详情" description="核对公告原文、解析字段、包件和要求项；确认无误后才写入正式业务表。">
     <template #actions>
       <PermissionButton
-        v-if="rawNotice && !isApprovedRawNoticeStatus(rawNotice.status)"
+        v-if="canReparseRawNotice"
         :icon="RefreshRight"
         :loading="rawReparseRequest.loading"
         :permission="BIDOPS_PERMISSIONS.REVIEW_APPROVE"
@@ -512,6 +643,10 @@ onUnmounted(() => {
         </div>
         <div class="summary-grid">
           <div>
+            <span>采购编号</span>
+            <strong>{{ notice?.projectCode || task?.projectCode || '-' }}</strong>
+          </div>
+          <div>
             <span>采购人</span>
             <strong>{{ notice?.buyerName || task?.buyerName || '-' }}</strong>
           </div>
@@ -532,6 +667,103 @@ onUnmounted(() => {
             <strong>{{ confidencePercent(notice?.aiConfidence || task?.aiConfidence) }}</strong>
           </div>
         </div>
+      </section>
+
+      <section class="quality-review-panel">
+        <div class="panel-heading">
+          <h2>异常复核</h2>
+          <span>{{ activeQualityIssues.length > 0 ? '按风险优先处理异常项' : '未发现未解决异常' }}</span>
+        </div>
+        <div class="quality-summary-grid">
+          <div>
+            <span>质量分</span>
+            <strong>{{ qualityScoreValue() }}</strong>
+          </div>
+          <div>
+            <span>风险等级</span>
+            <RiskLevelTag :value="task?.riskLevel" />
+          </div>
+          <div>
+            <span>异常项</span>
+            <strong>{{ task?.qualityIssueCount || 0 }} / 高风险 {{ task?.highRiskIssueCount || 0 }}</strong>
+          </div>
+          <div>
+            <span>推荐动作</span>
+            <strong>{{ formatReviewRecommendation(task?.reviewRecommendation) }}</strong>
+          </div>
+        </div>
+        <el-alert
+          v-if="activeQualityIssues.length === 0"
+          type="success"
+          show-icon
+          :closable="false"
+          title="当前解析结果是低风险复核候选；仍需人工确认后才能写入正式业务表。"
+        />
+        <el-table v-else :data="activeQualityIssues" border size="small" empty-text="没有未解决异常">
+          <el-table-column label="等级" width="90">
+            <template #default="{ row }"><RiskLevelTag :value="row.severity" /></template>
+          </el-table-column>
+          <el-table-column label="异常类型" min-width="150" show-overflow-tooltip>
+            <template #default="{ row }">{{ formatQualityIssueType(row.issueType) }}</template>
+          </el-table-column>
+          <el-table-column prop="fieldName" label="字段" min-width="120" show-overflow-tooltip />
+          <el-table-column label="对象" min-width="220" show-overflow-tooltip>
+            <template #default="{ row }">{{ issueTarget(row) }}</template>
+          </el-table-column>
+          <el-table-column prop="message" label="复核说明" min-width="320" show-overflow-tooltip />
+        </el-table>
+      </section>
+
+      <section class="background-jobs-panel">
+        <div class="panel-heading">
+          <h2>本审核发起的后台任务</h2>
+          <div class="background-job-actions">
+            <span>共 {{ backgroundJobTotal }} 个</span>
+            <el-button size="small" :icon="RefreshRight" :loading="backgroundJobsRequest.loading" @click="loadBackgroundJobs">
+              刷新任务
+            </el-button>
+          </div>
+        </div>
+        <el-table
+          v-loading="backgroundJobsRequest.loading"
+          :data="backgroundJobs"
+          border
+          size="small"
+          empty-text="当前审核页还没有发起过后台任务"
+        >
+          <el-table-column prop="id" label="任务ID" width="150" />
+          <el-table-column label="任务类型" min-width="190" show-overflow-tooltip>
+            <template #default="{ row }">{{ formatJobType(row.jobType, row.jobTypeName) }}</template>
+          </el-table-column>
+          <el-table-column label="状态" width="120">
+            <template #default="{ row }">
+              <JobStatusTag
+                :status="row.status"
+                :status-name="row.statusName"
+                :cancellation-requested="row.isCancellationRequested"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column label="创建时间" width="170">
+            <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="完成时间" width="170">
+            <template #default="{ row }">{{ formatDateTime(row.completedAt) }}</template>
+          </el-table-column>
+          <el-table-column label="耗时" width="100">
+            <template #default="{ row }">{{ formatDuration(row.runMilliseconds, row.runSeconds) }}</template>
+          </el-table-column>
+          <el-table-column label="诊断摘要" min-width="260" show-overflow-tooltip>
+            <template #default="{ row }">{{ jobDiagnosticPreview(row) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="100" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" size="small" :icon="View" @click="openJob(String(row.id || ''))">
+                详情
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
       </section>
 
       <div class="split-grid">
@@ -574,7 +806,7 @@ onUnmounted(() => {
           />
           <el-descriptions v-else :column="2" border>
             <el-descriptions-item label="项目名称" :span="2">{{ notice.projectName || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="项目编码">{{ notice.projectCode || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="采购编号">{{ notice.projectCode || '-' }}</el-descriptions-item>
             <el-descriptions-item label="地区">{{ notice.region || '-' }}</el-descriptions-item>
             <el-descriptions-item label="采购人">{{ notice.buyerName || '-' }}</el-descriptions-item>
             <el-descriptions-item label="代理机构">{{ notice.agencyName || '-' }}</el-descriptions-item>
@@ -590,7 +822,7 @@ onUnmounted(() => {
           <section v-if="canAdjustOutcomeAi" class="ai-reparse-panel">
             <div class="ai-reparse-heading">
               <div>
-                <h2>DeepSeek 解析调整</h2>
+                <h2>AI 解析调整</h2>
                 <p>通过补充提示词重跑当前公告的中标/候选明细。</p>
               </div>
               <el-link v-if="outcomeAiJobId" type="primary" @click="openJob(outcomeAiJobId)">
@@ -603,11 +835,37 @@ onUnmounted(() => {
               :rows="4"
               maxlength="4000"
               show-word-limit
-              placeholder="例如：采购编号在正文“采购编号：XXXX”中；表格第一列是包号，第二列是推荐的成交候选人；最终报价单位是万元；不要把分标编号当采购编号。"
+              placeholder="例如：采购编号在正文“采购编号：XXXX”中；表格第一列是包号，第二列是推荐的成交候选人；最终报价只有表头明确写万元才换算，未标单位按元；不要把分标编号当采购编号。"
             />
             <div class="ai-reparse-actions">
               <el-button type="primary" :loading="outcomeAiReparseRequest.loading" @click="submitOutcomeAiReparse">
-                让 DeepSeek 重新解析
+                让 AI 重新解析
+              </el-button>
+              <el-button :disabled="loading" @click="loadData">刷新数据</el-button>
+            </div>
+          </section>
+
+          <section v-if="canAdjustProcurementAi" class="ai-reparse-panel">
+            <div class="ai-reparse-heading">
+              <div>
+                <h2>AI 解析调整</h2>
+                <p>通过补充提示词重跑当前采购公告的公告字段、包件、金额和资格要求。</p>
+              </div>
+              <el-link v-if="rawReparseJobId" type="primary" @click="openJob(rawReparseJobId)">
+                任务 {{ rawReparseJobId }}
+              </el-link>
+            </div>
+            <el-input
+              v-model="procurementAiPrompt"
+              type="textarea"
+              :rows="4"
+              maxlength="4000"
+              show-word-limit
+              placeholder="例如：以附件《采购一览表》为准；行报价最高限价列名含万元，需要乘以10000；资质、业绩、人员要求来自响应供应商专用资格要求表。"
+            />
+            <div class="ai-reparse-actions">
+              <el-button type="primary" :loading="rawReparseRequest.loading" @click="submitProcurementAiReparse">
+                让 AI 重新解析
               </el-button>
               <el-button :disabled="loading" @click="loadData">刷新数据</el-button>
             </div>
@@ -629,19 +887,22 @@ onUnmounted(() => {
               </PermissionButton>
             </div>
             <el-table :data="awardRows" border size="small" empty-text="未识别到中标/成交明细">
-              <el-table-column label="采购编号" min-width="150" show-overflow-tooltip>
+              <el-table-column v-if="awardColumnVisible.projectCode" label="采购编号" min-width="150" show-overflow-tooltip>
                 <template #default="{ row }">{{ outcomeProjectCode(row) }}</template>
               </el-table-column>
-              <el-table-column label="分标编号" min-width="150" show-overflow-tooltip>
+              <el-table-column v-if="awardColumnVisible.projectName" label="项目名称" min-width="220" show-overflow-tooltip>
+                <template #default="{ row }">{{ outcomeProjectName(row) }}</template>
+              </el-table-column>
+              <el-table-column v-if="awardColumnVisible.lotNo" label="分标编号" min-width="150" show-overflow-tooltip>
                 <template #default="{ row }">{{ outcomeLotNo(row) }}</template>
               </el-table-column>
-              <el-table-column label="分标名称" min-width="150" show-overflow-tooltip>
+              <el-table-column v-if="awardColumnVisible.lotName" label="分标名称" min-width="150" show-overflow-tooltip>
                 <template #default="{ row }">{{ outcomeLotName(row) }}</template>
               </el-table-column>
-              <el-table-column label="包号" width="110" show-overflow-tooltip>
+              <el-table-column v-if="awardColumnVisible.packageNo" label="包号" width="110" show-overflow-tooltip>
                 <template #default="{ row }">{{ outcomePackageNo(row) }}</template>
               </el-table-column>
-              <el-table-column label="中标状态" width="110">
+              <el-table-column v-if="awardColumnVisible.outcomeType" label="中标状态" width="110">
                 <template #default="{ row }">{{ formatCommonStatus(row.outcomeType) }}</template>
               </el-table-column>
               <el-table-column prop="supplierName" label="成交供应商" min-width="210" show-overflow-tooltip />
@@ -688,29 +949,32 @@ onUnmounted(() => {
               </PermissionButton>
             </div>
             <el-table :data="candidateRows" border size="small" empty-text="未识别到候选人明细">
-              <el-table-column label="采购编号" min-width="150" show-overflow-tooltip>
+              <el-table-column v-if="candidateColumnVisible.projectCode" label="采购编号" min-width="150" show-overflow-tooltip>
                 <template #default="{ row }">{{ outcomeProjectCode(row) }}</template>
               </el-table-column>
-              <el-table-column label="分标编号" min-width="150" show-overflow-tooltip>
+              <el-table-column v-if="candidateColumnVisible.projectName" label="项目名称" min-width="220" show-overflow-tooltip>
+                <template #default="{ row }">{{ outcomeProjectName(row) }}</template>
+              </el-table-column>
+              <el-table-column v-if="candidateColumnVisible.lotNo" label="分标编号" min-width="150" show-overflow-tooltip>
                 <template #default="{ row }">{{ outcomeLotNo(row) }}</template>
               </el-table-column>
-              <el-table-column label="分标名称" min-width="150" show-overflow-tooltip>
+              <el-table-column v-if="candidateColumnVisible.lotName" label="分标名称" min-width="150" show-overflow-tooltip>
                 <template #default="{ row }">{{ outcomeLotName(row) }}</template>
               </el-table-column>
-              <el-table-column label="包号" width="110" show-overflow-tooltip>
+              <el-table-column v-if="candidateColumnVisible.packageNo" label="包号" width="110" show-overflow-tooltip>
                 <template #default="{ row }">{{ outcomePackageNo(row) }}</template>
               </el-table-column>
-              <el-table-column label="包名称" min-width="190" show-overflow-tooltip>
+              <el-table-column v-if="candidateColumnVisible.packageName" label="包名称" min-width="190" show-overflow-tooltip>
                 <template #default="{ row }">{{ outcomePackageName(row) }}</template>
               </el-table-column>
-              <el-table-column label="排名" width="90">
+              <el-table-column v-if="candidateColumnVisible.rank" label="排名" width="90">
                 <template #default="{ row }">{{ formatRank(row.rank) }}</template>
               </el-table-column>
               <el-table-column prop="supplierName" label="推荐的成交候选人" min-width="210" show-overflow-tooltip />
-              <el-table-column label="最终报价（万元）" width="150" align="right">
-                <template #default="{ row }">{{ formatWanYuan(row.awardAmount) }}</template>
+              <el-table-column v-if="candidateColumnVisible.awardAmount" label="最终报价（元）" width="150" align="right">
+                <template #default="{ row }">{{ formatMoney(row.awardAmount) }}</template>
               </el-table-column>
-              <el-table-column label="评审情况" min-width="260" show-overflow-tooltip>
+              <el-table-column v-if="candidateColumnVisible.evidenceText" label="评审情况" min-width="260" show-overflow-tooltip>
                 <template #default="{ row }">{{ outcomeReviewSummary(row) }}</template>
               </el-table-column>
               <el-table-column v-if="canEditOutcomeRows" label="操作" width="140" fixed="right">
@@ -844,7 +1108,7 @@ onUnmounted(() => {
                 <el-descriptions-item label="名称">{{ buyer.buyerName || '-' }}</el-descriptions-item>
                 <el-descriptions-item label="系统ID">{{ buyer.buyerId || '-' }}</el-descriptions-item>
                 <el-descriptions-item label="项目">{{ buyer.projectName || '-' }}</el-descriptions-item>
-                <el-descriptions-item label="项目编码">{{ buyer.projectCode || '-' }}</el-descriptions-item>
+                <el-descriptions-item label="采购编号">{{ buyer.projectCode || '-' }}</el-descriptions-item>
                 <el-descriptions-item label="预算">{{ formatMoney(buyer.budgetAmount) }}</el-descriptions-item>
                 <el-descriptions-item label="采购包数">{{ buyer.packageCount }}</el-descriptions-item>
               </el-descriptions>
@@ -982,11 +1246,11 @@ onUnmounted(() => {
             <el-form-item label="厂家名称" class="wide">
               <el-input v-model="outcomeEditForm.supplierName" placeholder="中标人 / 成交供应商 / 推荐候选人" />
             </el-form-item>
-            <el-form-item label="最终报价 / 成交金额（万元）">
+            <el-form-item label="最终报价 / 成交金额（元）">
               <el-input-number
-                v-model="outcomeEditForm.awardAmountWan"
+                v-model="outcomeEditForm.awardAmount"
                 :min="0"
-                :precision="6"
+                :precision="2"
                 controls-position="right"
                 style="width: 100%"
               />
@@ -1100,6 +1364,56 @@ onUnmounted(() => {
   border: 1px solid #dce3ee;
   border-radius: 8px;
   background: #fff;
+}
+
+.quality-review-panel,
+.background-jobs-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 1px solid #dce3ee;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.background-job-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #687385;
+  font-size: 12px;
+}
+
+.quality-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.quality-summary-grid div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #e7edf5;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.quality-summary-grid span {
+  color: #687385;
+  font-size: 12px;
+}
+
+.quality-summary-grid strong {
+  overflow: hidden;
+  color: #17202a;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panel-heading,
@@ -1280,6 +1594,10 @@ onUnmounted(() => {
     grid-template-columns: repeat(2, minmax(160px, 1fr));
   }
 
+  .quality-summary-grid {
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
+
   .split-grid {
     grid-template-columns: 1fr;
   }
@@ -1287,6 +1605,10 @@ onUnmounted(() => {
 
 @media (max-width: 720px) {
   .summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quality-summary-grid {
     grid-template-columns: 1fr;
   }
 

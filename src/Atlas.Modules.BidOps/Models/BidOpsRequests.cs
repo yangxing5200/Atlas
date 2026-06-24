@@ -32,7 +32,21 @@ public sealed class ReviewTaskSearchQuery : BidOpsPagedQuery
 {
     public ReviewTaskStatus? Status { get; set; }
 
+    public string? ProjectCode { get; set; }
+
     public string? NoticeType { get; set; }
+
+    public string? RiskLevel { get; set; }
+
+    public int? MinQualityScore { get; set; }
+
+    public int? MaxQualityScore { get; set; }
+
+    public bool? HasHighRiskIssue { get; set; }
+
+    public string? ReviewRecommendation { get; set; }
+
+    public string? IssueType { get; set; }
 }
 
 public sealed class ProcessingFailureSearchQuery : BidOpsPagedQuery
@@ -84,10 +98,60 @@ public class CreateCrawlChannelRequest
     public string Region { get; set; } = string.Empty;
     public string Industry { get; set; } = string.Empty;
     public bool Enabled { get; set; } = true;
+    public string ScheduleMode { get; set; } = BidOpsCrawlScheduleModes.Interval;
+    public int? ScanIntervalMinutes { get; set; }
+    public string? DailyScanTime { get; set; }
 }
 
 public sealed class UpdateCrawlChannelRequest : CreateCrawlChannelRequest
 {
+}
+
+public sealed class SetCrawlChannelEnabledRequest
+{
+    public bool Enabled { get; set; }
+
+    public string? Reason { get; set; }
+}
+
+public sealed class StartCrawlBackfillRequest
+{
+    public DateTime? StartPublishTime { get; set; }
+
+    public DateTime? EndPublishTime { get; set; }
+
+    public int StartPage { get; set; } = 1;
+
+    public int PageSize { get; set; } = 20;
+
+    public int MaxPagesPerRun { get; set; } = 3;
+
+    public bool ResetCursor { get; set; } = true;
+}
+
+public sealed class ContinueCrawlCheckpointRequest
+{
+    public string Mode { get; set; } = BidOpsCrawlModes.Backfill;
+
+    public int? MaxPages { get; set; }
+}
+
+public sealed class PauseCrawlCheckpointRequest
+{
+    public string Mode { get; set; } = BidOpsCrawlModes.Backfill;
+
+    public string? Reason { get; set; }
+}
+
+public sealed class ResetCrawlCheckpointRequest
+{
+    public string Mode { get; set; } = BidOpsCrawlModes.Backfill;
+
+    public int NextPage { get; set; } = 1;
+
+    public DateTime? StartPublishTime { get; set; }
+
+    public DateTime? EndPublishTime { get; set; }
 }
 
 public sealed class ImportPublicUrlRequest
@@ -110,6 +174,34 @@ public sealed class BackfillRawNoticeAttachmentsRequest
     public bool ForceReparse { get; set; } = true;
 }
 
+public sealed class UpdateBidOpsAiProviderRequest
+{
+    public string Provider { get; set; } = string.Empty;
+}
+
+public sealed class UpdateBidOpsCodexCliSettingsRequest
+{
+    public string? Model { get; set; }
+
+    public string? ReasoningEffort { get; set; }
+}
+
+public sealed class UpdateBidOpsCodexCliScenarioSettingsRequest
+{
+    public string Scenario { get; set; } = BidOpsCodexCliScenarios.Default;
+
+    public string? Model { get; set; }
+
+    public string? ReasoningEffort { get; set; }
+}
+
+public sealed class UpdateBidOpsTaskPauseRequest
+{
+    public bool Paused { get; set; }
+
+    public string? Reason { get; set; }
+}
+
 public sealed class ReviewDecisionRequest
 {
     public string? Remark { get; set; }
@@ -118,6 +210,56 @@ public sealed class ReviewDecisionRequest
 public sealed class ReviewOutcomeAiReparseRequest
 {
     public string? Prompt { get; set; }
+}
+
+public sealed class BulkApproveReviewTasksRequest
+{
+    public List<long> ReviewTaskIds { get; set; } = [];
+
+    public string? Remark { get; set; }
+
+    public string ExpectedRiskLevel { get; set; } = "Low";
+
+    public int MaxHighRiskIssueCount { get; set; }
+}
+
+public sealed class BatchReviewTaskReparseRequest
+{
+    public List<long> ReviewTaskIds { get; set; } = [];
+
+    public string? Prompt { get; set; }
+
+    public string? Reason { get; set; }
+}
+
+public sealed class ReviewCorrectionAnalysisQuery
+{
+    public string? SourceKind { get; set; }
+
+    public string? NoticeType { get; set; }
+
+    public string? FieldName { get; set; }
+
+    public DateTime? From { get; set; }
+
+    public DateTime? To { get; set; }
+
+    public string? Keyword { get; set; }
+}
+
+public sealed class ReviewQualityBackfillRequest
+{
+    public int MaxItems { get; set; } = 100;
+
+    public string? NoticeType { get; set; }
+
+    public string? RiskLevel { get; set; }
+
+    public bool DryRun { get; set; } = true;
+
+    public long? SourceId { get; set; }
+
+    public bool PauseSourceAware { get; set; } = true;
 }
 
 public sealed class ReviewOutcomeSupplierRecordEditRequest
@@ -154,6 +296,8 @@ public sealed class ReviewOutcomeSupplierRecordEditRequest
 public sealed class ReparseRawNoticeRequest
 {
     public string? Reason { get; set; }
+
+    public string? Prompt { get; set; }
 }
 
 public sealed class CreateOpportunityRequest

@@ -21,19 +21,22 @@ public sealed class StructuredParseJobHandler : IBackgroundJobHandler
     private readonly IBidOpsOutcomeSupplierExtractionService _outcomeSupplierExtraction;
     private readonly IBidOpsAiCallDiagnostics _diagnostics;
     private readonly ILogger<StructuredParseJobHandler> _logger;
+    private readonly IBackgroundJobProgressReporter? _progress;
 
     public StructuredParseJobHandler(
         IExecutionIdentityAccessor identityAccessor,
         IBidOpsAiParsingService parsing,
         IBidOpsOutcomeSupplierExtractionService outcomeSupplierExtraction,
         IBidOpsAiCallDiagnostics diagnostics,
-        ILogger<StructuredParseJobHandler> logger)
+        ILogger<StructuredParseJobHandler> logger,
+        IBackgroundJobProgressReporter? progress = null)
     {
         _identityAccessor = identityAccessor ?? throw new ArgumentNullException(nameof(identityAccessor));
         _parsing = parsing ?? throw new ArgumentNullException(nameof(parsing));
         _outcomeSupplierExtraction = outcomeSupplierExtraction ?? throw new ArgumentNullException(nameof(outcomeSupplierExtraction));
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _progress = progress;
     }
 
     public string JobType => BidOpsBackgroundJobTypes.StructuredParse;
@@ -48,11 +51,17 @@ public sealed class StructuredParseJobHandler : IBackgroundJobHandler
         long reviewTaskId;
         try
         {
-            reviewTaskId = await _parsing.ParseRawNoticeAsync(payload.RawNoticeId, ct);
+            reviewTaskId = await RunWithProgressAsync(
+                context,
+                "notice-structured-parse",
+                "AI 正在结构化解析公告",
+                token => _parsing.ParseRawNoticeAsync(payload.RawNoticeId, payload.ReviewerPrompt, token),
+                payload,
+                ct);
         }
         catch
         {
-            await TryExtractOutcomeSuppliersAsync(payload.RawNoticeId, ct);
+            await TryExtractOutcomeSuppliersAsync(context, payload.RawNoticeId, ct);
             throw;
         }
 
@@ -61,23 +70,33 @@ public sealed class StructuredParseJobHandler : IBackgroundJobHandler
             reviewTaskId,
             payload.RawNoticeId);
 
-        var outcome = await TryExtractOutcomeSuppliersAsync(payload.RawNoticeId, ct);
+        var outcome = await TryExtractOutcomeSuppliersAsync(context, payload.RawNoticeId, ct);
         return BackgroundJobExecutionResult.Success(JsonSerializer.Serialize(new
         {
             rawNoticeId = payload.RawNoticeId,
+            projectCode = payload.ProjectCode,
             reviewTaskId,
+            reviewerPrompt = !string.IsNullOrWhiteSpace(payload.ReviewerPrompt),
             outcomeSupplierExtraction = outcome,
+            aiResponses = _diagnostics.Entries,
             deepSeekResponses = _diagnostics.Entries
         }, JsonOptions), BackgroundJobResultStorageLimits.AiDiagnosticsMaxCharacters);
     }
 
     private async Task<OutcomeSupplierExtractionResultDto?> TryExtractOutcomeSuppliersAsync(
+        BackgroundJobExecutionContext context,
         long rawNoticeId,
         CancellationToken ct)
     {
         try
         {
-            return await _outcomeSupplierExtraction.ExtractRawNoticeAsync(rawNoticeId, ct);
+            return await RunWithProgressAsync(
+                context,
+                "outcome-supplier-extract",
+                "AI 正在抽取中标/候选厂家线索",
+                token => _outcomeSupplierExtraction.ExtractRawNoticeAsync(rawNoticeId, token),
+                rawNoticeId,
+                ct);
         }
         catch (Exception ex)
         {
@@ -87,5 +106,49 @@ public sealed class StructuredParseJobHandler : IBackgroundJobHandler
                 rawNoticeId);
             return null;
         }
+    }
+
+    private Task<TResult> RunWithProgressAsync<TResult>(
+        BackgroundJobExecutionContext context,
+        string stage,
+        string message,
+        Func<CancellationToken, Task<TResult>> operation,
+        StructuredParseJobPayload payload,
+        CancellationToken ct)
+    {
+        return RunWithProgressAsync(
+            context,
+            stage,
+            message,
+            operation,
+            payload.RawNoticeId,
+            ct,
+            new Dictionary<string, object?>
+            {
+                ["rawNoticeId"] = payload.RawNoticeId,
+                ["projectCode"] = payload.ProjectCode,
+                ["reviewerPrompt"] = !string.IsNullOrWhiteSpace(payload.ReviewerPrompt)
+            });
+    }
+
+    private Task<TResult> RunWithProgressAsync<TResult>(
+        BackgroundJobExecutionContext context,
+        string stage,
+        string message,
+        Func<CancellationToken, Task<TResult>> operation,
+        long rawNoticeId,
+        CancellationToken ct,
+        IReadOnlyDictionary<string, object?>? data = null)
+    {
+        if (_progress == null)
+            return operation(ct);
+
+        return _progress.RunWithHeartbeatAsync(
+            context.Job.Id,
+            stage,
+            message,
+            operation,
+            data ?? new Dictionary<string, object?> { ["rawNoticeId"] = rawNoticeId },
+            ct);
     }
 }

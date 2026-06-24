@@ -65,6 +65,30 @@ const riskLevelLabels: Record<string, string> = {
   None: '无',
 }
 
+const qualityIssueTypeLabels: Record<string, string> = {
+  MissingProjectCode: '采购编号缺失',
+  MissingLotOrPackage: '包件身份缺失',
+  AmbiguousAmountUnit: '金额单位异常',
+  RateOrDiscountInAmountColumn: '费率进入金额',
+  AiRuleMismatch: 'AI/规则不一致',
+  MissingQualificationRequirement: '资质要求缺失',
+  MissingPerformanceRequirement: '业绩要求缺失',
+  MissingPersonnelRequirement: '人员要求缺失',
+  LifecycleMatchMissing: '闭环匹配缺失',
+  LifecycleMatchConflict: '闭环匹配冲突',
+  DuplicatePackageIdentity: '包件身份重复',
+  OriginalEvidenceMissing: '原始证据缺失',
+  MissingSupplierName: '厂家名称缺失',
+  MissingCandidateRank: '候选排名缺失',
+}
+
+const correctionSourceKindLabels: Record<string, string> = {
+  ManualEdit: '人工编辑',
+  BulkApprove: '批量确认',
+  ReparsePrompt: '重解析提示词',
+  IssueResolved: '异常已处理',
+}
+
 const commonStatusLabels: Record<string, string> = {
   New: '新建',
   Preparing: '标书准备',
@@ -112,6 +136,9 @@ const commonStatusLabels: Record<string, string> = {
   High: '高',
   Medium: '中',
   Low: '低',
+  BatchConfirmCandidate: '可批量确认候选',
+  NeedsReview: '需人工复核',
+  NeedsReparse: '建议重解析',
   Candidate: '候选',
   Caution: '需确认',
   NotRecommended: '不建议',
@@ -240,6 +267,28 @@ export const pursuitRiskLevelOptions: DisplayOption[] = [
   { label: '高', value: 'High' },
 ]
 
+export const reviewQualityRiskLevelOptions: DisplayOption[] = [
+  { label: '低风险', value: 'Low' },
+  { label: '中风险', value: 'Medium' },
+  { label: '高风险', value: 'High' },
+]
+
+export const reviewRecommendationOptions: DisplayOption[] = [
+  { label: '可批量确认候选', value: 'BatchConfirmCandidate' },
+  { label: '需人工复核', value: 'NeedsReview' },
+  { label: '建议重解析', value: 'NeedsReparse' },
+]
+
+export const reviewQualityIssueTypeOptions: DisplayOption[] = Object.entries(qualityIssueTypeLabels).map(([value, label]) => ({
+  label,
+  value,
+}))
+
+export const reviewCorrectionSourceKindOptions: DisplayOption[] = Object.entries(correctionSourceKindLabels).map(([value, label]) => ({
+  label,
+  value,
+}))
+
 export const pursuitTaskTypeOptions: DisplayOption[] = [
   { label: '资格材料', value: 'Qualification' },
   { label: '技术文件', value: 'Technical' },
@@ -365,6 +414,18 @@ export function formatEvidenceType(value?: string | null) {
 
 export function formatRiskLevel(value?: string | null) {
   return formatByMap(value, riskLevelLabels)
+}
+
+export function formatQualityIssueType(value?: string | null) {
+  return formatByMap(value, qualityIssueTypeLabels)
+}
+
+export function formatReviewRecommendation(value?: string | null) {
+  return formatCommonStatus(value)
+}
+
+export function formatReviewCorrectionSourceKind(value?: string | null) {
+  return formatByMap(value, correctionSourceKindLabels)
 }
 
 export function formatCommonStatus(value: unknown) {

@@ -1764,6 +1764,53 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
                     b.ToTable("UserStores", (string)null);
                 });
 
+            modelBuilder.Entity("Atlas.Modules.BidOps.Entities.BidOpsRuntimeSetting", b =>
+                {
+                    b.Property<long>("Id")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("SettingKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(128)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SettingKey"), "utf8mb4");
+
+                    b.Property<string>("SettingValue")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("varchar(512)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SettingValue"), "utf8mb4");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("UpdatedByUserName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(128)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("UpdatedByUserName"), "utf8mb4");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "CreatedAt");
+
+                    b.HasIndex("TenantId", "SettingKey")
+                        .IsUnique();
+
+                    b.ToTable("bidops_runtime_setting", (string)null);
+                });
+
             modelBuilder.Entity("Atlas.Modules.BidOps.Entities.Buyers.Buyer", b =>
                 {
                     b.Property<long>("Id")
@@ -2016,6 +2063,13 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime(6)");
 
+                    b.Property<string>("DailyScanTime")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("DailyScanTime"), "utf8mb4");
+
                     b.Property<string>("DetailContentSelector")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -2088,6 +2142,16 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
 
                     MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Region"), "utf8mb4");
 
+                    b.Property<int?>("ScanIntervalMinutes")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ScheduleMode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ScheduleMode"), "utf8mb4");
+
                     b.Property<long>("SourceId")
                         .HasColumnType("bigint");
 
@@ -2125,6 +2189,255 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
                         .IsUnique();
 
                     b.ToTable("bidops_crawl_channel", (string)null);
+                });
+
+            modelBuilder.Entity("Atlas.Modules.BidOps.Entities.Crawling.CrawlCheckpoint", b =>
+                {
+                    b.Property<long>("Id")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ChangedCount")
+                        .HasColumnType("int");
+
+                    b.Property<long>("ChannelId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int>("CreatedCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("CursorKind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("CursorKind"), "utf8mb4");
+
+                    b.Property<int>("DuplicateCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("FailedItemCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("HighWatermarkPublishTime")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("LastError")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LastError"), "utf8mb4");
+
+                    b.Property<DateTime?>("LastRunAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("LastSuccessfulCursor")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LastSuccessfulCursor"), "utf8mb4");
+
+                    b.Property<DateTime?>("LowWatermarkPublishTime")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Mode"), "utf8mb4");
+
+                    b.Property<string>("NextCursor")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("NextCursor"), "utf8mb4");
+
+                    b.Property<string>("PauseReason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PauseReason"), "utf8mb4");
+
+                    b.Property<DateTime?>("PausedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime?>("RangeEndPublishTime")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime?>("RangeStartPublishTime")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int?>("RemainingEstimate")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ScannedItemCount")
+                        .HasColumnType("int");
+
+                    b.Property<long>("SourceId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Status"), "utf8mb4");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("TotalRemoteCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChannelId");
+
+                    b.HasIndex("SourceId");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "CreatedAt");
+
+                    b.HasIndex("TenantId", "ChannelId", "Mode")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "SourceId", "Status", "LastRunAt");
+
+                    b.ToTable("bidops_crawl_checkpoint", (string)null);
+                });
+
+            modelBuilder.Entity("Atlas.Modules.BidOps.Entities.Crawling.CrawlRun", b =>
+                {
+                    b.Property<long>("Id")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("BackgroundJobId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ChangedCount")
+                        .HasColumnType("int");
+
+                    b.Property<long>("ChannelId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("CheckpointId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int>("CreatedCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("DiscoveredCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("DuplicateCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("EndCursor")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("EndCursor"), "utf8mb4");
+
+                    b.Property<int>("FailedItemCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Message"), "utf8mb4");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Mode"), "utf8mb4");
+
+                    b.Property<int>("PageCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("PageSize")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("RemainingEstimate")
+                        .HasColumnType("int");
+
+                    b.Property<long>("SourceId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("StartCursor")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("StartCursor"), "utf8mb4");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Status"), "utf8mb4");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("TotalRemoteCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BackgroundJobId");
+
+                    b.HasIndex("ChannelId");
+
+                    b.HasIndex("CheckpointId");
+
+                    b.HasIndex("SourceId");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "BackgroundJobId");
+
+                    b.HasIndex("TenantId", "CreatedAt");
+
+                    b.HasIndex("TenantId", "ChannelId", "StartedAt");
+
+                    b.HasIndex("TenantId", "CheckpointId", "StartedAt");
+
+                    b.ToTable("bidops_crawl_run", (string)null);
                 });
 
             modelBuilder.Entity("Atlas.Modules.BidOps.Entities.Crawling.CrawlRunLog", b =>
@@ -2512,6 +2825,9 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
                     b.HasIndex("TenantId", "ContentHash");
 
                     b.HasIndex("TenantId", "CreatedAt");
+
+                    b.HasIndex("TenantId", "NoticeType", "SourceNoticeId")
+                        .IsUnique();
 
                     b.HasIndex("TenantId", "SourceId", "DetailUrlHash")
                         .IsUnique();
@@ -3134,6 +3450,222 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
                     b.ToTable("bidops_opportunity_watch", (string)null);
                 });
 
+            modelBuilder.Entity("Atlas.Modules.BidOps.Entities.Outcomes.LifecyclePackageLink", b =>
+                {
+                    b.Property<long>("Id")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("AwardOutcomeRecordId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("AwardRawNoticeId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("CandidateOutcomeRecordId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("CandidateRawNoticeId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<long?>("ConfirmedBy")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Currency"), "utf8mb4");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("EvidenceJson"), "utf8mb4");
+
+                    b.Property<decimal?>("FinalAwardAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("FinalAwardAmountSource")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("FinalAwardAmountSource"), "utf8mb4");
+
+                    b.Property<string>("LinkStatus")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LinkStatus"), "utf8mb4");
+
+                    b.Property<string>("LotName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LotName"), "utf8mb4");
+
+                    b.Property<string>("LotNo")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LotNo"), "utf8mb4");
+
+                    b.Property<string>("ManualRemark")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ManualRemark"), "utf8mb4");
+
+                    b.Property<string>("MatchReasonsJson")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("MatchReasonsJson"), "utf8mb4");
+
+                    b.Property<decimal>("MatchScore")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(5,4)");
+
+                    b.Property<string>("MatchType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("MatchType"), "utf8mb4");
+
+                    b.Property<string>("MissingFieldsJson")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("MissingFieldsJson"), "utf8mb4");
+
+                    b.Property<string>("PackageName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PackageName"), "utf8mb4");
+
+                    b.Property<string>("PackageNo")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PackageNo"), "utf8mb4");
+
+                    b.Property<long?>("ProcurementDetailId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("ProcurementDetailStagingId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("ProcurementRawNoticeId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ProjectCode")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProjectCode"), "utf8mb4");
+
+                    b.Property<string>("ProjectName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProjectName"), "utf8mb4");
+
+                    b.Property<bool>("RequiresManualReview")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("SourceHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SourceHash"), "utf8mb4");
+
+                    b.Property<string>("SupplierName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SupplierName"), "utf8mb4");
+
+                    b.Property<string>("SupplierNameNormalized")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SupplierNameNormalized"), "utf8mb4");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("TenderPackageId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AwardOutcomeRecordId");
+
+                    b.HasIndex("AwardRawNoticeId");
+
+                    b.HasIndex("CandidateOutcomeRecordId");
+
+                    b.HasIndex("CandidateRawNoticeId");
+
+                    b.HasIndex("ProcurementDetailId");
+
+                    b.HasIndex("ProcurementDetailStagingId");
+
+                    b.HasIndex("ProcurementRawNoticeId");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenderPackageId");
+
+                    b.HasIndex("TenantId", "AwardOutcomeRecordId");
+
+                    b.HasIndex("TenantId", "CandidateOutcomeRecordId");
+
+                    b.HasIndex("TenantId", "CreatedAt");
+
+                    b.HasIndex("TenantId", "ProcurementDetailId");
+
+                    b.HasIndex("TenantId", "ProcurementDetailStagingId");
+
+                    b.HasIndex("TenantId", "SourceHash")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "TenderPackageId");
+
+                    b.HasIndex("TenantId", "LinkStatus", "RequiresManualReview", "MatchScore");
+
+                    b.HasIndex("TenantId", "ProjectCode", "LotNo", "PackageNo");
+
+                    b.ToTable("bidops_lifecycle_package_link", (string)null);
+                });
+
             modelBuilder.Entity("Atlas.Modules.BidOps.Entities.Outcomes.OutcomeSupplierRecord", b =>
                 {
                     b.Property<long>("Id")
@@ -3339,9 +3871,6 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
                     b.HasIndex("TenantId", "RawNoticeId")
                         .HasDatabaseName("IX_bidops_outcome_record_Tenant_RawNotice");
 
-                    b.HasIndex("TenantId", "RawNoticeId", "ExtractionOrder")
-                        .HasDatabaseName("IX_bidops_outcome_record_Tenant_RawNotice_Order");
-
                     b.HasIndex("TenantId", "SourceHash")
                         .IsUnique()
                         .HasDatabaseName("IX_bidops_outcome_record_Tenant_SourceHash");
@@ -3360,6 +3889,9 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
 
                     b.HasIndex("TenantId", "OutcomeType", "PublishTime")
                         .HasDatabaseName("IX_bidops_outcome_record_Tenant_Outcome_Pub");
+
+                    b.HasIndex("TenantId", "RawNoticeId", "ExtractionOrder")
+                        .HasDatabaseName("IX_bidops_outcome_record_Tenant_RawNotice_Order");
 
                     b.ToTable("bidops_outcome_supplier_record", (string)null);
                 });
@@ -3866,6 +4398,414 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
                     b.ToTable("bidops_package_staging", (string)null);
                 });
 
+            modelBuilder.Entity("Atlas.Modules.BidOps.Entities.Staging.ProcurementDetailStaging", b =>
+                {
+                    b.Property<long>("Id")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("AiConfidence")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(5,4)");
+
+                    b.Property<string>("AwardLimit")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("AwardLimit"), "utf8mb4");
+
+                    b.Property<decimal?>("BudgetAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal?>("BusinessWeight")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<string>("BuyerName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("BuyerName"), "utf8mb4");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Category"), "utf8mb4");
+
+                    b.Property<string>("ConstructionUnit")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ConstructionUnit"), "utf8mb4");
+
+                    b.Property<string>("ContractTemplate")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ContractTemplate"), "utf8mb4");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("EcpLotName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("EcpLotName"), "utf8mb4");
+
+                    b.Property<decimal?>("ItemEstimatedAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("JointVentureAllowed")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("JointVentureAllowed"), "utf8mb4");
+
+                    b.Property<string>("LineItemNo")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LineItemNo"), "utf8mb4");
+
+                    b.Property<string>("Location")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Location"), "utf8mb4");
+
+                    b.Property<string>("LotName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LotName"), "utf8mb4");
+
+                    b.Property<string>("LotNo")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LotNo"), "utf8mb4");
+
+                    b.Property<string>("LotSequence")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LotSequence"), "utf8mb4");
+
+                    b.Property<string>("MaterialCode")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("MaterialCode"), "utf8mb4");
+
+                    b.Property<decimal?>("MaxPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal?>("MaxPriceRatePercent")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(9,4)");
+
+                    b.Property<string>("NormalizedFieldsJson")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("NormalizedFieldsJson"), "utf8mb4");
+
+                    b.Property<long>("NoticeStagingId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("OriginalHeaderJson")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("OriginalHeaderJson"), "utf8mb4");
+
+                    b.Property<string>("OriginalRowJson")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("OriginalRowJson"), "utf8mb4");
+
+                    b.Property<string>("OtherRequirement")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("OtherRequirement"), "utf8mb4");
+
+                    b.Property<decimal?>("PackageEstimatedAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("PackageName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PackageName"), "utf8mb4");
+
+                    b.Property<string>("PackageNo")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PackageNo"), "utf8mb4");
+
+                    b.Property<long?>("PackageStagingId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PackageType")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PackageType"), "utf8mb4");
+
+                    b.Property<string>("PerformanceRequirement")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PerformanceRequirement"), "utf8mb4");
+
+                    b.Property<string>("PersonnelRequirement")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PersonnelRequirement"), "utf8mb4");
+
+                    b.Property<DateTime?>("PlannedCompletionDate")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime?>("PlannedStartDate")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("PriceCalculationMethod")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PriceCalculationMethod"), "utf8mb4");
+
+                    b.Property<string>("PriceParameter")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PriceParameter"), "utf8mb4");
+
+                    b.Property<decimal?>("PriceWeight")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<decimal?>("ProcurementAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("ProcurementApplicationNo")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProcurementApplicationNo"), "utf8mb4");
+
+                    b.Property<string>("ProcurementContent")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProcurementContent"), "utf8mb4");
+
+                    b.Property<string>("ProcurementMethod")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProcurementMethod"), "utf8mb4");
+
+                    b.Property<string>("ProjectCode")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProjectCode"), "utf8mb4");
+
+                    b.Property<string>("ProjectName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProjectName"), "utf8mb4");
+
+                    b.Property<string>("ProjectOverview")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProjectOverview"), "utf8mb4");
+
+                    b.Property<string>("ProjectUnit")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProjectUnit"), "utf8mb4");
+
+                    b.Property<string>("QualificationRequirement")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("QualificationRequirement"), "utf8mb4");
+
+                    b.Property<string>("QuoteMode")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("QuoteMode"), "utf8mb4");
+
+                    b.Property<long?>("RawAttachmentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("RawNoticeId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Remarks")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Remarks"), "utf8mb4");
+
+                    b.Property<decimal?>("ResponseGuaranteeAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int>("ReviewStatus")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("RowIndex")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ScopeText")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ScopeText"), "utf8mb4");
+
+                    b.Property<int?>("ServicePeriodDays")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ServicePeriodText")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ServicePeriodText"), "utf8mb4");
+
+                    b.Property<string>("SettlementMode")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SettlementMode"), "utf8mb4");
+
+                    b.Property<string>("SourceSheetName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SourceSheetName"), "utf8mb4");
+
+                    b.Property<string>("SubcontractAllowed")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SubcontractAllowed"), "utf8mb4");
+
+                    b.Property<int?>("TableIndex")
+                        .HasColumnType("int");
+
+                    b.Property<decimal?>("TaxRatePercent")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(9,4)");
+
+                    b.Property<string>("TechnicalSpecId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("TechnicalSpecId"), "utf8mb4");
+
+                    b.Property<decimal?>("TechnicalWeight")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("VoltageLevel")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("VoltageLevel"), "utf8mb4");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NoticeStagingId");
+
+                    b.HasIndex("PackageStagingId");
+
+                    b.HasIndex("RawAttachmentId");
+
+                    b.HasIndex("RawNoticeId");
+
+                    b.HasIndex("TechnicalSpecId");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "CreatedAt");
+
+                    b.HasIndex("TenantId", "NoticeStagingId");
+
+                    b.HasIndex("TenantId", "PackageStagingId");
+
+                    b.HasIndex("TenantId", "ReviewStatus", "CreatedAt");
+
+                    b.HasIndex("TenantId", "ProjectCode", "LotNo", "PackageNo");
+
+                    b.HasIndex("TenantId", "RawNoticeId", "RawAttachmentId", "TableIndex", "RowIndex");
+
+                    b.ToTable("bidops_procurement_detail_staging", (string)null);
+                });
+
             modelBuilder.Entity("Atlas.Modules.BidOps.Entities.Staging.RequirementStaging", b =>
                 {
                     b.Property<long>("Id")
@@ -3954,6 +4894,218 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
                     b.ToTable("bidops_requirement_staging", (string)null);
                 });
 
+            modelBuilder.Entity("Atlas.Modules.BidOps.Entities.Staging.ReviewCorrectionSample", b =>
+                {
+                    b.Property<long>("Id")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("CorrectedValue")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("CorrectedValue"), "utf8mb4");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<long?>("CreatedBy")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("FieldName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("FieldName"), "utf8mb4");
+
+                    b.Property<string>("NoticeType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("NoticeType"), "utf8mb4");
+
+                    b.Property<string>("OriginalHeader")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("OriginalHeader"), "utf8mb4");
+
+                    b.Property<string>("OriginalRowJson")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("OriginalRowJson"), "utf8mb4");
+
+                    b.Property<string>("OriginalValue")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("OriginalValue"), "utf8mb4");
+
+                    b.Property<long>("RawNoticeId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Reason"), "utf8mb4");
+
+                    b.Property<long>("ReviewTaskId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ReviewerPrompt")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ReviewerPrompt"), "utf8mb4");
+
+                    b.Property<string>("SourceKind")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SourceKind"), "utf8mb4");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RawNoticeId");
+
+                    b.HasIndex("ReviewTaskId");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "CreatedAt");
+
+                    b.HasIndex("TenantId", "FieldName", "CreatedAt");
+
+                    b.HasIndex("TenantId", "NoticeType", "CreatedAt");
+
+                    b.HasIndex("TenantId", "RawNoticeId", "CreatedAt");
+
+                    b.HasIndex("TenantId", "ReviewTaskId", "CreatedAt");
+
+                    b.HasIndex("TenantId", "SourceKind", "CreatedAt");
+
+                    b.ToTable("bidops_review_correction_sample", (string)null);
+                });
+
+            modelBuilder.Entity("Atlas.Modules.BidOps.Entities.Staging.ReviewQualityIssue", b =>
+                {
+                    b.Property<long>("Id")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("EvidenceJson"), "utf8mb4");
+
+                    b.Property<string>("FieldName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("FieldName"), "utf8mb4");
+
+                    b.Property<bool>("IsResolved")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("IssueType")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("IssueType"), "utf8mb4");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Message"), "utf8mb4");
+
+                    b.Property<long>("NoticeStagingId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("OutcomeSupplierRecordId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("PackageStagingId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("ProcurementDetailStagingId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("RawNoticeId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<long?>("ResolvedBy")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("ReviewTaskId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Severity")
+                        .HasColumnType("int");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NoticeStagingId");
+
+                    b.HasIndex("OutcomeSupplierRecordId");
+
+                    b.HasIndex("PackageStagingId");
+
+                    b.HasIndex("ProcurementDetailStagingId");
+
+                    b.HasIndex("RawNoticeId");
+
+                    b.HasIndex("ReviewTaskId");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "CreatedAt");
+
+                    b.HasIndex("TenantId", "IssueType");
+
+                    b.HasIndex("TenantId", "NoticeStagingId");
+
+                    b.HasIndex("TenantId", "RawNoticeId");
+
+                    b.HasIndex("TenantId", "ReviewTaskId", "IsResolved");
+
+                    b.HasIndex("TenantId", "Severity", "CreatedAt");
+
+                    b.ToTable("bidops_review_quality_issue", (string)null);
+                });
+
             modelBuilder.Entity("Atlas.Modules.BidOps.Entities.Staging.ReviewTask", b =>
                 {
                     b.Property<long>("Id")
@@ -3982,7 +5134,16 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
 
                     MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Decision"), "utf8mb4");
 
+                    b.Property<int>("HighRiskIssueCount")
+                        .HasColumnType("int");
+
                     b.Property<int>("Priority")
+                        .HasColumnType("int");
+
+                    b.Property<int>("QualityIssueCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("QualityScore")
                         .HasColumnType("int");
 
                     b.Property<long?>("RawNoticeId")
@@ -3995,11 +5156,17 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
 
                     MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Remark"), "utf8mb4");
 
+                    b.Property<int>("ReviewRecommendation")
+                        .HasColumnType("int");
+
                     b.Property<DateTime?>("ReviewedAt")
                         .HasColumnType("datetime(6)");
 
                     b.Property<long?>("ReviewerId")
                         .HasColumnType("bigint");
+
+                    b.Property<int>("RiskLevel")
+                        .HasColumnType("int");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
@@ -4031,6 +5198,8 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
 
                     b.HasIndex("TenantId", "BizType", "BizId")
                         .IsUnique();
+
+                    b.HasIndex("TenantId", "RiskLevel", "Status", "CreatedAt");
 
                     b.HasIndex("TenantId", "Status", "Priority", "CreatedAt");
 
@@ -4551,6 +5720,419 @@ namespace Atlas.Data.Tenant.Migrations.Migrations
                         .IsUnique();
 
                     b.ToTable("bidops_notice", (string)null);
+                });
+
+            modelBuilder.Entity("Atlas.Modules.BidOps.Entities.Tendering.ProcurementDetail", b =>
+                {
+                    b.Property<long>("Id")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("AwardLimit")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("AwardLimit"), "utf8mb4");
+
+                    b.Property<decimal?>("BudgetAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal?>("BusinessWeight")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<string>("BuyerName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("BuyerName"), "utf8mb4");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Category"), "utf8mb4");
+
+                    b.Property<string>("ConstructionUnit")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ConstructionUnit"), "utf8mb4");
+
+                    b.Property<string>("ContractTemplate")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ContractTemplate"), "utf8mb4");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("EcpLotName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("EcpLotName"), "utf8mb4");
+
+                    b.Property<decimal?>("ItemEstimatedAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("JointVentureAllowed")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("JointVentureAllowed"), "utf8mb4");
+
+                    b.Property<string>("LineItemNo")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LineItemNo"), "utf8mb4");
+
+                    b.Property<string>("Location")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Location"), "utf8mb4");
+
+                    b.Property<string>("LotName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LotName"), "utf8mb4");
+
+                    b.Property<string>("LotNo")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LotNo"), "utf8mb4");
+
+                    b.Property<string>("LotSequence")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("LotSequence"), "utf8mb4");
+
+                    b.Property<string>("MaterialCode")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("MaterialCode"), "utf8mb4");
+
+                    b.Property<decimal?>("MaxPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal?>("MaxPriceRatePercent")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(9,4)");
+
+                    b.Property<string>("NormalizedFieldsJson")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("NormalizedFieldsJson"), "utf8mb4");
+
+                    b.Property<long>("NoticeId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("OriginalHeaderJson")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("OriginalHeaderJson"), "utf8mb4");
+
+                    b.Property<string>("OriginalRowJson")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("longtext");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("OriginalRowJson"), "utf8mb4");
+
+                    b.Property<string>("OtherRequirement")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("OtherRequirement"), "utf8mb4");
+
+                    b.Property<decimal?>("PackageEstimatedAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("PackageName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PackageName"), "utf8mb4");
+
+                    b.Property<string>("PackageNo")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PackageNo"), "utf8mb4");
+
+                    b.Property<string>("PackageType")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PackageType"), "utf8mb4");
+
+                    b.Property<string>("PerformanceRequirement")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PerformanceRequirement"), "utf8mb4");
+
+                    b.Property<string>("PersonnelRequirement")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PersonnelRequirement"), "utf8mb4");
+
+                    b.Property<DateTime?>("PlannedCompletionDate")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime?>("PlannedStartDate")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("PriceCalculationMethod")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PriceCalculationMethod"), "utf8mb4");
+
+                    b.Property<string>("PriceParameter")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("PriceParameter"), "utf8mb4");
+
+                    b.Property<decimal?>("PriceWeight")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<decimal?>("ProcurementAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("ProcurementApplicationNo")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProcurementApplicationNo"), "utf8mb4");
+
+                    b.Property<string>("ProcurementContent")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProcurementContent"), "utf8mb4");
+
+                    b.Property<long?>("ProcurementDetailStagingId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ProcurementMethod")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProcurementMethod"), "utf8mb4");
+
+                    b.Property<string>("ProjectCode")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProjectCode"), "utf8mb4");
+
+                    b.Property<string>("ProjectName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProjectName"), "utf8mb4");
+
+                    b.Property<string>("ProjectOverview")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProjectOverview"), "utf8mb4");
+
+                    b.Property<string>("ProjectUnit")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ProjectUnit"), "utf8mb4");
+
+                    b.Property<string>("QualificationRequirement")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("QualificationRequirement"), "utf8mb4");
+
+                    b.Property<string>("QuoteMode")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("QuoteMode"), "utf8mb4");
+
+                    b.Property<long?>("RawAttachmentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("RawNoticeId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Remarks")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Remarks"), "utf8mb4");
+
+                    b.Property<decimal?>("ResponseGuaranteeAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int?>("RowIndex")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ScopeText")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("text");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ScopeText"), "utf8mb4");
+
+                    b.Property<int?>("ServicePeriodDays")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ServicePeriodText")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("ServicePeriodText"), "utf8mb4");
+
+                    b.Property<string>("SettlementMode")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SettlementMode"), "utf8mb4");
+
+                    b.Property<string>("SourceSheetName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SourceSheetName"), "utf8mb4");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("Status"), "utf8mb4");
+
+                    b.Property<string>("SubcontractAllowed")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SubcontractAllowed"), "utf8mb4");
+
+                    b.Property<int?>("TableIndex")
+                        .HasColumnType("int");
+
+                    b.Property<decimal?>("TaxRatePercent")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(9,4)");
+
+                    b.Property<string>("TechnicalSpecId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("TechnicalSpecId"), "utf8mb4");
+
+                    b.Property<decimal?>("TechnicalWeight")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("TenderPackageId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("VoltageLevel")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(256)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("VoltageLevel"), "utf8mb4");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NoticeId");
+
+                    b.HasIndex("ProcurementDetailStagingId");
+
+                    b.HasIndex("RawAttachmentId");
+
+                    b.HasIndex("RawNoticeId");
+
+                    b.HasIndex("TechnicalSpecId");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenderPackageId");
+
+                    b.HasIndex("TenantId", "CreatedAt");
+
+                    b.HasIndex("TenantId", "NoticeId");
+
+                    b.HasIndex("TenantId", "TenderPackageId");
+
+                    b.HasIndex("TenantId", "Status", "CreatedAt");
+
+                    b.HasIndex("TenantId", "ProjectCode", "LotNo", "PackageNo");
+
+                    b.HasIndex("TenantId", "RawNoticeId", "RawAttachmentId", "TableIndex", "RowIndex");
+
+                    b.ToTable("bidops_procurement_detail", (string)null);
                 });
 
             modelBuilder.Entity("Atlas.Modules.BidOps.Entities.Tendering.RequirementItem", b =>

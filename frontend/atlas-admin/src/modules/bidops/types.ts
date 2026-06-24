@@ -24,7 +24,14 @@ export interface CrawlRunLogSearchQuery extends BidOpsPagedQuery {
 
 export interface ReviewTaskSearchQuery extends BidOpsPagedQuery {
   status?: ReviewTaskStatus
+  projectCode?: string
   noticeType?: string
+  riskLevel?: ReviewQualityRiskLevel
+  minQualityScore?: number
+  maxQualityScore?: number
+  hasHighRiskIssue?: boolean
+  reviewRecommendation?: ReviewRecommendation
+  issueType?: string
 }
 
 export type ProcessingFailureSearchQuery = BidOpsPagedQuery
@@ -54,6 +61,8 @@ export interface PagedResult<T> {
 export type RawNoticeStatus = number | string
 export type ReviewTaskStatus = number | string
 export type ReviewStatus = number | string
+export type ReviewQualityRiskLevel = 'Low' | 'Medium' | 'High' | string
+export type ReviewRecommendation = 'BatchConfirmCandidate' | 'NeedsReview' | 'NeedsReparse' | string
 export type DownloadStatus = number | string
 export type TextExtractStatus = number | string
 
@@ -83,9 +92,43 @@ export interface CrawlChannelDto {
   region: string
   industry: string
   enabled: boolean
+  scheduleMode: string
+  scanIntervalMinutes?: number | null
+  dailyScanTime: string
   lastScanTime?: string | null
   lastSuccessTime?: string | null
   lastError: string
+}
+
+export interface SetCrawlChannelEnabledRequest {
+  enabled: boolean
+  reason?: string | null
+}
+
+export interface StartCrawlBackfillRequest {
+  startPublishTime?: string | null
+  endPublishTime?: string | null
+  startPage: number
+  pageSize: number
+  maxPagesPerRun: number
+  resetCursor: boolean
+}
+
+export interface ContinueCrawlCheckpointRequest {
+  mode: string
+  maxPages?: number | null
+}
+
+export interface PauseCrawlCheckpointRequest {
+  mode: string
+  reason?: string | null
+}
+
+export interface ResetCrawlCheckpointRequest {
+  mode: string
+  nextPage: number
+  startPublishTime?: string | null
+  endPublishTime?: string | null
 }
 
 export interface CrawlRunLogDto {
@@ -195,9 +238,119 @@ export interface ReviewTaskDto {
   packageCount: number
   requirementCount: number
   rejectRiskCount: number
+  qualityScore: number
+  riskLevel: ReviewQualityRiskLevel
+  qualityIssueCount: number
+  highRiskIssueCount: number
+  reviewRecommendation: ReviewRecommendation
   createdAt: string
   updatedAt?: string | null
   reviewedAt?: string | null
+}
+
+export interface ReviewQualityIssueDto {
+  id: BidOpsId
+  reviewTaskId: BidOpsId
+  rawNoticeId: BidOpsId
+  noticeStagingId: BidOpsId
+  packageStagingId?: BidOpsId | null
+  outcomeSupplierRecordId?: BidOpsId | null
+  procurementDetailStagingId?: BidOpsId | null
+  issueType: string
+  severity: ReviewQualityRiskLevel
+  fieldName: string
+  message: string
+  evidenceJson: string
+  isResolved: boolean
+  resolvedBy?: BidOpsId | null
+  resolvedAt?: string | null
+  createdAt: string
+}
+
+export interface BulkReviewTaskActionItemDto {
+  reviewTaskId: BidOpsId
+  succeeded: boolean
+  skipped: boolean
+  message: string
+  jobId?: BidOpsId | null
+  jobType?: string | null
+}
+
+export interface BulkReviewTaskActionResultDto {
+  requestedCount: number
+  succeededCount: number
+  failedCount: number
+  skippedCount: number
+  items: BulkReviewTaskActionItemDto[]
+}
+
+export interface ReviewCorrectionSampleDto {
+  id: BidOpsId
+  reviewTaskId: BidOpsId
+  rawNoticeId: BidOpsId
+  noticeType: string
+  sourceKind: string
+  fieldName: string
+  originalValue: string
+  correctedValue: string
+  originalHeader: string
+  originalRowJson: string
+  reviewerPrompt: string
+  reason: string
+  createdBy?: BidOpsId | null
+  createdAt: string
+}
+
+export interface ReviewCorrectionBucketDto {
+  key: string
+  count: number
+}
+
+export interface ReviewCorrectionAnalysisDto {
+  generatedAtUtc: string
+  totalSamples: number
+  topFields: ReviewCorrectionBucketDto[]
+  topOriginalHeaders: ReviewCorrectionBucketDto[]
+  amountUnitIssues: ReviewCorrectionBucketDto[]
+  requirementIssues: ReviewCorrectionBucketDto[]
+  reparsePromptPatterns: ReviewCorrectionBucketDto[]
+  recentSamples: ReviewCorrectionSampleDto[]
+}
+
+export interface ReviewEfficiencyMetricsDto {
+  generatedAtUtc: string
+  todayNewReviewTasks: number
+  pendingReviewTasks: number
+  lowRiskCount: number
+  mediumRiskCount: number
+  highRiskCount: number
+  lowRiskRatio: number
+  bulkApprovedToday: number
+  averageHandlingMinutes: number
+  reparsePromptSamplesToday: number
+}
+
+export interface ReviewQualityBackfillSampleDto {
+  reviewTaskId: BidOpsId
+  rawNoticeId?: BidOpsId | null
+  noticeType: string
+  beforeQualityScore: number
+  beforeRiskLevel: string
+  afterQualityScore: number
+  afterRiskLevel: string
+  issueCount: number
+  updated: boolean
+  message: string
+}
+
+export interface ReviewQualityBackfillResultDto {
+  requestedMaxItems: number
+  scannedCount: number
+  candidateCount: number
+  updatedCount: number
+  skippedCount: number
+  dryRun: boolean
+  samples: ReviewQualityBackfillSampleDto[]
 }
 
 export interface ProcessingFailureDto {
@@ -264,6 +417,7 @@ export interface ReviewTaskDetailDto {
   outcomeSuppliers: OutcomeSupplierRecordDto[]
   packages: PackageStagingDto[]
   attachments: RawAttachmentDto[]
+  qualityIssues: ReviewQualityIssueDto[]
 }
 
 export interface ReviewBuyerInfoDto {
@@ -882,6 +1036,9 @@ export interface CreateCrawlChannelRequest {
   region: string
   industry: string
   enabled: boolean
+  scheduleMode: string
+  scanIntervalMinutes?: number | null
+  dailyScanTime?: string | null
 }
 
 export type UpdateCrawlChannelRequest = CreateCrawlChannelRequest
@@ -910,6 +1067,7 @@ export interface BackfillRawNoticeAttachmentsRequest {
 
 export interface ReparseRawNoticeRequest {
   reason?: string | null
+  prompt?: string | null
 }
 
 export interface ReviewDecisionRequest {
@@ -918,6 +1076,37 @@ export interface ReviewDecisionRequest {
 
 export interface ReviewOutcomeAiReparseRequest {
   prompt: string
+}
+
+export interface BulkApproveReviewTasksRequest {
+  reviewTaskIds: Array<BidOpsId | number>
+  remark?: string | null
+  expectedRiskLevel?: string
+  maxHighRiskIssueCount?: number
+}
+
+export interface BatchReviewTaskReparseRequest {
+  reviewTaskIds: Array<BidOpsId | number>
+  prompt: string
+  reason?: string | null
+}
+
+export interface ReviewCorrectionAnalysisQuery {
+  sourceKind?: string
+  noticeType?: string
+  fieldName?: string
+  from?: string
+  to?: string
+  keyword?: string
+}
+
+export interface ReviewQualityBackfillRequest {
+  maxItems?: number
+  noticeType?: string | null
+  riskLevel?: string | null
+  dryRun?: boolean
+  sourceId?: BidOpsId | number | null
+  pauseSourceAware?: boolean
 }
 
 export interface ReviewOutcomeSupplierRecordEditRequest {

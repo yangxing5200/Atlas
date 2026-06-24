@@ -27,6 +27,19 @@ internal static class BidOpsConfigurationHelpers
     }
 }
 
+public sealed class BidOpsRuntimeSettingConfiguration : IEntityTypeConfiguration<BidOpsRuntimeSetting>
+{
+    public void Configure(EntityTypeBuilder<BidOpsRuntimeSetting> builder)
+    {
+        builder.ToTable("bidops_runtime_setting");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.SettingKey).HasColumnType("varchar(128)").HasMaxLength(128).IsRequired();
+        builder.Property(x => x.SettingValue).HasColumnType("varchar(512)").HasMaxLength(512);
+        builder.Property(x => x.UpdatedByUserName).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.HasIndex(x => new { x.TenantId, x.SettingKey }).IsUnique();
+    }
+}
+
 public sealed class CrawlSourceConfiguration : IEntityTypeConfiguration<CrawlSource>
 {
     public void Configure(EntityTypeBuilder<CrawlSource> builder)
@@ -58,6 +71,8 @@ public sealed class CrawlChannelConfiguration : IEntityTypeConfiguration<CrawlCh
         builder.Property(x => x.ListUrl).HasMaxLength(1000);
         builder.Property(x => x.Region).HasMaxLength(128);
         builder.Property(x => x.Industry).HasMaxLength(128);
+        builder.Property(x => x.ScheduleMode).HasMaxLength(32).IsRequired();
+        builder.Property(x => x.DailyScanTime).HasMaxLength(16);
         builder.Property(x => x.ListItemSelector).HasMaxLength(500);
         builder.Property(x => x.TitleSelector).HasMaxLength(500);
         builder.Property(x => x.UrlSelector).HasMaxLength(500);
@@ -89,6 +104,7 @@ public sealed class RawNoticeConfiguration : IEntityTypeConfiguration<RawNotice>
         builder.Property(x => x.LastError).HasMaxLength(2000);
         builder.Property(x => x.Status).HasConversion<int>().IsRequired();
         builder.HasIndex(x => new { x.TenantId, x.SourceId, x.DetailUrlHash }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.NoticeType, x.SourceNoticeId }).IsUnique();
         builder.HasIndex(x => new { x.TenantId, x.Status, x.FetchTime });
         builder.HasIndex(x => new { x.TenantId, x.ContentHash });
     }
@@ -123,6 +139,41 @@ public sealed class CrawlRunLogConfiguration : IEntityTypeConfiguration<CrawlRun
         builder.Property(x => x.Status).HasMaxLength(64).IsRequired();
         builder.Property(x => x.Message).HasMaxLength(2000);
         builder.HasIndex(x => new { x.TenantId, x.SourceId, x.CreatedAt });
+        builder.HasIndex(x => new { x.TenantId, x.BackgroundJobId });
+    }
+}
+
+public sealed class CrawlCheckpointConfiguration : IEntityTypeConfiguration<CrawlCheckpoint>
+{
+    public void Configure(EntityTypeBuilder<CrawlCheckpoint> builder)
+    {
+        builder.ToTable("bidops_crawl_checkpoint");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.Mode).HasMaxLength(32).IsRequired();
+        builder.Property(x => x.Status).HasMaxLength(32).IsRequired();
+        builder.Property(x => x.CursorKind).HasMaxLength(32).IsRequired();
+        builder.Property(x => x.NextCursor).HasMaxLength(128);
+        builder.Property(x => x.LastSuccessfulCursor).HasMaxLength(128);
+        builder.Property(x => x.PauseReason).HasMaxLength(1000);
+        builder.Property(x => x.LastError).HasMaxLength(2000);
+        builder.HasIndex(x => new { x.TenantId, x.ChannelId, x.Mode }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.SourceId, x.Status, x.LastRunAt });
+    }
+}
+
+public sealed class CrawlRunConfiguration : IEntityTypeConfiguration<CrawlRun>
+{
+    public void Configure(EntityTypeBuilder<CrawlRun> builder)
+    {
+        builder.ToTable("bidops_crawl_run");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.Mode).HasMaxLength(32).IsRequired();
+        builder.Property(x => x.Status).HasMaxLength(32).IsRequired();
+        builder.Property(x => x.StartCursor).HasMaxLength(128);
+        builder.Property(x => x.EndCursor).HasMaxLength(128);
+        builder.Property(x => x.Message).HasMaxLength(2000);
+        builder.HasIndex(x => new { x.TenantId, x.ChannelId, x.StartedAt });
+        builder.HasIndex(x => new { x.TenantId, x.CheckpointId, x.StartedAt });
         builder.HasIndex(x => new { x.TenantId, x.BackgroundJobId });
     }
 }
@@ -189,6 +240,79 @@ public sealed class RequirementStagingConfiguration : IEntityTypeConfiguration<R
     }
 }
 
+public sealed class ProcurementDetailStagingConfiguration : IEntityTypeConfiguration<ProcurementDetailStaging>
+{
+    public void Configure(EntityTypeBuilder<ProcurementDetailStaging> builder)
+    {
+        builder.ToTable("bidops_procurement_detail_staging");
+        builder.ConfigureTenantEntity();
+        ConfigureProcurementDetailShape(builder);
+        builder.Property(x => x.AiConfidence).HasColumnType("decimal(5,4)");
+        builder.Property(x => x.ReviewStatus).HasConversion<int>().IsRequired();
+        builder.HasIndex(x => new { x.TenantId, x.NoticeStagingId });
+        builder.HasIndex(x => new { x.TenantId, x.PackageStagingId });
+        builder.HasIndex(x => new { x.TenantId, x.RawNoticeId, x.RawAttachmentId, x.TableIndex, x.RowIndex });
+        builder.HasIndex(x => new { x.TenantId, x.ProjectCode, x.LotNo, x.PackageNo });
+        builder.HasIndex(x => new { x.TenantId, x.ReviewStatus, x.CreatedAt });
+    }
+
+    private static void ConfigureProcurementDetailShape(EntityTypeBuilder<ProcurementDetailStaging> builder)
+    {
+        builder.Property(x => x.SourceSheetName).HasMaxLength(300);
+        builder.Property(x => x.ProjectCode).HasMaxLength(128);
+        builder.Property(x => x.ProjectName).HasMaxLength(500);
+        builder.Property(x => x.ProcurementApplicationNo).HasMaxLength(128);
+        builder.Property(x => x.LineItemNo).HasMaxLength(128);
+        builder.Property(x => x.MaterialCode).HasMaxLength(128);
+        builder.Property(x => x.LotSequence).HasMaxLength(64);
+        builder.Property(x => x.LotNo).HasMaxLength(128);
+        builder.Property(x => x.LotName).HasMaxLength(300);
+        builder.Property(x => x.EcpLotName).HasMaxLength(300);
+        builder.Property(x => x.PackageNo).HasMaxLength(128);
+        builder.Property(x => x.PackageName).HasMaxLength(500);
+        builder.Property(x => x.PackageType).HasMaxLength(128);
+        builder.Property(x => x.Category).HasMaxLength(128);
+        builder.Property(x => x.ProcurementMethod).HasMaxLength(128);
+        builder.Property(x => x.BuyerName).HasMaxLength(300);
+        builder.Property(x => x.ProjectUnit).HasMaxLength(300);
+        builder.Property(x => x.ConstructionUnit).HasMaxLength(300);
+        builder.Property(x => x.ProcurementContent).HasColumnType("text");
+        builder.Property(x => x.ScopeText).HasColumnType("text");
+        builder.Property(x => x.ProjectOverview).HasColumnType("text");
+        builder.Property(x => x.Location).HasMaxLength(500);
+        builder.Property(x => x.VoltageLevel).HasMaxLength(128);
+        builder.Property(x => x.ProcurementAmount).HasColumnType("decimal(18,2)");
+        builder.Property(x => x.BudgetAmount).HasColumnType("decimal(18,2)");
+        builder.Property(x => x.ItemEstimatedAmount).HasColumnType("decimal(18,2)");
+        builder.Property(x => x.PackageEstimatedAmount).HasColumnType("decimal(18,2)");
+        builder.Property(x => x.MaxPrice).HasColumnType("decimal(18,2)");
+        builder.Property(x => x.MaxPriceRatePercent).HasColumnType("decimal(9,4)");
+        builder.Property(x => x.TaxRatePercent).HasColumnType("decimal(9,4)");
+        builder.Property(x => x.ResponseGuaranteeAmount).HasColumnType("decimal(18,2)");
+        builder.Property(x => x.QuoteMode).HasMaxLength(128);
+        builder.Property(x => x.SettlementMode).HasMaxLength(128);
+        builder.Property(x => x.ServicePeriodText).HasMaxLength(300);
+        builder.Property(x => x.QualificationRequirement).HasColumnType("text");
+        builder.Property(x => x.PerformanceRequirement).HasColumnType("text");
+        builder.Property(x => x.PersonnelRequirement).HasColumnType("text");
+        builder.Property(x => x.OtherRequirement).HasColumnType("text");
+        builder.Property(x => x.JointVentureAllowed).HasMaxLength(128);
+        builder.Property(x => x.SubcontractAllowed).HasMaxLength(128);
+        builder.Property(x => x.AwardLimit).HasMaxLength(500);
+        builder.Property(x => x.TechnicalSpecId).HasMaxLength(256);
+        builder.Property(x => x.ContractTemplate).HasMaxLength(500);
+        builder.Property(x => x.BusinessWeight).HasColumnType("decimal(5,2)");
+        builder.Property(x => x.TechnicalWeight).HasColumnType("decimal(5,2)");
+        builder.Property(x => x.PriceWeight).HasColumnType("decimal(5,2)");
+        builder.Property(x => x.PriceCalculationMethod).HasMaxLength(300);
+        builder.Property(x => x.PriceParameter).HasMaxLength(500);
+        builder.Property(x => x.Remarks).HasMaxLength(1000);
+        builder.Property(x => x.OriginalHeaderJson).HasColumnType("longtext");
+        builder.Property(x => x.OriginalRowJson).HasColumnType("longtext");
+        builder.Property(x => x.NormalizedFieldsJson).HasColumnType("longtext");
+    }
+}
+
 public sealed class ReviewTaskConfiguration : IEntityTypeConfiguration<ReviewTask>
 {
     public void Configure(EntityTypeBuilder<ReviewTask> builder)
@@ -198,10 +322,58 @@ public sealed class ReviewTaskConfiguration : IEntityTypeConfiguration<ReviewTas
         builder.Property(x => x.BizType).HasMaxLength(128).IsRequired();
         builder.Property(x => x.TaskTitle).HasMaxLength(500).IsRequired();
         builder.Property(x => x.Status).HasConversion<int>().IsRequired();
+        builder.Property(x => x.QualityScore).IsRequired();
+        builder.Property(x => x.RiskLevel).HasConversion<int>().IsRequired();
+        builder.Property(x => x.QualityIssueCount).IsRequired();
+        builder.Property(x => x.HighRiskIssueCount).IsRequired();
+        builder.Property(x => x.ReviewRecommendation).HasConversion<int>().IsRequired();
         builder.Property(x => x.Decision).HasMaxLength(128);
         builder.Property(x => x.Remark).HasMaxLength(1000);
         builder.HasIndex(x => new { x.TenantId, x.BizType, x.BizId }).IsUnique();
         builder.HasIndex(x => new { x.TenantId, x.Status, x.Priority, x.CreatedAt });
+        builder.HasIndex(x => new { x.TenantId, x.RiskLevel, x.Status, x.CreatedAt });
+    }
+}
+
+public sealed class ReviewQualityIssueConfiguration : IEntityTypeConfiguration<ReviewQualityIssue>
+{
+    public void Configure(EntityTypeBuilder<ReviewQualityIssue> builder)
+    {
+        builder.ToTable("bidops_review_quality_issue");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.IssueType).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.Severity).HasConversion<int>().IsRequired();
+        builder.Property(x => x.FieldName).HasMaxLength(128);
+        builder.Property(x => x.Message).HasMaxLength(1000).IsRequired();
+        builder.Property(x => x.EvidenceJson).HasColumnType("longtext");
+        builder.HasIndex(x => new { x.TenantId, x.ReviewTaskId, x.IsResolved });
+        builder.HasIndex(x => new { x.TenantId, x.RawNoticeId });
+        builder.HasIndex(x => new { x.TenantId, x.NoticeStagingId });
+        builder.HasIndex(x => new { x.TenantId, x.Severity, x.CreatedAt });
+        builder.HasIndex(x => new { x.TenantId, x.IssueType });
+    }
+}
+
+public sealed class ReviewCorrectionSampleConfiguration : IEntityTypeConfiguration<ReviewCorrectionSample>
+{
+    public void Configure(EntityTypeBuilder<ReviewCorrectionSample> builder)
+    {
+        builder.ToTable("bidops_review_correction_sample");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.NoticeType).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.SourceKind).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.FieldName).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.OriginalValue).HasColumnType("longtext");
+        builder.Property(x => x.CorrectedValue).HasColumnType("longtext");
+        builder.Property(x => x.OriginalHeader).HasMaxLength(300);
+        builder.Property(x => x.OriginalRowJson).HasColumnType("longtext");
+        builder.Property(x => x.ReviewerPrompt).HasColumnType("longtext");
+        builder.Property(x => x.Reason).HasMaxLength(1000);
+        builder.HasIndex(x => new { x.TenantId, x.ReviewTaskId, x.CreatedAt });
+        builder.HasIndex(x => new { x.TenantId, x.RawNoticeId, x.CreatedAt });
+        builder.HasIndex(x => new { x.TenantId, x.SourceKind, x.CreatedAt });
+        builder.HasIndex(x => new { x.TenantId, x.FieldName, x.CreatedAt });
+        builder.HasIndex(x => new { x.TenantId, x.NoticeType, x.CreatedAt });
     }
 }
 
@@ -264,6 +436,78 @@ public sealed class RequirementItemConfiguration : IEntityTypeConfiguration<Requ
         builder.Property(x => x.ManualRemark).HasMaxLength(1000);
         builder.HasIndex(x => new { x.TenantId, x.PackageId });
         builder.HasIndex(x => new { x.TenantId, x.RiskLevel });
+    }
+}
+
+public sealed class ProcurementDetailConfiguration : IEntityTypeConfiguration<ProcurementDetail>
+{
+    public void Configure(EntityTypeBuilder<ProcurementDetail> builder)
+    {
+        builder.ToTable("bidops_procurement_detail");
+        builder.ConfigureTenantEntity();
+        ConfigureProcurementDetailShape(builder);
+        builder.Property(x => x.Status).HasMaxLength(64).IsRequired();
+        builder.HasIndex(x => new { x.TenantId, x.NoticeId });
+        builder.HasIndex(x => new { x.TenantId, x.TenderPackageId });
+        builder.HasIndex(x => new { x.TenantId, x.RawNoticeId, x.RawAttachmentId, x.TableIndex, x.RowIndex });
+        builder.HasIndex(x => new { x.TenantId, x.ProjectCode, x.LotNo, x.PackageNo });
+        builder.HasIndex(x => new { x.TenantId, x.Status, x.CreatedAt });
+    }
+
+    private static void ConfigureProcurementDetailShape(EntityTypeBuilder<ProcurementDetail> builder)
+    {
+        builder.Property(x => x.SourceSheetName).HasMaxLength(300);
+        builder.Property(x => x.ProjectCode).HasMaxLength(128);
+        builder.Property(x => x.ProjectName).HasMaxLength(500);
+        builder.Property(x => x.ProcurementApplicationNo).HasMaxLength(128);
+        builder.Property(x => x.LineItemNo).HasMaxLength(128);
+        builder.Property(x => x.MaterialCode).HasMaxLength(128);
+        builder.Property(x => x.LotSequence).HasMaxLength(64);
+        builder.Property(x => x.LotNo).HasMaxLength(128);
+        builder.Property(x => x.LotName).HasMaxLength(300);
+        builder.Property(x => x.EcpLotName).HasMaxLength(300);
+        builder.Property(x => x.PackageNo).HasMaxLength(128);
+        builder.Property(x => x.PackageName).HasMaxLength(500);
+        builder.Property(x => x.PackageType).HasMaxLength(128);
+        builder.Property(x => x.Category).HasMaxLength(128);
+        builder.Property(x => x.ProcurementMethod).HasMaxLength(128);
+        builder.Property(x => x.BuyerName).HasMaxLength(300);
+        builder.Property(x => x.ProjectUnit).HasMaxLength(300);
+        builder.Property(x => x.ConstructionUnit).HasMaxLength(300);
+        builder.Property(x => x.ProcurementContent).HasColumnType("text");
+        builder.Property(x => x.ScopeText).HasColumnType("text");
+        builder.Property(x => x.ProjectOverview).HasColumnType("text");
+        builder.Property(x => x.Location).HasMaxLength(500);
+        builder.Property(x => x.VoltageLevel).HasMaxLength(128);
+        builder.Property(x => x.ProcurementAmount).HasColumnType("decimal(18,2)");
+        builder.Property(x => x.BudgetAmount).HasColumnType("decimal(18,2)");
+        builder.Property(x => x.ItemEstimatedAmount).HasColumnType("decimal(18,2)");
+        builder.Property(x => x.PackageEstimatedAmount).HasColumnType("decimal(18,2)");
+        builder.Property(x => x.MaxPrice).HasColumnType("decimal(18,2)");
+        builder.Property(x => x.MaxPriceRatePercent).HasColumnType("decimal(9,4)");
+        builder.Property(x => x.TaxRatePercent).HasColumnType("decimal(9,4)");
+        builder.Property(x => x.ResponseGuaranteeAmount).HasColumnType("decimal(18,2)");
+        builder.Property(x => x.QuoteMode).HasMaxLength(128);
+        builder.Property(x => x.SettlementMode).HasMaxLength(128);
+        builder.Property(x => x.ServicePeriodText).HasMaxLength(300);
+        builder.Property(x => x.QualificationRequirement).HasColumnType("text");
+        builder.Property(x => x.PerformanceRequirement).HasColumnType("text");
+        builder.Property(x => x.PersonnelRequirement).HasColumnType("text");
+        builder.Property(x => x.OtherRequirement).HasColumnType("text");
+        builder.Property(x => x.JointVentureAllowed).HasMaxLength(128);
+        builder.Property(x => x.SubcontractAllowed).HasMaxLength(128);
+        builder.Property(x => x.AwardLimit).HasMaxLength(500);
+        builder.Property(x => x.TechnicalSpecId).HasMaxLength(256);
+        builder.Property(x => x.ContractTemplate).HasMaxLength(500);
+        builder.Property(x => x.BusinessWeight).HasColumnType("decimal(5,2)");
+        builder.Property(x => x.TechnicalWeight).HasColumnType("decimal(5,2)");
+        builder.Property(x => x.PriceWeight).HasColumnType("decimal(5,2)");
+        builder.Property(x => x.PriceCalculationMethod).HasMaxLength(300);
+        builder.Property(x => x.PriceParameter).HasMaxLength(500);
+        builder.Property(x => x.Remarks).HasMaxLength(1000);
+        builder.Property(x => x.OriginalHeaderJson).HasColumnType("longtext");
+        builder.Property(x => x.OriginalRowJson).HasColumnType("longtext");
+        builder.Property(x => x.NormalizedFieldsJson).HasColumnType("longtext");
     }
 }
 
@@ -501,6 +745,42 @@ public sealed class OutcomeSupplierRecordConfiguration : IEntityTypeConfiguratio
             .HasDatabaseName("IX_bidops_outcome_record_Tenant_Category_Pub");
         builder.HasIndex(x => new { x.TenantId, x.OutcomeType, x.PublishTime })
             .HasDatabaseName("IX_bidops_outcome_record_Tenant_Outcome_Pub");
+    }
+}
+
+public sealed class LifecyclePackageLinkConfiguration : IEntityTypeConfiguration<LifecyclePackageLink>
+{
+    public void Configure(EntityTypeBuilder<LifecyclePackageLink> builder)
+    {
+        builder.ToTable("bidops_lifecycle_package_link");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.ProjectCode).HasMaxLength(128);
+        builder.Property(x => x.ProjectName).HasMaxLength(500);
+        builder.Property(x => x.LotNo).HasMaxLength(128);
+        builder.Property(x => x.LotName).HasMaxLength(300);
+        builder.Property(x => x.PackageNo).HasMaxLength(128);
+        builder.Property(x => x.PackageName).HasMaxLength(500);
+        builder.Property(x => x.SupplierName).HasMaxLength(300);
+        builder.Property(x => x.SupplierNameNormalized).HasMaxLength(300);
+        builder.Property(x => x.FinalAwardAmount).HasColumnType("decimal(18,2)");
+        builder.Property(x => x.FinalAwardAmountSource).HasMaxLength(128);
+        builder.Property(x => x.Currency).HasMaxLength(16).IsRequired();
+        builder.Property(x => x.MatchScore).HasColumnType("decimal(5,4)");
+        builder.Property(x => x.MatchType).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.LinkStatus).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.MatchReasonsJson).HasColumnType("longtext");
+        builder.Property(x => x.MissingFieldsJson).HasColumnType("longtext");
+        builder.Property(x => x.EvidenceJson).HasColumnType("longtext");
+        builder.Property(x => x.ManualRemark).HasMaxLength(1000);
+        builder.Property(x => x.SourceHash).HasMaxLength(64).IsRequired();
+        builder.HasIndex(x => new { x.TenantId, x.SourceHash }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.ProcurementDetailId });
+        builder.HasIndex(x => new { x.TenantId, x.ProcurementDetailStagingId });
+        builder.HasIndex(x => new { x.TenantId, x.TenderPackageId });
+        builder.HasIndex(x => new { x.TenantId, x.CandidateOutcomeRecordId });
+        builder.HasIndex(x => new { x.TenantId, x.AwardOutcomeRecordId });
+        builder.HasIndex(x => new { x.TenantId, x.LinkStatus, x.RequiresManualReview, x.MatchScore });
+        builder.HasIndex(x => new { x.TenantId, x.ProjectCode, x.LotNo, x.PackageNo });
     }
 }
 

@@ -1,11 +1,128 @@
 # Decisions
 
+## 2026-06-24 BidOps Local AI Worker Concurrency Observation
+
+- Local `BidOpsLocal` Worker AI concurrency was raised one step for observation: `BackgroundTasks:OneTimeJobs:MaxConcurrency=8`, `bidops.ai.structured-parse=3`, and `bidops.outcome.supplier-extract=3`.
+- This allows up to six concurrent AI parsing jobs while leaving two Worker slots for non-AI or lighter work. The State Grid ECP crawler remains capped at `1`.
+- The change is intentionally below an aggressive Codex CLI fan-out because each Codex task starts a separate process and can hold CPU, memory, and API capacity for several minutes.
+
+## 2026-06-23 BidOps Local Codex Worker Concurrency
+
+- Local BidOps Worker concurrency was increased because Codex CLI parsing is materially slower than the DeepSeek-compatible HTTP provider and the previous per-AI-job cap allowed only one structured parse plus one outcome extraction at a time.
+- `BidOpsLocal` now uses `BackgroundTasks:OneTimeJobs:MaxConcurrency=6`, with `bidops.ai.structured-parse` capped at `2` and `bidops.outcome.supplier-extract` capped at `2`. This allows up to four concurrent AI parsing jobs while keeping two slots available for lighter jobs such as attachment processing and recovery work.
+- State Grid ECP crawl concurrency remains capped at `1` to keep public-source crawling gentle and checkpoint updates deterministic.
+- Additional machines can be used as BidOps AI-only consumers, but they should use Worker job-type inclusion filters instead of consuming every `bidops` task. This prevents AI scale-out nodes from also claiming crawler, attachment, or maintenance jobs.
+- Cross-machine Workers must use distinct Snowflake node ids and a shared file/object storage path for BidOps file-backed work. Local disk paths are acceptable only when the extra Worker is constrained to job types that do not require files unavailable on that machine.
+
+## 2026-06-23 Frontend List Query Persistence
+
+- BidOps review-task list and background-job list filters are persisted in browser `localStorage`, not server-side user preferences. This keeps the behavior lightweight and avoids a backend schema/API change for an operator convenience feature.
+- Filter values are written to `localStorage` only when the operator explicitly clicks `查询`; typing into a field without searching does not change the restored state. `重置` writes the default state so old filters do not come back after a refresh.
+- Background-job list uses separate keys for the global operations page and the BidOps operations page, because the BidOps page forces the `bidops` queue and should not inherit a general operations queue filter.
+- Explicit route query parameters override cached values on page load. This preserves deep-link behavior while still restoring the last-used filters when the user refreshes or navigates back without query parameters.
+
+## 2026-06-23 Background Job Completed-Time Sorting
+
+- Background task list completion time uses the existing operator-facing `CompletedAt` alias backed by `BackgroundJobs.CompletedAtUtc`; no schema change or new timestamp column is needed.
+- Completion-time sorting is an explicit operations-list option (`SortBy=CompletedAt`). Jobs without a completion time are placed after completed jobs in both ascending and descending modes so pending/running work does not hide completed-history ordering.
+- When no explicit sort is requested, the operations list keeps its existing default order: running jobs first, pending jobs second, then newest created jobs.
+
+## 2026-06-23 BidOps Background Job Backlog Parallelization
+
+- BidOps background backlog was inflated by two separate issues: the one-time Worker claimed a batch but executed jobs serially, and automatic attachment/scan enqueue keys included the current minute so recovery/scheduled scans could enqueue the same unfinished work repeatedly.
+- `BackgroundTasks:OneTimeJobs:MaxConcurrency` is a generic Worker option and defaults to `1` to preserve existing deployment behavior. `JobTypeConcurrency` can cap specific job types below the global concurrency.
+- The Worker maintains active jobs and fills newly available slots while long-running jobs continue. A slow AI task occupies its own slot but no longer blocks quick attachment tasks from being claimed in later polling ticks.
+- Local BidOps Worker runs with global concurrency `4`. Attachment processing can run in parallel because each job is scoped to one RawNotice and the downstream structured-parse job is deduplicated by parser version, tenant, RawNotice, and content hash.
+- Structured notice parsing and outcome/candidate supplier extraction are capped at concurrency `1` in `BidOpsLocal` because they call external/CLI AI providers and can be expensive or timeout-prone. State Grid crawl jobs are also capped at `1` to keep public-source crawling gentle and checkpoint updates deterministic.
+- Automatic attachment-process deduplication uses `TenantId + RawNoticeId + ContentHash`. If public notice content changes and the content hash changes, a new attachment/parse task can be enqueued; unchanged recovery scans no longer create minute-by-minute duplicates.
+- Scheduled crawl deduplication uses the current channel/checkpoint progress state instead of wall-clock minutes. A backfill checkpoint can enqueue the next segment only after cursor/checkpoint state advances or is explicitly reset.
+- Local backlog repair marked duplicate Pending attachment/scan jobs as `Canceled` while keeping one canonical pending job per RawNotice or crawl state. No Raw/Staging/Formal BidOps business rows were deleted or mutated.
+
+## 2026-06-23 BidOps Task Procurement Number Search
+
+- BidOps uses the existing `ProjectCode` field as the product-facing `采购编号/项目编号`; no new `ProcurementCode` database column is introduced for MVP.
+- Review-task search accepts an explicit `ProjectCode` query parameter and resolves it through `NoticeStaging.ProjectCode`, `ProcurementDetailStaging.ProjectCode`, and `OutcomeSupplierRecord.ProjectCode`. This covers procurement announcements, attachment-derived package detail rows, and award/candidate result rows without denormalizing review-task rows.
+- Background job search also accepts `ProjectCode`, but it stays within the background-task boundary by searching job `Payload`/`Result` text instead of injecting BidOps tenant repositories into the global operations service.
+- New RawNotice-related BidOps jobs carry optional `projectCode` in payload and progress/result JSON where known. Older jobs remain searchable only when the procurement number already appears in their payload/result text.
+
+## 2026-06-23 BidOps Ordinal-Prefixed Outcome Lot Evidence
+
+- Public outcome tables may prefix each row with an ordinal before `LotNo + PackageNo + SupplierName`, for example `1 10FM03-9001006-0111 包 1 江苏科能岩土工程有限公司`.
+- BidOps treats that row-leading lot number as explicit evidence only when the source text has a labeled lot/package outcome table signal. This preserves the conservative rule that package identity is not inferred from supplier name or package number alone.
+- Historical local repairs may fill missing `LotNo` from such ordinal-prefixed public evidence and refresh derived review-quality issues. If the repaired row still has no compatible procurement package, the old multi-match warning is converted to the normal lifecycle missing-package warning instead of kept as a stale conflict.
+
+## 2026-06-23 BidOps Manual Task Priority
+
+- BidOps background jobs use the existing `BackgroundJobs.Priority` field; no new queue or migration is required.
+- Operator-triggered BidOps jobs are enqueued with priority `100`, while automatic/scheduled jobs keep the default priority `0`. The existing Worker ordering by priority then naturally runs manual work before automatic backlog.
+- Child jobs spawned from crawl/import/attachment-processing handlers inherit the parent job priority, so manual URL import and manual reparse remain high priority through attachment extraction and structured parsing.
+- BidOps-only manual retries promote the retry job to priority `100`; non-BidOps background retries keep their original priority.
+
+## 2026-06-23 BidOps Global Task Pause Switch
+
+- The global BidOps task pause switch is stored as a tenant-scoped runtime setting in `bidops_runtime_setting` with key `runtime.task-pause`. This reuses the existing runtime settings table and avoids a new migration for a single operational flag.
+- Pause behavior is conservative: new operator-triggered BidOps background task requests are rejected, recurring BidOps tasks skip enqueue for paused tenants, and queued BidOps jobs are deferred before handler execution without consuming retry attempts.
+- The switch is not a force-kill. Already running jobs continue to rely on the existing cooperative cancellation/termination flow so handlers can stop at safe I/O and persistence boundaries.
+
+## 2026-06-23 BidOps Runtime Codex CLI Settings
+
+- Codex CLI model and reasoning effort are tenant-level runtime settings in `bidops_runtime_setting` under `ai.codex-cli.model` and `ai.codex-cli.reasoning-effort`.
+- Worker-owned AI extraction reads the effective provider/model/reasoning settings before each Codex CLI request, so operations-dashboard changes apply to subsequent jobs without a Worker restart.
+- The default Codex CLI reasoning effort is `low` instead of `xhigh`.
+- Codex CLI settings are scenario-scoped for ordinary extraction, complex-source extraction, manual reparse, and reviewer-prompt extraction. Ordinary extraction defaults to `low`, complex-source and manual reparse default to `medium`, and reviewer-prompt extraction defaults to `xhigh`.
+- Complex-source selection is currently a conservative Worker-side heuristic: extraction requests with at least 3 attachments or at least 60,000 characters of notice plus attachment text use the complex scenario. The threshold is intentionally not a new database setting in MVP; operators can tune the model and reasoning effort for that scenario from the operations dashboard.
+
+## 2026-06-22 BidOps Outcome Lot Identity Reparse Quality
+
+- Outcome supplier rows use `LotNo + LotName + PackageNo + SupplierName` as their review-time identity evidence. A repeated package number such as `包1` is not enough to infer a unique package when many lots reuse it.
+- If an AI/deterministic outcome extract omits `LotNo` but its row evidence starts with a public lot number followed by the package number, persistence may fill `LotNo` from that evidence when the source text has a lot-number table/header signal.
+- Review-detail UI must not display package metadata inferred from an ambiguous package number. Package fallback display is allowed only when the match is unique or when lot context is present.
+- Review quality issue refreshes use explicit tenant-scoped repository operations so Worker reparses overwrite stale review issues for the same task instead of leaving old issue rows attached to current results.
+
+## 2026-06-22 BidOps Review Quality Scoring Foundation
+
+- Review quality automation is implemented as an审核辅助 layer, not automatic approval. Quality scores and recommendations can mark a task as a batch-confirm candidate, but a permitted human action is still required before Formal data is written.
+- Quality summary fields are persisted on `ReviewTask` for efficient queue filtering. Detailed evidence stays in `bidops_review_quality_issue` so each warning can point back to the Raw notice, NoticeStaging, PackageStaging, optional ProcurementDetailStaging row, and original evidence JSON.
+- Procurement quality rules are conservative. Unitless money remains yuan by default; high-risk amount issues are created only when original row/header evidence explicitly shows `万元/万` without yuan normalization, or when rate/percent/weight headers are persisted into money fields.
+- Existing Raw/Staging/Formal boundaries remain unchanged. The quality service updates only staging-side review metadata and issue rows after structured parsing or reparse, and does not mutate approved Formal notice/package data.
+- Review queue sorting uses persisted `ReviewTask` quality summary fields instead of joining issue rows for every page. Issue-type filtering may query the issue table first, then constrain review task IDs through the repository query surface.
+
+## 2026-06-19 BidOps Procurement Reviewer Prompt Reparse
+
+- Procurement-announcement reviewer prompts use the existing raw notice reparse flow instead of the outcome-supplier reparse endpoint. This keeps announcement/package/requirement extraction in the structured parse pipeline and keeps outcome/candidate supplier extraction separate.
+- Reviewer prompts are optional for raw notice reparse. Empty prompt means normal deterministic/AI structured reparse; non-empty prompt is carried only in background job payloads and injected into the structured DeepSeek prompt.
+- The prompt can override deterministic reference output only when supported by public notice text, HTML, or extracted attachment text. AI results still go to staging/review and do not bypass human approval.
+
+## 2026-06-18 BidOps Procurement Amount Header Units
+
+- Procurement announcement amount fields continue to be stored as CNY yuan.
+- DeepSeek prompts require yuan-normalized `budgetAmount` and `maxPrice` even when the source table uses varied headers such as `采购金额（万元）`, `分项估算金额（万元）`, `包估算金额（万元）`, `行报价最高限价（含税/万元）`, or similar aliases.
+- Backend parsing still performs deterministic reconciliation when AI returns a bare numeric value that appears to be the original `万元` cell value. If deterministic table parsing sees the same package amount as 10,000 times the AI value, the deterministic yuan value wins.
+- Headers for percentage limits, tax rates, weights, scores, calculation methods, and price parameters are not treated as money columns. Mixed headers such as `元或折扣比例` are treated as yuan only when the cell itself is not a percent/rate/discount value.
+
+## 2026-06-18 BidOps Procurement Detail And Lifecycle Link Model
+
+- Procurement attachment rows are modeled as first-class procurement details instead of being flattened entirely into `TenderPackage`. This keeps `TenderPackage` focused on package identity while preserving messy attachment-row evidence for analysis.
+- `ProcurementDetailStaging` stores AI/rule-extracted row facts before review. `ProcurementDetail` stores the approved formal row facts. Both keep normalized fields and original header/row JSON for traceability and future field mapping.
+- The first schema version includes common SGCC service/procurement fields used for package identity, money, scope, schedule, qualification, scoring, quote, and contract analysis. Rare or source-specific columns stay in JSON until they justify promoted columns.
+- Long source text fields such as procurement content, scope, project overview, qualification, performance, personnel, and other requirements use MySQL `text` instead of very wide `varchar` columns to avoid row-size pressure from messy attachment tables.
+- `LifecyclePackageLink` is the durable bridge for procurement detail, formal package, candidate result, and award result records. It stores match score, reasons, missing fields, evidence JSON, and manual confirmation state.
+- Lifecycle links are tenant-scoped and idempotent by `TenantId + SourceHash`; matching services must not create cross-tenant links.
+
+## 2026-06-18 BidOps Outcome Amount Unit Semantics
+
+- `OutcomeSupplierRecord.AwardAmount` continues to store public final quote, award, and transaction amounts in CNY yuan.
+- Amounts are multiplied by 10,000 only when the source cell, same table header, or immediate surrounding context explicitly says `万元` or `万`.
+- Unitless amount columns default to yuan. A header such as `投标报价` or `成交金额` without an explicit `万元` marker is not treated as ten-thousand-yuan.
+- Percentages, discount rates, fees expressed as rates, and score-like values remain excluded from `AwardAmount` and should stay null when they are the only numeric evidence.
+- BidOps review and supplier-analysis UIs display/edit outcome amounts as yuan so the operator is not forced into an implied `万元` assumption.
+
 ## 2026-06-16 DeepSeek Response Visibility In Background Job Details
 
 - BidOps DeepSeek/OpenAI-compatible parsing jobs persist AI response diagnostics into the background job result so operators can inspect the exact provider response from the job detail page after a reparse.
 - The stored diagnostics include provider, model, endpoint host/path, HTTP status, elapsed time, response/assistant character counts, finish reason, the raw response body, and extracted assistant content. They intentionally do not store request bodies, authorization headers, or API keys.
 - `BackgroundJobs.Result` is widened to `mediumtext` and AI parsing handlers explicitly request a larger result storage cap. Other background jobs keep the default short result cap so normal lists and history remain lightweight.
-- Operations detail keeps list previews short but allows BidOps structured parse and outcome supplier extraction details to return up to the AI diagnostics cap. The frontend shows a dedicated `DeepSeek 返回` tab when `deepSeekResponses` are present.
+- Operations detail keeps list previews short but allows BidOps structured parse and outcome supplier extraction details to return up to the AI diagnostics cap. The frontend shows a dedicated `AI 返回` tab when provider diagnostics are present.
 - Historical jobs that completed before this change cannot show DeepSeek raw content from the job detail because only Worker logs held that data. Rerunning/reparsing the Raw notice creates a new job with persisted diagnostics.
 
 ## 2026-06-15 Cooperative Background Job Termination
@@ -110,7 +227,7 @@
 - Review-page DeepSeek adjustment is scoped to public outcome/candidate detail rows for the current Raw notice. It enqueues `bidops.outcome.supplier-extract` with the reviewer prompt instead of running AI work in WebApi.
 - The job deletes and rebuilds only that Raw notice's `OutcomeSupplierRecord` rows. Formal Notice/Package/Requirement import and approved organization association still require human approval.
 - Approved or already-formal Raw notices are protected from this AI reparse endpoint in MVP, matching the existing Raw notice reparse boundary.
-- Amounts remain stored as CNY yuan in `OutcomeSupplierRecord.AwardAmount`; the review candidate list displays `最终报价` in 万元 for user review.
+- Amounts remain stored as CNY yuan in `OutcomeSupplierRecord.AwardAmount`. The earlier review candidate list displayed `最终报价` in `万元`, but that display/edit assumption is superseded by `2026-06-18 BidOps Outcome Amount Unit Semantics`.
 - Reviewer prompts are saved in the background job payload for traceability. They should describe public extraction corrections, not private supplier intelligence or non-public influence.
 - DeepSeek receives the stored public announcement HTML snapshot plus extracted attachment text and attachment metadata. The prompt tells it which field set matters for the detected notice type so HTML tables, PDF/Office/Excel/ZIP attachment text, and body-level procurement numbers can all be used as evidence.
 
@@ -453,3 +570,110 @@
 - `最后更新时间` uses Atlas entity `UpdatedAt` with `CreatedAt` as the UI fallback, so existing rows display a stable timestamp without a tenant migration.
 - Review-pool公告类型 filtering is based on `NoticeStaging.NoticeType`, matching the source used to enrich the review-list project, buyer, region, deadline, and confidence columns.
 - Formal notice search now has a dedicated query object instead of reusing the generic paged query, so notice-type filters are accepted by the API contract rather than ignored by the backend.
+
+## 2026-06-17 BidOps SGCC Procurement Attachment Preview
+
+- Public SGCC procurement attachment extraction now treats Excel workbooks as table-shaped evidence instead of loose tab text. OpenXML `.xlsx` and legacy `.xls` tables are emitted as Markdown tables so existing deterministic parsers and reviewer previews can consume the same artifact.
+- Legacy `.xls` support uses `ExcelDataReader` plus .NET 8 code-page encodings. This avoids Office COM automation in Worker/runtime code and keeps extraction server-safe.
+- ZIP filename decoding uses the default decoder first and falls back to GB18030 only when entry names look garbled. This supports older SGCC/Windows ZIP files without corrupting normal UTF-8 Chinese filenames.
+- Procurement attachment parsing preserves table order, parses all recognized scope tables instead of only the first one, derives `包1/包2` from `包名称` when package numbers are embedded, and stores explicit `最高限价/预算金额` values only when the public attachment provides a money amount. Percentages, rates, and guide-price ratios are intentionally not converted to money.
+- `tools/Atlas.LocalSetup inspect-bidops-sgcc-notices` is a local diagnostic command only. It fetches public SGCC detail URLs and attachments, prints collectable metadata/package summaries as unescaped Chinese JSON, and does not write tenant or global data.
+
+## 2026-06-17 BidOps Raw Notice Business Identity
+
+- Raw notice deduplication now uses a business identity before source-local URL identity. New Raw notices store `SourceNoticeId=code:<normalized procurement/project code>` when a public notice exposes `采购编号/项目编号/ProjectCode`; if no code is available, they store `SourceNoticeId=url:<DetailUrlHash>`.
+- The tenant database enforces `TenantId + NoticeType + SourceNoticeId` as a unique key. This prevents the same notice type and procurement code from being inserted twice when one path is manual URL import and another path is automatic crawling.
+- URL dedupe now ignores `SourceId` at the application lookup layer. This keeps same-URL manual and automatic imports idempotent even when the procurement code cannot be parsed.
+- Existing historical Raw notices are not deleted by the migration. Legacy `SourceNoticeId` values are upgraded to URL-based identities; if historical duplicates already exist, one canonical URL identity is kept and the rest receive a `:legacy:<Id>` suffix so the unique index can be created without destructive cleanup.
+
+## 2026-06-18 BidOps Outcome Project Name Evidence
+
+- Outcome supplier `ProjectName` is persisted only when the public source or row evidence has an explicit `项目名称/工程名称/采购项目名称/招标项目名称/子项目名称` signal. Announcement titles, batch names, lot names, package names, attachment names, and unlabeled row values are not promoted to `ProjectName`.
+- PDF extracted text may split one table cell across lines. When the source table header explicitly contains `项目名称` and DeepSeek returns row-level evidence containing the reconstructed project-name value, that row-level `ProjectName` is considered supported even if the full value is not contiguous in one raw extracted line.
+- If DeepSeek puts a value from a source table's explicit `项目名称` column into `PackageName`, persistence sanitization may move that value back to `ProjectName` and clear `PackageName`. This preserves source-column semantics while avoiding a second AI call.
+- Outcome supplier `PackageName` must stay distinct from `ProjectName`. Matched package metadata and review/query previews cannot use `ProjectName` or `LotName` as a package-name fallback for result rows.
+- Review UI outcome rows display only row-level `ProjectName`; they no longer fall back to the notice/task announcement title, so missing or cleared project names remain visible for reviewer correction.
+
+## 2026-06-22 BidOps Review Automation Guardrails
+
+- Low-risk bulk approval is an operator-triggered review action, not automatic import. Each task still runs through the existing single-task approval flow so Formal writes, organization sync, and review audit fields stay consistent.
+- Review quality backfill is Worker-owned and only updates review quality summaries plus quality issue rows. It does not mutate Formal notice/package data and respects paused crawl sources by default.
+- Correction samples are used as operational evidence for rule and prompt improvement. MVP does not automatically rewrite parsing rules from samples, because rule changes still need tests and human review.
+- Batch AI reviewer prompts are stored as correction samples, but request headers, cookies, API keys, and authorization tokens are not captured.
+
+## 2026-06-22 BidOps Crawl Progress And Backfill
+
+- Crawl progress is stored per tenant/channel/mode in `bidops_crawl_checkpoint`; each Worker execution segment is stored in `bidops_crawl_run`.
+- `CrawlChannel.Enabled` remains the MVP switch for opening or closing a specific notice category such as `AwardAnnouncement` or `ProcurementAnnouncement`.
+- StateGrid ECP list scanning now supports page-based incremental and backfill modes. Incremental mode returns to page 1 after each run; backfill mode advances `NextCursor` until the configured date range or remote list ends.
+- Crawl channels can choose `Interval` or `Daily` scheduling. `DailyScanTime` is stored as `HH:mm` and evaluated with the Worker server's local clock; interval channels use `CrawlChannel.ScanIntervalMinutes` when set, otherwise they fall back to the source interval.
+- Previously collected notices are skipped by URL identity before fetching details when possible. If a detail is still fetched and deduplication finds existing unchanged RawNotice, the ingestion result is counted as duplicate and attachment processing is not re-enqueued.
+- Failure alerting is implemented as operations-surface status and alert fields in MVP, not as external notification delivery. Operators can pause, resume, continue, or reset backfill cursors from the crawl operations UI.
+
+## 2026-06-22 BidOps Codex CLI AI Provider
+
+- BidOps uses Codex CLI as the default AI extraction provider when `BidOps:Ai:Provider` is not configured. DeepSeek/OpenAI-compatible HTTP extraction remains available by switching the provider to `DeepSeek`.
+- Codex CLI integration uses `codex exec` in non-interactive mode with JSON Schema output, `read-only` sandbox by default, `--ephemeral`, `--ignore-rules`, and `--skip-git-repo-check`. The prompt explicitly forbids reading the working directory, shell execution, web search, or file mutation for extraction tasks.
+- Codex CLI ordinary extraction defaults to model `gpt-5.5` with reasoning effort `low`; complex-source/manual-reparse extraction defaults to the same model with `medium`; reviewer-prompt extraction defaults to the same model with `xhigh`. `BidOps:CodexCli:Model`, `BidOps:CodexCli:ReasoningEffort`, and runtime operations settings can override those defaults.
+- Codex CLI output still lands in staging/lead-only paths and remains subject to the existing human review/import gates. This provider does not bypass review or import controls.
+
+## 2026-06-22 BidOps Runtime AI Provider Switch
+
+- BidOps stores the tenant-level runtime AI provider in `bidops_runtime_setting` under key `ai.provider`. Supported values are `DeepSeek` and `CodexCli`.
+- The operations dashboard exposes the switch so operators can move extraction between DeepSeek/OpenAI-compatible HTTP and Codex CLI without redeploying Worker/WebApi.
+- The switch only controls provider selection. API keys, endpoints, Codex binary path/model/reasoning settings, and other secrets remain in configuration/environment variables and are not stored in tenant data.
+
+## 2026-06-22 BidOps Outcome Package Identity
+
+- Public award/candidate supplier rows must not use `PackageNo + SupplierName` as a unique package identity, because different lots often reuse the same package number such as `包1`.
+- Outcome package matching uses the available parts of the composite package identity `LotNo + LotName + PackageNo`. If both sides provide `LotNo` or `LotName`, that field must match; missing lot-number or lot-name values are treated as missing evidence rather than proof that two package contexts are the same.
+- Outcome supplier extraction merge, manual-edit source hash, and extraction source hash include `LotNo`, `LotName`, `PackageNo`, and supplier name. This preserves distinct result rows such as the same winning supplier appearing in `9001005/综合服务/包1` and `9001005/运维服务/包1`.
+
+## 2026-06-22 BidOps Codex CLI Windows Launch
+
+- BidOps Worker may run on Windows where `where codex` can return an extensionless npm shim before `codex.cmd`. .NET `ProcessStartInfo` cannot execute that shim and fails with `Access is denied`.
+- Codex CLI process startup resolves Windows command names to `.cmd`, `.bat`, or `.exe` explicitly, preferring the executable wrapper over extensionless shims.
+- Codex CLI output schema temp files are written as UTF-8 without BOM and validated before launch, because the CLI JSON reader may reject a BOM at byte 0 as `expected value at line 1 column 1`.
+- Background job result payloads expose provider-neutral `aiResponses` while keeping `deepSeekResponses` as a compatibility alias for existing UI/history.
+
+## 2026-06-22 BidOps Review Detail Background Jobs
+
+- Review detail surfaces only background jobs explicitly launched from that review task. The association is the real background `jobId`, recorded at enqueue time in the review correction sample evidence JSON.
+- The review-detail jobs endpoint no longer infers ownership by scanning `rawNoticeId` in background job payloads/results, because announcement-level jobs and review-page actions can legitimately overlap on the same RawNotice.
+- Announcement-level pipeline/history jobs should be shown in a separate RawNotice pipeline view with clear labeling, not mixed into the review-task action history.
+
+## 2026-06-22 BidOps Historical Outcome Quality Repair
+
+- Historical outcome quality repair is exposed through `tools/Atlas.LocalSetup repair-bidops-data-quality` and defaults to dry-run. Operators must pass `--confirm` before the command updates outcome rows or removes derived quality issues.
+- The repair only fills missing outcome `LotNo` when the row evidence begins with a clear public lot-number token followed by package wording such as `包1`. It does not infer lot identity from supplier name or package number alone.
+- Stale review quality issues may be deleted when they point to an outcome supplier record that no longer exists, when the current outcome record no longer lacks both lot and package identity, or when the current package staging rows have exactly one compatible `LotNo/LotName + PackageNo` match.
+- Review task quality summaries are recalculated from remaining unresolved quality issues after the derived cleanup. This is a pragmatic historical repair path and does not regenerate AI extraction output or mutate formal notice/package business records.
+
+## 2026-06-22 BidOps Supplier Business Numbers
+
+- BidOps supplier and buyer business numbers must not be generated from only the low six digits of the Snowflake ID. High-volume outcome synchronization can create different IDs with the same low six digits on the same day, causing `TenantId + SupplierNo` collisions.
+- New BidOps supplier and buyer numbers use the existing date prefix plus a base36 encoding of the full Snowflake ID, for example `SUP-20260622-<full-id-base36>`. This keeps numbers readable while preserving uniqueness without a database round trip.
+- Existing historical supplier and buyer numbers are not rewritten automatically. They remain valid display identifiers, and new full-ID numbers no longer collide with the old six-digit suffix format.
+
+## 2026-06-23 Background Job Hard Timeout And Progress
+
+- One-time background jobs now have a hard maximum running time through `BackgroundTasks:OneTimeJobs:MaxRunningSeconds`, defaulting to 7200 seconds. Jobs exceeding that limit are marked `Dead` with a timeout result instead of staying `Running` indefinitely.
+- The Worker enforces this in two places: it sweeps already-running stale jobs before each polling cycle, and it links each active job execution to a timeout cancellation token. The sweep uses the current `LockedAtUtc` before `StartedAtUtc`, so retries are measured from the current execution lock rather than the first historical start.
+- Running progress is stored in the existing background job `Result` field as a short JSON heartbeat and updates `UpdatedAt`; final success still overwrites `Result` with the normal handler output. Progress is an operator visibility signal only and is not used as business evidence.
+- BidOps AI parsing jobs use the generic progress reporter while Codex CLI is running so operators can distinguish slow model calls from dead jobs.
+- Codex CLI process cancellation kills the full process tree for both CLI timeout and upstream Worker/job cancellation. This prevents orphaned `cmd/node/codex.exe` processes after a Worker restart or hard job timeout.
+- Codex prompt construction now caps deterministic/reference JSON at 12,000 characters. The public source text budget remains controlled by `BidOps:Ai:MaxInputCharacters` / `BidOps:CodexCli:MaxInputCharacters`; the cap prevents large rule-derived references from inflating prompts to very slow sizes.
+
+## 2026-06-23 BidOps Outcome Supplier Codex Prompt Budget
+
+- Outcome supplier extraction uses deterministic parsing as the primary safety net, so the Codex CLI prompt should be a focused correction/enrichment prompt rather than a full raw-document replay.
+- The outcome supplier Codex prompt caps deterministic reference JSON at 40 records / 6,000 characters. This keeps ordinary public-result recognition suitable for `low` reasoning while still preserving enough examples for merge/correction.
+- Public source material for outcome supplier Codex calls is compressed around result-specific evidence such as `中标/成交/候选`, `分标编号`, `包号`, supplier names, and amount columns. Attachments receive most of the source budget, HTML receives a smaller budget, and reviewer-prompt calls receive a larger source ceiling.
+- The source compaction is intentionally conservative: it may omit irrelevant raw notice prose, but it must retain explicit lot/package/supplier evidence so review quality matching can still use `LotNo/LotName + PackageNo`.
+
+## 2026-06-23 Background Job Force Cancellation
+
+- Normal cancellation remains cooperative: it writes `CancellationRequestedAt`, and the Worker passes cancellation tokens to handlers and external AI calls.
+- Force cancellation is an operator action for stuck running jobs. It immediately marks the job `Canceled`, clears the lock, stops retry scheduling, and keeps the task history instead of deleting the row.
+- Force cancellation is not a business rollback. Handler code must remain idempotent, and the Worker re-checks cancellation state before writing a successful result so a late external response cannot overwrite a forced cancellation.
+- BidOps job progress messages use provider-neutral `AI 正在...` wording because runtime provider can be DeepSeek or Codex CLI and can change between jobs.

@@ -12,7 +12,7 @@ import JobStatusTag from '../components/JobStatusTag.vue'
 import type { BackgroundJobDetailDto } from '../types'
 import { formatDuration, formatJobType } from '../utils/display'
 
-interface DeepSeekResponseEntry {
+interface AiResponseEntry {
   use: string
   provider: string
   model: string
@@ -40,15 +40,15 @@ const pageTitle = computed(() => (bidOpsMode.value ? 'BidOps 后台任务详情'
 const formattedPayload = computed(() => formatJsonText(job.value?.payload))
 const formattedResult = computed(() => formatJsonText(job.value?.result))
 const parsedResult = computed(() => parseJsonObject(job.value?.result))
-const deepSeekResponses = computed(() => {
-  const value = parsedResult.value?.deepSeekResponses
+const aiResponses = computed(() => {
+  const value = parsedResult.value?.aiResponses ?? parsedResult.value?.deepSeekResponses
   if (!Array.isArray(value)) return []
 
   return value
-    .map((item) => normalizeDeepSeekResponse(item))
-    .filter((item): item is DeepSeekResponseEntry => Boolean(item))
+    .map((item) => normalizeAiResponse(item))
+    .filter((item): item is AiResponseEntry => Boolean(item))
 })
-const hasDeepSeekResponses = computed(() => deepSeekResponses.value.length > 0)
+const hasAiResponses = computed(() => aiResponses.value.length > 0)
 const isRunning = computed(() =>
   Boolean(job.value && ['Running', '1'].includes(String(job.value.statusName || job.value.status))),
 )
@@ -100,6 +100,23 @@ async function cancelJob() {
   await loadData()
 }
 
+async function forceCancelJob() {
+  if (!job.value) return
+  await ElMessageBox.confirm(
+    '将立即把任务标记为已取消并释放数据库锁；如果 Worker 正在等待外部 I/O，也会收到取消信号。任务历史不会被删除。',
+    '确认强制终止',
+    {
+      type: 'error',
+      confirmButtonText: '强制终止',
+    },
+  )
+  const result = bidOpsMode.value
+    ? await bidOpsOperationsApi.cancelJob(String(job.value.id), '强制终止', true)
+    : await backgroundJobsApi.cancel(String(job.value.id), '强制终止', true)
+  ElMessage.success(result.message)
+  await loadData()
+}
+
 function formatJsonText(value?: string | null) {
   if (!value?.trim()) return '-'
 
@@ -110,7 +127,7 @@ function formatJsonText(value?: string | null) {
   }
 }
 
-function formatDeepSeekText(value?: string | null) {
+function formatAiResponseText(value?: string | null) {
   if (!value?.trim()) return '-'
 
   return formatJsonText(value)
@@ -129,7 +146,7 @@ function parseJsonObject(value?: string | null): Record<string, unknown> | null 
   }
 }
 
-function normalizeDeepSeekResponse(value: unknown): DeepSeekResponseEntry | null {
+function normalizeAiResponse(value: unknown): AiResponseEntry | null {
   if (!value || typeof value !== 'object') return null
 
   const source = value as Record<string, unknown>
@@ -184,6 +201,7 @@ onMounted(loadData)
       <el-button :icon="Refresh" :loading="loading" @click="loadData">刷新</el-button>
       <el-button :icon="Refresh" :disabled="!job" @click="retryJob">重试</el-button>
       <el-button :icon="Close" :disabled="!canCancelJob" @click="cancelJob">{{ cancelActionText }}</el-button>
+      <el-button :icon="Close" type="danger" plain :disabled="!isRunning" @click="forceCancelJob">强停</el-button>
     </template>
 
     <el-skeleton v-if="loading" :rows="10" animated />
@@ -202,6 +220,10 @@ onMounted(loadData)
           <span>队列</span>
           <strong>{{ job.queue }}</strong>
         </div>
+        <div v-if="isBidOpsJob">
+          <span>采购编号</span>
+          <strong>{{ job.projectCode || '-' }}</strong>
+        </div>
         <div>
           <span>重试</span>
           <strong>{{ job.attemptCount }} / {{ job.maxAttempts }}</strong>
@@ -219,6 +241,7 @@ onMounted(loadData)
             <el-descriptions-item label="任务类型">{{ formatJobType(job.jobType, job.jobTypeName) }}</el-descriptions-item>
             <el-descriptions-item label="任务代码">{{ job.jobType }}</el-descriptions-item>
             <el-descriptions-item label="任务名称">{{ job.jobName || '-' }}</el-descriptions-item>
+            <el-descriptions-item v-if="isBidOpsJob" label="采购编号">{{ job.projectCode || '-' }}</el-descriptions-item>
             <el-descriptions-item label="幂等键">{{ job.deduplicationKey || '-' }}</el-descriptions-item>
             <el-descriptions-item label="TenantId">{{ job.tenantId || '-' }}</el-descriptions-item>
             <el-descriptions-item label="StoreId">{{ job.storeId || '-' }}</el-descriptions-item>
@@ -247,10 +270,10 @@ onMounted(loadData)
           <pre class="code-panel">{{ formattedResult }}</pre>
         </el-tab-pane>
 
-        <el-tab-pane v-if="hasDeepSeekResponses" label="DeepSeek 返回">
+        <el-tab-pane v-if="hasAiResponses" label="AI 返回">
           <div class="deepseek-list">
             <section
-              v-for="(item, index) in deepSeekResponses"
+              v-for="(item, index) in aiResponses"
               :key="`${item.use}-${index}`"
               class="deepseek-response"
             >
@@ -260,7 +283,7 @@ onMounted(loadData)
                   <span>{{ item.use || 'AI' }}</span>
                 </div>
                 <div class="deepseek-response__meta">
-                  <el-tag size="small">{{ item.provider || 'DeepSeek' }}</el-tag>
+                  <el-tag size="small">{{ item.provider || 'AI' }}</el-tag>
                   <el-tag size="small" type="info">{{ item.model || '-' }}</el-tag>
                   <el-tag size="small" :type="item.statusCode && item.statusCode >= 400 ? 'danger' : 'success'">
                     HTTP {{ item.statusCode ?? '-' }}
@@ -278,12 +301,12 @@ onMounted(loadData)
 
               <section class="deepseek-response__section">
                 <h3>Assistant Content</h3>
-                <pre class="code-panel">{{ formatDeepSeekText(item.assistantContent) }}</pre>
+                <pre class="code-panel">{{ formatAiResponseText(item.assistantContent) }}</pre>
               </section>
 
               <section class="deepseek-response__section">
                 <h3>Raw Response Body</h3>
-                <pre class="code-panel">{{ formatDeepSeekText(item.rawResponseBody) }}</pre>
+                <pre class="code-panel">{{ formatAiResponseText(item.rawResponseBody) }}</pre>
               </section>
             </section>
           </div>
@@ -304,7 +327,7 @@ onMounted(loadData)
 <style scoped>
 .summary-band {
   display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 10px;
   margin-bottom: 16px;
 }

@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Atlas.Modules.BidOps.Entities.Outcomes;
+using Atlas.Modules.BidOps.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -12,13 +13,54 @@ namespace Atlas.Modules.BidOps.Ai;
 
 public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSupplierAiExtractionService
 {
-    private const int MaxReferenceExtracts = 80;
+    private const int MaxReferenceExtracts = 40;
+    private const int DeterministicReferenceMaxCharacters = 6_000;
+    private const int DefaultSourceMaxCharacters = 12_000;
+    private const int ReviewerPromptSourceMaxCharacters = 18_000;
+    private const int SourceLineContextWindow = 2;
+    private const int ComplexSourceAttachmentCount = 3;
+    private const int ComplexSourceCharacters = 60_000;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         PropertyNameCaseInsensitive = true
     };
+
+    private const string OutcomeSupplierJsonSchema = """
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "supplierName": { "type": "string" },
+          "outcomeType": { "type": "string" },
+          "rank": { "type": ["integer", "null"] },
+          "awardAmount": { "type": ["number", "string", "null"] },
+          "procurementAgencyServiceFeeAmount": { "type": ["number", "string", "null"] },
+          "projectName": { "type": "string" },
+          "projectCode": { "type": "string" },
+          "buyerName": { "type": "string" },
+          "lotNo": { "type": "string" },
+          "lotName": { "type": "string" },
+          "packageNo": { "type": "string" },
+          "packageName": { "type": "string" },
+          "category": { "type": "string" },
+          "evidenceText": { "type": "string" },
+          "confidence": { "type": "number" }
+        },
+        "required": ["supplierName", "outcomeType", "rank", "awardAmount", "procurementAgencyServiceFeeAmount", "projectName", "projectCode", "buyerName", "lotNo", "lotName", "packageNo", "packageName", "category", "evidenceText", "confidence"]
+      }
+    }
+  },
+  "required": ["records"]
+}
+""";
 
     private static readonly Regex AmountNumberRegex = new(
         @"(?<amount>[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)",
@@ -28,29 +70,29 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
     private readonly IConfiguration _configuration;
     private readonly IBidOpsAiCallDiagnostics _diagnostics;
     private readonly ILogger<BidOpsOutcomeSupplierAiExtractionService> _logger;
+    private readonly IBidOpsCodexCliClient? _codexCli;
+    private readonly IBidOpsAiSettingsService? _aiSettings;
 
     public BidOpsOutcomeSupplierAiExtractionService(
         HttpClient httpClient,
         IConfiguration configuration,
         IBidOpsAiCallDiagnostics diagnostics,
-        ILogger<BidOpsOutcomeSupplierAiExtractionService> logger)
+        ILogger<BidOpsOutcomeSupplierAiExtractionService> logger,
+        IBidOpsCodexCliClient? codexCli = null,
+        IBidOpsAiSettingsService? aiSettings = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _codexCli = codexCli;
+        _aiSettings = aiSettings;
     }
 
     public async Task<IReadOnlyList<BidOpsOutcomeSupplierExtract>> ExtractAsync(
         BidOpsOutcomeSupplierAiExtractionRequest request,
         CancellationToken ct = default)
     {
-        if (!BidOpsAiHttpSettingsFactory.TryCreate(_configuration, BidOpsAiUse.OutcomeSuppliers, out var settings))
-        {
-            LogUnavailableSettings();
-            return [];
-        }
-
         if (string.IsNullOrWhiteSpace(request.Text) &&
             string.IsNullOrWhiteSpace(request.Html) &&
             (request.Attachments == null || request.Attachments.Count == 0))
@@ -60,6 +102,52 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
                 request.NoticeType,
                 request.Title.Length,
                 !string.IsNullOrWhiteSpace(request.ReviewerPrompt));
+            return [];
+        }
+
+        var runtimeSettings = await ResolveRuntimeSettingsAsync(GetCodexCliScenario(request), ct);
+        if (BidOpsCodexCliSettingsFactory.TryCreate(
+            _configuration,
+            BidOpsAiUse.OutcomeSuppliers,
+            runtimeSettings?.Provider,
+            runtimeSettings?.CodexCliModel,
+            runtimeSettings?.CodexCliReasoningEffort,
+            out var codexSettings))
+        {
+            if (_codexCli == null)
+            {
+                _logger.LogWarning("BidOps outcome supplier Codex CLI extraction skipped because IBidOpsCodexCliClient is not registered.");
+                return [];
+            }
+
+            try
+            {
+                return await ExtractWithCodexCliAsync(request, codexSettings, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _diagnostics.Record(new BidOpsAiCallDiagnosticEntry(
+                    BidOpsAiUse.OutcomeSuppliers.ToString(),
+                    codexSettings.Provider,
+                    codexSettings.Model,
+                    FormatEndpointForLog(codexSettings.BinaryPath),
+                    -1,
+                    0,
+                    ex.ToString().Length,
+                    0,
+                    $"exception:{ex.GetType().Name}",
+                    Truncate(ex.ToString(), 4000),
+                    string.Empty));
+                _logger.LogWarning(
+                    ex,
+                    "BidOps outcome supplier Codex CLI extraction failed; deterministic outcome extraction will be used.");
+                return [];
+            }
+        }
+
+        if (!BidOpsAiHttpSettingsFactory.TryCreate(_configuration, BidOpsAiUse.OutcomeSuppliers, runtimeSettings?.Provider, out var settings))
+        {
+            LogUnavailableSettings(runtimeSettings?.Provider);
             return [];
         }
 
@@ -180,9 +268,129 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
         }
     }
 
-    private void LogUnavailableSettings()
+    private async Task<IReadOnlyList<BidOpsOutcomeSupplierExtract>> ExtractWithCodexCliAsync(
+        BidOpsOutcomeSupplierAiExtractionRequest request,
+        BidOpsCodexCliSettings settings,
+        CancellationToken ct)
     {
-        var diagnostics = BidOpsAiHttpSettingsFactory.Diagnose(_configuration, BidOpsAiUse.OutcomeSuppliers);
+        var prompt = BuildPrompt(request, settings.MaxInputCharacters);
+        var stopwatch = Stopwatch.StartNew();
+        _logger.LogInformation(
+            "BidOps outcome supplier Codex CLI request started. provider={Provider}, binary={BinaryPath}, model={Model}, reasoningEffort={ReasoningEffort}, sandbox={Sandbox}, noticeType={NoticeType}, titleLength={TitleLength}, promptChars={PromptChars}, attachmentCount={AttachmentCount}, reviewerPrompt={HasReviewerPrompt}.",
+            settings.Provider,
+            FormatEndpointForLog(settings.BinaryPath),
+            settings.Model,
+            settings.ReasoningEffort,
+            settings.Sandbox,
+            request.NoticeType,
+            request.Title.Length,
+            prompt.Length,
+            request.Attachments?.Count ?? 0,
+            !string.IsNullOrWhiteSpace(request.ReviewerPrompt));
+
+        var result = await _codexCli!.ExecuteJsonAsync(
+            BidOpsCodexCliSettingsFactory.CreateRequest(
+                settings,
+                BidOpsAiUse.OutcomeSuppliers,
+                BuildCodexExtractionPrompt("公开中标/成交/候选厂家明细抽取", prompt),
+                OutcomeSupplierJsonSchema),
+            ct);
+        stopwatch.Stop();
+
+        var content = BidOpsAiJsonLogging.ExtractJsonObjectOrRaw(result.AssistantContent);
+        var combinedResponse = CombineCodexOutput(result.Stdout, result.Stderr);
+        _diagnostics.Record(new BidOpsAiCallDiagnosticEntry(
+            BidOpsAiUse.OutcomeSuppliers.ToString(),
+            settings.Provider,
+            settings.Model,
+            FormatEndpointForLog(settings.BinaryPath),
+            result.ExitCode == 0 ? 200 : result.ExitCode,
+            stopwatch.ElapsedMilliseconds,
+            combinedResponse.Length,
+            content.Length,
+            $"exit:{result.ExitCode}",
+            combinedResponse,
+            content));
+
+        _logger.LogInformation(
+            "BidOps outcome supplier Codex CLI response. exitCode={ExitCode}, elapsedMs={ElapsedMs}, stdoutChars={StdoutChars}, stderrChars={StderrChars}, assistantChars={AssistantChars}.",
+            result.ExitCode,
+            result.ElapsedMilliseconds,
+            result.Stdout.Length,
+            result.Stderr.Length,
+            content.Length);
+
+        if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(content))
+        {
+            _logger.LogWarning(
+                "BidOps outcome supplier Codex CLI request failed or returned empty content. provider={Provider}, model={Model}, binary={BinaryPath}, exitCode={ExitCode}, stderr={Stderr}.",
+                settings.Provider,
+                settings.Model,
+                FormatEndpointForLog(settings.BinaryPath),
+                result.ExitCode,
+                Truncate(result.Stderr, 2000));
+            return [];
+        }
+
+        var records = ParseRecords(content);
+        _logger.LogInformation(
+            "BidOps outcome supplier Codex CLI request completed. provider={Provider}, model={Model}, reasoningEffort={ReasoningEffort}, exitCode={ExitCode}, elapsedMs={ElapsedMs}, assistantChars={AssistantChars}, recordCount={RecordCount}.",
+            settings.Provider,
+            settings.Model,
+            settings.ReasoningEffort,
+            result.ExitCode,
+            result.ElapsedMilliseconds,
+            content.Length,
+            records.Count);
+        return records;
+    }
+
+    private async Task<BidOpsEffectiveAiRuntimeSettings?> ResolveRuntimeSettingsAsync(
+        string scenario,
+        CancellationToken ct)
+    {
+        if (_aiSettings == null)
+            return null;
+
+        try
+        {
+            var settings = await _aiSettings.GetSettingsAsync(ct);
+            var codexSettings = settings.CodexCliScenarios
+                .FirstOrDefault(x => x.Scenario.Equals(scenario, StringComparison.OrdinalIgnoreCase)) ??
+                settings.CodexCliScenarios.FirstOrDefault(x => x.Scenario.Equals(BidOpsCodexCliScenarios.Default, StringComparison.OrdinalIgnoreCase));
+            return new BidOpsEffectiveAiRuntimeSettings(
+                settings.EffectiveProvider,
+                codexSettings?.Model ?? settings.CodexCliModel,
+                codexSettings?.ReasoningEffort ?? settings.CodexCliReasoningEffort);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "BidOps outcome supplier AI runtime settings could not be read; appsettings provider/model/reasoning settings will be used.");
+            return null;
+        }
+    }
+
+    private static string GetCodexCliScenario(BidOpsOutcomeSupplierAiExtractionRequest request)
+    {
+        if (!string.IsNullOrWhiteSpace(request.ReviewerPrompt))
+            return BidOpsCodexCliScenarios.ReviewerPrompt;
+
+        return IsComplexSource(request)
+            ? BidOpsCodexCliScenarios.Complex
+            : BidOpsCodexCliScenarios.Default;
+    }
+
+    private static bool IsComplexSource(BidOpsOutcomeSupplierAiExtractionRequest request)
+    {
+        var attachmentCount = request.Attachments?.Count ?? 0;
+        var sourceCharacters = request.Text.Length + (request.Attachments?.Sum(x => x.Text.Length) ?? 0);
+        return attachmentCount >= ComplexSourceAttachmentCount ||
+            sourceCharacters >= ComplexSourceCharacters;
+    }
+
+    private void LogUnavailableSettings(string? providerOverride)
+    {
+        var diagnostics = BidOpsAiHttpSettingsFactory.Diagnose(_configuration, BidOpsAiUse.OutcomeSuppliers, providerOverride);
         var level = diagnostics.Enabled && diagnostics.UseEnabled ? LogLevel.Warning : LogLevel.Debug;
         _logger.Log(
             level,
@@ -201,13 +409,16 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
         BidOpsOutcomeSupplierAiExtractionRequest request,
         int maxInputCharacters)
     {
-        var deterministicJson = JsonSerializer.Serialize(
-            request.DeterministicExtracts.Take(MaxReferenceExtracts),
-            JsonOptions);
+        var deterministicJson = Truncate(
+            JsonSerializer.Serialize(
+                request.DeterministicExtracts.Take(MaxReferenceExtracts),
+                JsonOptions),
+            DeterministicReferenceMaxCharacters);
         var reviewerPrompt = string.IsNullOrWhiteSpace(request.ReviewerPrompt)
             ? "审核人员没有提供额外修正提示。"
             : request.ReviewerPrompt.Trim();
-        var sourceBundle = BuildSourceBundle(request);
+        var sourceMaxCharacters = ResolveSourceMaxCharacters(maxInputCharacters, request.ReviewerPrompt);
+        var sourceBundle = BuildSourceBundle(request, sourceMaxCharacters);
         var expectedFields = BuildExpectedFields(request.NoticeType, request.Title);
 
         return $$"""
@@ -242,9 +453,12 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
 - 中文组织名称必须保持公告原文写法，不要改写、翻译或补全。
 - 必填/重点字段取决于公告类型：
 {{expectedFields}}
-- 推荐候选人公示必须尽量提取：采购编号 -> projectCode，分标编号 -> lotNo，分标名称 -> lotName，包号 -> packageNo，包名称 -> packageName，排名 -> rank，推荐的成交候选人/推荐中标候选人 -> supplierName，公开的最终报价 -> awardAmount。
-- 中标/成交结果公告必须尽量提取：采购编号 -> projectCode，分标编号 -> lotNo，分标名称 -> lotName，包号 -> packageNo；中标/成交/成交供应商行的 outcomeType 必须为 Awarded，成交供应商/中标人 -> supplierName。
-- 如果表格行里只有包号和厂家，但正文公共部分明确写了采购编号、采购方、分标编号或分标名称，可以从正文公共部分继承这些字段。
+- 推荐候选人公示必须提取：采购编号 -> projectCode，分标名称 -> lotName，包号 -> packageNo，包名称 -> packageName，排名 -> rank，推荐的成交候选人/推荐中标候选人 -> supplierName，公开的最终报价 -> awardAmount。lotNo 只有原文表头/上下文明确出现“分标编号/标段编号/分标号/标段号”及对应值时才能填写。
+- 中标/成交结果公告必须提取：采购编号 -> projectCode，包号 -> packageNo，中标/成交/成交供应商行的 outcomeType 必须为 Awarded，成交供应商/中标人 -> supplierName。lotNo 只有原文明确给出分标编号时填写；PDF/表格只有包号和厂家时 lotNo 必须返回空字符串。
+- projectName 只有原文明确出现“项目名称/工程名称/采购项目名称/招标项目名称/子项目名称”表头或标签并给出对应值时才能填写；没有明确项目名称时必须返回空字符串。
+- 不要把公告标题、公告名称、采购批次名称、分标名称、包名称或附件文件名放入 projectName。只有分标名称时填 lotName，projectName 留空。
+- 表格列名是“项目名称/工程名称/子项目名称”时，对应值必须放 projectName；只有列名明确是“包名称/包件名称/标包名称/分包名称”时才放 packageName。不要把项目名称列的值放到 packageName。
+- 如果表格行里只有包号和厂家，但正文公共部分明确写了采购编号、采购方或分标名称，可以从正文公共部分继承这些字段；不得从采购编号、包号、分标名称或附件文件名推断 lotNo。
 - 不要把“采购编号/采购项目编号”和“分标编号”混淆。采购编号/项目编号放 projectCode，分标编号/标段编号放 lotNo。
 - 不要把“分标名称”和“分标编号”混淆。名称放 lotName/packageName，编号放 lotNo/packageNo。
 - packageNo 必须保留原文写法，包括“包”“第...包”等前缀。原文是“包1”时不要返回裸数字“1”。
@@ -252,7 +466,7 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
 - 流标、废标、失败行不要作为中标/候选明细返回，除非该行明确给出了中标或推荐厂家。
 - 采购方、代理机构、联系人、银行账户、服务费收取单位、投诉受理单位都不是厂家。
 - “采购代理服务费”“代理服务费”“服务费金额”放到 procurementAgencyServiceFeeAmount，不能放到 awardAmount。
-- 金额如果单位是“万元”，返回 JSON 前必须换算为“元”。未知金额、折扣率、费率、百分比返回 null。
+- 金额统一返回人民币“元”。只有公告单元格、同列表头或紧邻上下文明确标识“万元/万”时，才在返回 JSON 前乘以 10000；没有明确单位或表头未标识万元时，按“元”处理。未知金额、折扣率、费率、百分比返回 null。
 - evidenceText 必须是公告正文或附件文本中的简短原文片段。候选人公示优先包含公开的评审情况、排名或推荐上下文。
 - 优先返回完整可信的记录，不要为了凑数量返回大量不确定碎片。如果没有厂家，返回空 records 数组。
 - 下方“规则解析参考结果”只作为参考；如果它漏掉 PDF/表格行，或把正文公共字段混错，你需要根据原文纠正。
@@ -271,7 +485,7 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
 {{deterministicJson}}
 
 公开来源材料：
-{{Truncate(sourceBundle, maxInputCharacters)}}
+{{Truncate(sourceBundle, sourceMaxCharacters)}}
 """;
     }
 
@@ -282,20 +496,45 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
             : endpoint;
     }
 
+    private static string BuildCodexExtractionPrompt(string taskName, string prompt)
+    {
+        return $$"""
+任务：{{taskName}}
+
+执行边界：
+- 只使用下面提供的公开来源材料和规则解析参考结果。
+- 不要读取工作目录文件，不要执行 shell 命令，不要联网搜索，不要修改任何文件。
+- 最终只输出符合 JSON Schema 的 JSON 对象，不要输出 Markdown、解释或代码块。
+
+{{prompt}}
+""";
+    }
+
+    private static string CombineCodexOutput(string stdout, string stderr)
+    {
+        if (string.IsNullOrWhiteSpace(stderr))
+            return stdout;
+
+        if (string.IsNullOrWhiteSpace(stdout))
+            return stderr;
+
+        return $"{stdout}{Environment.NewLine}{stderr}";
+    }
+
     private static string BuildExpectedFields(string noticeType, string title)
     {
         var signal = $"{noticeType} {title}";
         if (ContainsAny(signal, "CandidateAnnouncement", "中标候选人", "成交候选人", "推荐"))
         {
             return """
-  - 公告类型为 CandidateAnnouncement（推荐候选人公示）时：每一行候选人返回一条记录；需要尽量包含 projectCode、lotNo、lotName、packageNo、packageName、rank、supplierName；公开最终报价放 awardAmount；outcomeType 用 Candidate；evidenceText 包含公开评审情况、排名或推荐上下文。
+  - 公告类型为 CandidateAnnouncement（推荐候选人公示）时：每一行候选人返回一条记录；需要包含 projectCode、lotName、packageNo、packageName、rank、supplierName；公开最终报价放 awardAmount；outcomeType 用 Candidate；evidenceText 包含公开评审情况、排名或推荐上下文。projectName 仅在原文明确给出项目名称时填写；lotNo 仅在原文明确给出分标编号/标段编号时填写，否则空字符串。
 """;
         }
 
         if (ContainsAny(signal, "AwardAnnouncement", "ResultAnnouncement", "中标结果", "成交结果", "结果公告"))
         {
             return """
-  - 公告类型为 AwardAnnouncement 或 ResultAnnouncement（中标/成交结果公告）时：每一行中标/成交厂家返回一条记录；需要尽量包含 projectCode、lotNo、lotName、packageNo、packageName、supplierName；outcomeType 用 Awarded；公开成交金额放 awardAmount；公开代理服务费放 procurementAgencyServiceFeeAmount；evidenceText 保留原文证据。
+  - 公告类型为 AwardAnnouncement 或 ResultAnnouncement（中标/成交结果公告）时：每一行中标/成交厂家返回一条记录；需要包含 projectCode、lotName、packageNo、packageName、supplierName；outcomeType 用 Awarded；公开成交金额放 awardAmount；公开代理服务费放 procurementAgencyServiceFeeAmount；evidenceText 保留原文证据。projectName 仅在原文明确给出项目名称时填写；lotNo 仅在原文明确给出分标编号/标段编号时填写，否则空字符串。
 """;
         }
 
@@ -311,13 +550,26 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
 """;
     }
 
-    private static string BuildSourceBundle(BidOpsOutcomeSupplierAiExtractionRequest request)
+    private static int ResolveSourceMaxCharacters(int maxInputCharacters, string? reviewerPrompt)
     {
-        var builder = new StringBuilder();
-        AppendSection(builder, "公告正文 HTML", request.Html);
-        AppendSection(builder, "公告正文纯文本", request.Text);
+        var ceiling = string.IsNullOrWhiteSpace(reviewerPrompt)
+            ? DefaultSourceMaxCharacters
+            : ReviewerPromptSourceMaxCharacters;
+        return Math.Clamp(Math.Min(maxInputCharacters, ceiling), 4_000, ceiling);
+    }
 
+    private static string BuildSourceBundle(
+        BidOpsOutcomeSupplierAiExtractionRequest request,
+        int maxCharacters)
+    {
+        var htmlBudget = maxCharacters / 10;
+        var textBudget = maxCharacters / 4;
         var attachments = request.Attachments ?? [];
+        var attachmentBudget = Math.Max(0, maxCharacters - htmlBudget - textBudget);
+        var builder = new StringBuilder();
+        AppendSection(builder, "公告正文纯文本", ExtractOutcomeRelevantText(request.Text, textBudget));
+        AppendSection(builder, "公告正文 HTML", ExtractOutcomeRelevantText(request.Html, htmlBudget));
+
         if (attachments.Count == 0)
         {
             builder.AppendLine();
@@ -328,16 +580,132 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
         for (var i = 0; i < attachments.Count; i++)
         {
             var attachment = attachments[i];
+            var remainingAttachments = Math.Max(1, attachments.Count - i);
+            var contentBudget = attachmentBudget / remainingAttachments;
+            attachmentBudget -= contentBudget;
             builder.AppendLine();
             builder.AppendLine($"附件 {i + 1}");
             builder.AppendLine($"文件名：{attachment.FileName}");
             builder.AppendLine($"文件类型：{attachment.FileType}");
             builder.AppendLine($"文件地址：{attachment.FileUrl}");
             builder.AppendLine($"文件大小：{attachment.FileSize?.ToString(CultureInfo.InvariantCulture) ?? string.Empty}");
-            AppendSection(builder, "附件提取文本", attachment.Text);
+            AppendSection(builder, "附件提取文本", ExtractOutcomeRelevantText(attachment.Text, contentBudget));
         }
 
         return builder.ToString();
+    }
+
+    private static string ExtractOutcomeRelevantText(string value, int maxCharacters)
+    {
+        if (maxCharacters <= 0 || string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var trimmed = value.Trim();
+        if (trimmed.Length <= maxCharacters)
+            return trimmed;
+
+        var lines = SplitSourceLines(trimmed);
+        if (lines.Count == 0)
+            return Truncate(trimmed, maxCharacters);
+
+        var keep = new bool[lines.Count];
+        for (var i = 0; i < lines.Count; i++)
+        {
+            if (!IsOutcomeRelevantLine(lines[i]))
+                continue;
+
+            var start = Math.Max(0, i - SourceLineContextWindow);
+            var end = Math.Min(lines.Count - 1, i + SourceLineContextWindow);
+            for (var j = start; j <= end; j++)
+                keep[j] = true;
+        }
+
+        var builder = new StringBuilder(maxCharacters);
+        for (var i = 0; i < lines.Count && builder.Length < maxCharacters; i++)
+        {
+            if (!keep[i])
+                continue;
+
+            AppendBudgetedLine(builder, lines[i], maxCharacters);
+        }
+
+        if (builder.Length == 0)
+            return Truncate(trimmed, maxCharacters);
+
+        var relevantText = builder.ToString().Trim();
+        if (relevantText.Length < Math.Min(1000, maxCharacters / 2))
+        {
+            var prefixBudget = maxCharacters - relevantText.Length - 1;
+            if (prefixBudget > 0)
+                relevantText = $"{Truncate(trimmed, prefixBudget)}{Environment.NewLine}{relevantText}";
+        }
+
+        return Truncate(relevantText, maxCharacters);
+    }
+
+    private static IReadOnlyList<string> SplitSourceLines(string value)
+    {
+        return Regex
+            .Split(
+                value,
+                @"\r?\n|<\s*/?\s*(?:tr|td|th|p|br|li|table)\b[^>]*>",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
+            .Select(line => BidOpsTextQuality.CleanExtractedValue(line))
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToList();
+    }
+
+    private static bool IsOutcomeRelevantLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+            return false;
+
+        return ContainsAny(
+                line,
+                "中标",
+                "成交",
+                "候选",
+                "推荐",
+                "入围",
+                "供应商",
+                "投标人",
+                "成交人",
+                "中标人",
+                "分标编号",
+                "分标名称",
+                "标段编号",
+                "标段名称",
+                "包号",
+                "包名称",
+                "包件",
+                "项目名称",
+                "采购编号",
+                "报价",
+                "金额",
+                "服务费",
+                "万元",
+                "元") ||
+            Regex.IsMatch(line, @"[A-Za-z0-9]{3,}(?:[-_/][A-Za-z0-9]{2,}){2,}", RegexOptions.CultureInvariant) ||
+            Regex.IsMatch(line, @"(?:包|第)\s*[A-Za-z0-9一二三四五六七八九十]+", RegexOptions.CultureInvariant);
+    }
+
+    private static void AppendBudgetedLine(StringBuilder builder, string line, int maxCharacters)
+    {
+        if (string.IsNullOrWhiteSpace(line) || builder.Length >= maxCharacters)
+            return;
+
+        var remaining = maxCharacters - builder.Length;
+        if (remaining <= 1)
+            return;
+
+        var normalized = line.Trim();
+        if (normalized.Length + Environment.NewLine.Length <= remaining)
+        {
+            builder.AppendLine(normalized);
+            return;
+        }
+
+        builder.AppendLine(normalized[..Math.Max(0, remaining - Environment.NewLine.Length)]);
     }
 
     private static void AppendSection(StringBuilder builder, string title, string content)
@@ -556,4 +924,9 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
         var lastFence = body.LastIndexOf("```", StringComparison.Ordinal);
         return lastFence >= 0 ? body[..lastFence].Trim() : body.Trim();
     }
+
+    private sealed record BidOpsEffectiveAiRuntimeSettings(
+        string Provider,
+        string CodexCliModel,
+        string CodexCliReasoningEffort);
 }

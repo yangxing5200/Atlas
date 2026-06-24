@@ -17,4 +17,6 @@ public interface IBidOpsOperationsQueryService
     Task<BidOpsConfigCheckDto> GetConfigCheckAsync(CancellationToken ct = default);
 
     Task<IReadOnlyList<BidOpsChannelHealthDto>> GetChannelHealthAsync(CancellationToken ct = default);
+
+    Task<IReadOnlyList<BidOpsCrawlProgressDto>> GetCrawlProgressAsync(CancellationToken ct = default);
 }

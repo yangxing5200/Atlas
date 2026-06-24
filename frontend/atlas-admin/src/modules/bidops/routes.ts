@@ -127,6 +127,12 @@ export const bidOpsRoutes: RouteRecordRaw[] = [
     meta: { title: '审核详情', permissionsAny: [BIDOPS_PERMISSIONS.REVIEW_READ] },
   },
   {
+    path: '/bidops/review/quality-analysis',
+    name: 'BidOpsReviewQualityAnalysis',
+    component: () => import('./pages/review/ReviewQualityAnalysisPage.vue'),
+    meta: { title: '审核质量分析', permissionsAny: [BIDOPS_PERMISSIONS.REVIEW_READ] },
+  },
+  {
     path: '/bidops/processing/failed',
     name: 'BidOpsProcessingFailed',
     component: () => import('./pages/review/ProcessingFailureListPage.vue'),

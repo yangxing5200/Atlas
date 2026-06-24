@@ -218,6 +218,7 @@ function normalizeId(value: unknown) {
       <h3>中标/候选明细</h3>
       <el-table :data="outcomeRows" border size="small" empty-text="暂无中标/候选明细">
         <el-table-column prop="projectCode" label="采购编号" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="projectName" label="项目名称" min-width="220" show-overflow-tooltip />
         <el-table-column prop="lotNo" label="分标编号" min-width="140" show-overflow-tooltip />
         <el-table-column prop="lotName" label="分标名称" min-width="140" show-overflow-tooltip />
         <el-table-column label="包号" width="110" show-overflow-tooltip>

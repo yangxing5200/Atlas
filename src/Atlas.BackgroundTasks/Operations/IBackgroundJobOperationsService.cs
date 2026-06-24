@@ -9,6 +9,12 @@ public interface IBackgroundJobOperationsService
         bool bidOpsOnly = false,
         CancellationToken ct = default);
 
+    Task<PagedResult<BackgroundJobListItemDto>> SearchByIdsAsync(
+        IReadOnlyCollection<long> jobIds,
+        BackgroundJobSearchQuery query,
+        bool bidOpsOnly = false,
+        CancellationToken ct = default);
+
     Task<BackgroundJobSummaryDto> GetSummaryAsync(
         BackgroundJobSearchQuery query,
         bool bidOpsOnly = false,

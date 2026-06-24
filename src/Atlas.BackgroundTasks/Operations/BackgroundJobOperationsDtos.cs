@@ -5,6 +5,7 @@ namespace Atlas.BackgroundTasks.Operations;
 public sealed class BackgroundJobSearchQuery
 {
     public string? Keyword { get; set; }
+    public string? ProjectCode { get; set; }
     public long? TenantId { get; set; }
     public string? Queue { get; set; }
     public string? JobType { get; set; }
@@ -20,6 +21,8 @@ public sealed class BackgroundJobSearchQuery
     public DateTime? CreatedTo { get; set; }
     public DateTime? CreatedFromUtc { get; set; }
     public DateTime? CreatedToUtc { get; set; }
+    public string? SortBy { get; set; }
+    public bool? SortDescending { get; set; }
     public int PageIndex { get; set; } = 1;
     public int PageSize { get; set; } = 20;
 }
@@ -31,6 +34,7 @@ public class BackgroundJobListItemDto
     public string JobTypeName { get; set; } = string.Empty;
     public string Queue { get; set; } = string.Empty;
     public string JobName { get; set; } = string.Empty;
+    public string ProjectCode { get; set; } = string.Empty;
     public string? DeduplicationKey { get; set; }
     public long? TenantId { get; set; }
     public long? StoreId { get; set; }
@@ -119,6 +123,7 @@ public sealed class BackgroundJobRetryResultDto
 public sealed class BackgroundJobCancelRequest
 {
     public string? Reason { get; set; }
+    public bool Force { get; set; }
 }
 
 public sealed class BackgroundJobCancelResultDto

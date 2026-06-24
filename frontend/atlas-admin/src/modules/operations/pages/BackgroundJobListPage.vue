@@ -19,8 +19,12 @@ import type {
 } from '../types'
 import { formatDuration, formatJobType, jobStatusOptions } from '../utils/display'
 
+type SortOrder = 'ascending' | 'descending' | null
+const JOB_QUERY_CACHE_VERSION = 1
+
 interface JobTableQuery {
   keyword: string
+  projectCode: string
   queue: string
   jobType: string
   status: BackgroundJobStatus | ''
@@ -28,6 +32,8 @@ interface JobTableQuery {
   deadOnly: boolean
   staleRunningOnly: boolean
   waitingRetryOnly: boolean
+  sortBy: string
+  sortDescending: boolean | null
   pageIndex: number
   pageSize: number
 }
@@ -35,6 +41,9 @@ interface JobTableQuery {
 const route = useRoute()
 const router = useRouter()
 const bidOpsMode = computed(() => route.path.startsWith('/bidops/operations/jobs'))
+const queryStorageKey = bidOpsMode.value
+  ? 'atlas.bidops.background-jobs.query.v1'
+  : 'atlas.ops.background-jobs.query.v1'
 const pageTitle = computed(() => (bidOpsMode.value ? 'BidOps 后台任务' : '后台任务'))
 const pageDescription = computed(() =>
   bidOpsMode.value
@@ -43,17 +52,13 @@ const pageDescription = computed(() =>
 )
 
 const query = reactive<JobTableQuery>({
-  keyword: String(route.query.keyword || ''),
-  queue: bidOpsMode.value ? 'bidops' : String(route.query.queue || ''),
-  jobType: String(route.query.jobType || ''),
-  status: String(route.query.status || '') as BackgroundJobStatus | '',
-  businessId: String(route.query.businessId || ''),
-  deadOnly: false,
-  staleRunningOnly: false,
-  waitingRetryOnly: false,
-  pageIndex: 1,
-  pageSize: 20,
+  ...createDefaultQuery(),
+  ...loadCachedQuery(),
+  ...getRouteQueryOverrides(),
 })
+if (bidOpsMode.value) {
+  query.queue = 'bidops'
+}
 const result = ref<BackgroundJobPagedResult>({
   total: 0,
   items: [],
@@ -67,6 +72,12 @@ const summary = ref<BackgroundJobSummaryDto | null>(null)
 const loading = ref(false)
 const summaryLoading = ref(false)
 const paginationTotal = computed(() => Number(result.value.total || 0))
+const completedAtSortOrder = computed<SortOrder>(() => {
+  if (query.sortBy !== 'CompletedAt')
+    return null
+
+  return query.sortDescending === false ? 'ascending' : 'descending'
+})
 
 const metrics = computed(() => [
   { label: '待执行', value: summary.value?.pending ?? 0 },
@@ -76,9 +87,120 @@ const metrics = computed(() => [
   { label: '超时锁定', value: summary.value?.staleRunning ?? 0 },
 ])
 
+function createDefaultQuery(): JobTableQuery {
+  return {
+    keyword: '',
+    projectCode: '',
+    queue: bidOpsMode.value ? 'bidops' : '',
+    jobType: '',
+    status: '',
+    businessId: '',
+    deadOnly: false,
+    staleRunningOnly: false,
+    waitingRetryOnly: false,
+    sortBy: '',
+    sortDescending: null,
+    pageIndex: 1,
+    pageSize: 20,
+  }
+}
+
+function loadCachedQuery(): Partial<JobTableQuery> {
+  try {
+    const raw = window.localStorage.getItem(queryStorageKey)
+    if (!raw)
+      return {}
+
+    const parsed = JSON.parse(raw) as { version?: number; query?: Partial<JobTableQuery> }
+    if (parsed.version !== JOB_QUERY_CACHE_VERSION || !parsed.query)
+      return {}
+
+    return pickQueryFields(parsed.query)
+  } catch {
+    return {}
+  }
+}
+
+function saveCachedQuery() {
+  try {
+    window.localStorage.setItem(
+      queryStorageKey,
+      JSON.stringify({
+        version: JOB_QUERY_CACHE_VERSION,
+        query: { ...query },
+      }),
+    )
+  } catch {
+    // Ignore storage quota/privacy-mode failures; the page should still work normally.
+  }
+}
+
+function getRouteQueryOverrides(): Partial<JobTableQuery> {
+  return pickQueryFields({
+    keyword: firstRouteValue(route.query.keyword),
+    projectCode: firstRouteValue(route.query.projectCode),
+    queue: firstRouteValue(route.query.queue),
+    jobType: firstRouteValue(route.query.jobType),
+    status: firstRouteValue(route.query.status) as BackgroundJobStatus | '',
+    businessId: firstRouteValue(route.query.businessId),
+    deadOnly: parseBooleanRouteValue(route.query.deadOnly),
+    staleRunningOnly: parseBooleanRouteValue(route.query.staleRunningOnly),
+    waitingRetryOnly: parseBooleanRouteValue(route.query.waitingRetryOnly),
+    sortBy: firstRouteValue(route.query.sortBy),
+    sortDescending: parseNullableBooleanRouteValue(route.query.sortDescending),
+    pageIndex: parseNumberRouteValue(route.query.pageIndex),
+    pageSize: parseNumberRouteValue(route.query.pageSize),
+  })
+}
+
+function pickQueryFields(value: Partial<JobTableQuery>): Partial<JobTableQuery> {
+  const fields: Partial<JobTableQuery> = {}
+  for (const key of Object.keys(createDefaultQuery()) as Array<keyof JobTableQuery>) {
+    const fieldValue = value[key]
+    if (fieldValue !== undefined && fieldValue !== null) {
+      fields[key] = fieldValue as never
+    }
+  }
+
+  return fields
+}
+
+function firstRouteValue(value: unknown) {
+  if (Array.isArray(value))
+    return value[0] == null ? undefined : String(value[0])
+
+  return value == null ? undefined : String(value)
+}
+
+function parseBooleanRouteValue(value: unknown) {
+  const normalized = firstRouteValue(value)
+  if (normalized === undefined)
+    return undefined
+
+  return normalized === 'true'
+}
+
+function parseNullableBooleanRouteValue(value: unknown) {
+  const normalized = firstRouteValue(value)
+  if (normalized === undefined)
+    return undefined
+  if (normalized === 'true')
+    return true
+  if (normalized === 'false')
+    return false
+
+  return undefined
+}
+
+function parseNumberRouteValue(value: unknown) {
+  const normalized = Number(firstRouteValue(value))
+  return Number.isFinite(normalized) && normalized > 0 ? normalized : undefined
+}
+
 function normalizeQuery(): BackgroundJobSearchQuery {
   return {
     keyword: query.keyword.trim() || undefined,
+    projectCode: query.projectCode.trim() || undefined,
     queue: query.queue.trim() || undefined,
     jobType: query.jobType.trim() || undefined,
     status: query.status || undefined,
@@ -86,6 +208,8 @@ function normalizeQuery(): BackgroundJobSearchQuery {
     deadOnly: query.deadOnly || undefined,
     staleRunningOnly: query.staleRunningOnly || undefined,
     waitingRetryOnly: query.waitingRetryOnly || undefined,
+    sortBy: query.sortBy || undefined,
+    sortDescending: query.sortDescending,
     pageIndex: query.pageIndex,
     pageSize: query.pageSize,
   }
@@ -120,11 +244,13 @@ async function reload() {
 async function search() {
   query.pageIndex = 1
   await reload()
+  saveCachedQuery()
 }
 
 async function reset() {
   Object.assign(query, {
     keyword: '',
+    projectCode: '',
     queue: bidOpsMode.value ? 'bidops' : '',
     jobType: '',
     status: '',
@@ -132,10 +258,26 @@ async function reset() {
     deadOnly: false,
     staleRunningOnly: false,
     waitingRetryOnly: false,
+    sortBy: '',
+    sortDescending: null,
     pageIndex: 1,
     pageSize: 20,
   })
   await reload()
+  saveCachedQuery()
+}
+
+async function handleSortChange({ prop, order }: { prop: string; order: SortOrder }) {
+  if (prop === 'completedAt' && order) {
+    query.sortBy = 'CompletedAt'
+    query.sortDescending = order === 'descending'
+  } else {
+    query.sortBy = ''
+    query.sortDescending = null
+  }
+
+  query.pageIndex = 1
+  await loadData()
 }
 
 async function retryJob(row: BackgroundJobListItemDto) {
@@ -167,6 +309,22 @@ async function cancelJob(row: BackgroundJobListItemDto) {
   await reload()
 }
 
+async function forceCancelJob(row: BackgroundJobListItemDto) {
+  await ElMessageBox.confirm(
+    '将立即把任务标记为已取消并释放数据库锁；如果 Worker 正在等待外部 I/O，也会收到取消信号。任务历史不会被删除。',
+    '确认强制终止',
+    {
+      type: 'error',
+      confirmButtonText: '强制终止',
+    },
+  )
+  const result = bidOpsMode.value
+    ? await bidOpsOperationsApi.cancelJob(String(row.id), '强制终止', true)
+    : await backgroundJobsApi.cancel(String(row.id), '强制终止', true)
+  ElMessage.success(result.message)
+  await reload()
+}
+
 function isRunning(row: BackgroundJobListItemDto) {
   return ['Running', '1'].includes(String(row.statusName || row.status))
 }
@@ -185,11 +343,17 @@ function canCancel(row: BackgroundJobListItemDto) {
   return !['Succeeded', 'Canceled', '2', '5'].includes(String(row.statusName || row.status))
 }
 
+function canForceCancel(row: BackgroundJobListItemDto) {
+  return isRunning(row)
+}
+
 function jobDetailPath(id: string | number) {
   return bidOpsMode.value ? `/bidops/operations/jobs/${id}` : `/ops/jobs/${id}`
 }
 
-onMounted(reload)
+onMounted(async () => {
+  await reload()
+})
 </script>
 
 <template>
@@ -208,6 +372,9 @@ onMounted(reload)
     <SearchForm @search="search" @reset="reset">
       <el-form-item label="关键词">
         <el-input v-model="query.keyword" clearable placeholder="任务类型 / 名称 / 错误" />
+      </el-form-item>
+      <el-form-item v-if="bidOpsMode" label="采购编号">
+        <el-input v-model="query.projectCode" clearable placeholder="采购编号 / 项目编号" style="width: 210px" />
       </el-form-item>
       <el-form-item label="队列">
         <el-input v-model="query.queue" clearable :disabled="bidOpsMode" placeholder="default / bidops" />
@@ -231,7 +398,7 @@ onMounted(reload)
       <el-button type="primary" :icon="Search" @click="search">查询</el-button>
     </SearchForm>
 
-    <DataTable :data="result.items" :loading="loading">
+    <DataTable :data="result.items" :loading="loading" @sort-change="handleSortChange">
       <el-table-column label="状态" width="130">
         <template #default="{ row }">
           <JobStatusTag
@@ -243,6 +410,9 @@ onMounted(reload)
       </el-table-column>
       <el-table-column label="任务类型" min-width="260" show-overflow-tooltip>
         <template #default="{ row }">{{ formatJobType(row.jobType, row.jobTypeName) }}</template>
+      </el-table-column>
+      <el-table-column v-if="bidOpsMode" label="采购编号" min-width="170" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.projectCode || '-' }}</template>
       </el-table-column>
       <el-table-column prop="queue" label="队列" width="110" />
       <el-table-column prop="tenantId" label="租户" width="120" />
@@ -258,17 +428,36 @@ onMounted(reload)
       <el-table-column label="创建时间" width="170">
         <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
       </el-table-column>
+      <el-table-column
+        prop="completedAt"
+        label="完成时间"
+        width="170"
+        sortable="custom"
+        :sort-order="completedAtSortOrder"
+      >
+        <template #default="{ row }">{{ formatDateTime(row.completedAt) }}</template>
+      </el-table-column>
       <el-table-column label="下次重试" width="170">
         <template #default="{ row }">{{ formatDateTime(row.nextAttemptAt) }}</template>
       </el-table-column>
       <el-table-column prop="lockedBy" label="锁定节点" min-width="150" show-overflow-tooltip />
       <el-table-column prop="lastErrorPreview" label="错误信息" min-width="240" show-overflow-tooltip />
-      <el-table-column label="操作" width="230" fixed="right">
+      <el-table-column label="操作" width="285" fixed="right">
         <template #default="{ row }">
           <el-button size="small" :icon="View" @click="router.push(jobDetailPath(row.id))">详情</el-button>
           <el-button size="small" :icon="Refresh" :disabled="!canRetry(row)" @click="retryJob(row)">重试</el-button>
           <el-button size="small" :icon="Close" :disabled="!canCancel(row)" @click="cancelJob(row)">
             {{ cancelActionText(row) }}
+          </el-button>
+          <el-button
+            size="small"
+            :icon="Close"
+            type="danger"
+            plain
+            :disabled="!canForceCancel(row)"
+            @click="forceCancelJob(row)"
+          >
+            强停
           </el-button>
         </template>
       </el-table-column>

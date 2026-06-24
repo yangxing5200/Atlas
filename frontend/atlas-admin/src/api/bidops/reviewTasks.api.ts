@@ -1,12 +1,23 @@
 import { http } from '@/api/http'
 import type {
+  BackgroundJobPagedResult,
+  BackgroundJobSearchQuery,
+} from '@/modules/operations/types'
+import type {
   NoticeDto,
   PagedResult,
   EnqueueJobDto,
+  BatchReviewTaskReparseRequest,
+  BulkApproveReviewTasksRequest,
+  BulkReviewTaskActionResultDto,
   OutcomeSupplierRecordDto,
   ReviewDecisionRequest,
+  ReviewCorrectionAnalysisDto,
+  ReviewCorrectionAnalysisQuery,
+  ReviewEfficiencyMetricsDto,
   ReviewOutcomeAiReparseRequest,
   ReviewOutcomeSupplierRecordEditRequest,
+  ReviewQualityBackfillRequest,
   ReviewTaskDetailDto,
   ReviewTaskDto,
   ReviewTaskSearchQuery,
@@ -20,8 +31,32 @@ export const reviewTasksApi = {
     return http.get<PagedResult<ReviewTaskDto>>(base, { params })
   },
 
+  correctionAnalysis(params?: ReviewCorrectionAnalysisQuery) {
+    return http.get<ReviewCorrectionAnalysisDto>(`${base}/corrections/analysis`, { params })
+  },
+
+  efficiencyMetrics() {
+    return http.get<ReviewEfficiencyMetricsDto>(`${base}/efficiency-metrics`)
+  },
+
   get(id: BidOpsId) {
     return http.get<ReviewTaskDetailDto>(`${base}/${id}`)
+  },
+
+  jobs(id: BidOpsId, params?: BackgroundJobSearchQuery) {
+    return http.get<BackgroundJobPagedResult>(`${base}/${id}/jobs`, { params })
+  },
+
+  bulkApprove(data: BulkApproveReviewTasksRequest) {
+    return http.post<BulkReviewTaskActionResultDto>(`${base}/bulk-approve`, data)
+  },
+
+  batchReparse(data: BatchReviewTaskReparseRequest) {
+    return http.post<BulkReviewTaskActionResultDto>(`${base}/batch-reparse`, data)
+  },
+
+  qualityBackfill(data: ReviewQualityBackfillRequest) {
+    return http.post<EnqueueJobDto>(`${base}/quality-backfill`, data)
   },
 
   approve(id: BidOpsId, data: ReviewDecisionRequest) {

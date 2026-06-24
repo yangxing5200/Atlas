@@ -9,6 +9,7 @@ import FormDrawer from '@/shared/components/FormDrawer.vue'
 import PageContainer from '@/shared/components/PageContainer.vue'
 import { useRequest } from '@/shared/composables/useRequest'
 import { formatDateTime } from '@/shared/utils/date'
+import { formatMoney } from '@/shared/utils/money'
 import BidOpsStatusTag from '../../components/BidOpsStatusTag.vue'
 import PermissionButton from '../../components/PermissionButton.vue'
 import { BIDOPS_PERMISSIONS } from '../../constants'
@@ -16,11 +17,14 @@ import type {
   CreateSupplierCapabilityRequest,
   CreateSupplierContactRequest,
   CreateSupplierEvidenceDocumentRequest,
+  OutcomeSupplierRecordDto,
   SupplierDetailDto,
   UpdateSupplierRequest,
 } from '../../types'
 import {
   formatCategory,
+  formatCommonStatus,
+  formatPackageNo,
   formatSupplierName,
   formatSupplierDocumentType,
   supplierDocumentTypeOptions,
@@ -32,10 +36,15 @@ const router = useRouter()
 const supplierId = computed(() => String(route.params.id || ''))
 const detail = ref<SupplierDetailDto | null>(null)
 const loading = ref(false)
+const outcomeLoading = ref(false)
 const supplier = computed(() => detail.value?.supplier || null)
 const contacts = computed(() => detail.value?.contacts || [])
 const capabilities = computed(() => detail.value?.capabilities || [])
 const evidenceDocuments = computed(() => detail.value?.evidenceDocuments || [])
+const outcomeRecords = ref<OutcomeSupplierRecordDto[]>([])
+const outcomeTotal = ref(0)
+const outcomePageIndex = ref(1)
+const outcomePageSize = ref(20)
 const pageTitle = computed(() => (supplier.value ? formatSupplierName(supplier.value.name) : '厂家详情'))
 
 const editDrawerOpen = ref(false)
@@ -98,10 +107,34 @@ async function loadData() {
   try {
     detail.value = await suppliersApi.get(supplierId.value)
     syncEditForm()
+    outcomePageIndex.value = 1
+    await loadOutcomeRecords()
   } catch {
     detail.value = null
+    outcomeRecords.value = []
+    outcomeTotal.value = 0
   } finally {
     loading.value = false
+  }
+}
+
+async function loadOutcomeRecords() {
+  if (!supplierId.value) return
+
+  outcomeLoading.value = true
+  try {
+    const result = await suppliersApi.outcomeRecords({
+      supplierId: supplierId.value,
+      pageIndex: outcomePageIndex.value,
+      pageSize: outcomePageSize.value,
+    })
+    outcomeRecords.value = result.items
+    outcomeTotal.value = result.total
+  } catch {
+    outcomeRecords.value = []
+    outcomeTotal.value = 0
+  } finally {
+    outcomeLoading.value = false
   }
 }
 
@@ -277,6 +310,25 @@ function splitTags(value?: string | null) {
     .filter(Boolean)
 }
 
+function formatRank(value?: number | null) {
+  return value ? `第 ${value} 名` : '-'
+}
+
+function outcomePackageLabel(row: OutcomeSupplierRecordDto) {
+  return row.packageName || formatPackageNo(row.packageNo)
+}
+
+function changeOutcomePage(page: number) {
+  outcomePageIndex.value = page
+  void loadOutcomeRecords()
+}
+
+function changeOutcomePageSize(size: number) {
+  outcomePageSize.value = size
+  outcomePageIndex.value = 1
+  void loadOutcomeRecords()
+}
+
 onMounted(loadData)
 </script>
 
@@ -424,6 +476,61 @@ onMounted(loadData)
           </el-table-column>
           <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip />
         </DataTable>
+      </section>
+
+      <section class="content-panel detail-section">
+        <div class="panel-head">
+          <h2>关联成交公告</h2>
+          <el-tag effect="light">{{ outcomeTotal }} 条</el-tag>
+        </div>
+        <DataTable :data="outcomeRecords" :loading="outcomeLoading" empty-text="暂无关联成交公告">
+          <el-table-column label="公告" min-width="260" show-overflow-tooltip>
+            <template #default="{ row }">
+              <el-link v-if="row.sourceUrl" :href="row.sourceUrl" target="_blank" type="primary">
+                {{ row.noticeTitle || row.projectName || '原公告' }}
+              </el-link>
+              <span v-else>{{ row.noticeTitle || row.projectName || '-' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="projectName" label="项目名称" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="projectCode" label="采购编号" min-width="150" show-overflow-tooltip />
+          <el-table-column prop="lotName" label="分标名称" min-width="170" show-overflow-tooltip />
+          <el-table-column label="包件" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ outcomePackageLabel(row) }}</template>
+          </el-table-column>
+          <el-table-column label="结果" width="100">
+            <template #default="{ row }">{{ formatCommonStatus(row.outcomeType) }}</template>
+          </el-table-column>
+          <el-table-column label="名次" width="90">
+            <template #default="{ row }">{{ formatRank(row.rank) }}</template>
+          </el-table-column>
+          <el-table-column label="金额" width="130" align="right">
+            <template #default="{ row }">{{ formatMoney(row.awardAmount) }}</template>
+          </el-table-column>
+          <el-table-column label="代理服务费" width="130" align="right">
+            <template #default="{ row }">{{ formatMoney(row.procurementAgencyServiceFeeAmount) }}</template>
+          </el-table-column>
+          <el-table-column label="发布时间" width="170">
+            <template #default="{ row }">{{ formatDateTime(row.publishTime) }}</template>
+          </el-table-column>
+          <el-table-column label="Raw" width="90" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="router.push(`/bidops/crawl/raw-notices/${row.rawNoticeId}`)">详情</el-button>
+            </template>
+          </el-table-column>
+        </DataTable>
+        <div v-if="outcomeTotal > outcomePageSize" class="table-pagination">
+          <el-pagination
+            v-model:current-page="outcomePageIndex"
+            v-model:page-size="outcomePageSize"
+            :total="outcomeTotal"
+            :page-sizes="[20, 50, 100, 200]"
+            background
+            layout="total, sizes, prev, pager, next"
+            @current-change="changeOutcomePage"
+            @size-change="changeOutcomePageSize"
+          />
+        </div>
       </section>
 
       <FormDrawer
@@ -641,6 +748,12 @@ onMounted(loadData)
 
 .detail-section {
   margin-top: 16px;
+}
+
+.table-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 
 .form-grid {

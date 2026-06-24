@@ -30,7 +30,7 @@ public static partial class BidOpsAwardEvidenceParser
         List<AwardEvidence> results)
     {
         var projectCodeFallback = BidOpsEvidenceText.ExtractProjectCode(document.Text);
-        var projectNameFallback = FirstNonEmpty(BidOpsEvidenceText.ExtractProjectName(document.Text), document.Title);
+        var projectNameFallback = BidOpsEvidenceText.ExtractProjectName(document.Text);
 
         foreach (var table in BidOpsEvidenceTableParser.Parse(document.Text))
         {
@@ -124,7 +124,7 @@ public static partial class BidOpsAwardEvidenceParser
         List<AwardEvidence> results)
     {
         var projectCode = BidOpsEvidenceText.ExtractProjectCode(document.Text);
-        var projectName = FirstNonEmpty(BidOpsEvidenceText.ExtractProjectName(document.Text), document.Title);
+        var projectName = BidOpsEvidenceText.ExtractProjectName(document.Text);
         var rowIndex = 0;
         foreach (var rawLine in SplitLines(document.Text))
         {

@@ -194,7 +194,7 @@ onMounted(loadData)
             <el-table-column label="候选" width="90">
               <template #default="{ row }">{{ row.candidateCount }}</template>
             </el-table-column>
-            <el-table-column label="累计金额" width="130">
+            <el-table-column label="累计金额（元）" width="150" align="right">
               <template #default="{ row }">{{ formatMoney(row.totalAwardAmount) }}</template>
             </el-table-column>
             <el-table-column label="最近公示" width="170">
@@ -218,13 +218,15 @@ onMounted(loadData)
             <el-table-column label="名次" width="90">
               <template #default="{ row }">{{ formatRank(row.rank) }}</template>
             </el-table-column>
+            <el-table-column prop="projectName" label="项目名称" min-width="220" show-overflow-tooltip />
+            <el-table-column prop="lotName" label="分标名称" min-width="170" show-overflow-tooltip />
             <el-table-column label="包件" min-width="170" show-overflow-tooltip>
               <template #default="{ row }">{{ row.packageName || formatPackageNo(row.packageNo) }}</template>
             </el-table-column>
-            <el-table-column label="金额" width="120">
+            <el-table-column label="金额（元）" width="130" align="right">
               <template #default="{ row }">{{ formatMoney(row.awardAmount) }}</template>
             </el-table-column>
-            <el-table-column label="代理服务费" width="130">
+            <el-table-column label="代理服务费（元）" width="140" align="right">
               <template #default="{ row }">{{ formatMoney(row.procurementAgencyServiceFeeAmount) }}</template>
             </el-table-column>
             <el-table-column label="发布时间" width="170">

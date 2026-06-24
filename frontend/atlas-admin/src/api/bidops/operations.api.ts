@@ -4,9 +4,16 @@ import type {
   BackgroundJobPagedResult,
   BackgroundJobRetryResultDto,
   BackgroundJobSearchQuery,
+  BidOpsAiProviderSettingsDto,
   BidOpsChannelHealthDto,
   BidOpsConfigCheckDto,
+  BidOpsCrawlProgressDto,
   BidOpsOperationsDashboardDto,
+  BidOpsRuntimeStatusDto,
+  UpdateBidOpsAiProviderRequest,
+  UpdateBidOpsCodexCliSettingsRequest,
+  UpdateBidOpsCodexCliScenarioSettingsRequest,
+  UpdateBidOpsTaskPauseRequest,
 } from '@/modules/operations/types'
 import type { BidOpsId, RawNoticePipelineDto } from '@/modules/bidops/types'
 
@@ -25,8 +32,32 @@ export const bidOpsOperationsApi = {
     return http.get<BidOpsConfigCheckDto>(`${base}/config-check`)
   },
 
+  aiSettings() {
+    return http.get<BidOpsAiProviderSettingsDto>(`${base}/ai-settings`)
+  },
+
+  updateAiProvider(request: UpdateBidOpsAiProviderRequest) {
+    return http.put<BidOpsAiProviderSettingsDto>(`${base}/ai-settings/provider`, request)
+  },
+
+  updateCodexCliSettings(request: UpdateBidOpsCodexCliSettingsRequest) {
+    return http.put<BidOpsAiProviderSettingsDto>(`${base}/ai-settings/codex-cli`, request)
+  },
+
+  updateCodexCliScenarioSettings(request: UpdateBidOpsCodexCliScenarioSettingsRequest) {
+    return http.put<BidOpsAiProviderSettingsDto>(`${base}/ai-settings/codex-cli/scenario`, request)
+  },
+
+  updateTaskPause(request: UpdateBidOpsTaskPauseRequest) {
+    return http.put<BidOpsRuntimeStatusDto>(`${base}/runtime/task-pause`, request)
+  },
+
   channelsHealth() {
     return http.get<BidOpsChannelHealthDto[]>(`${base}/channels/health`)
+  },
+
+  crawlProgress() {
+    return http.get<BidOpsCrawlProgressDto[]>(`${base}/crawl-progress`)
   },
 
   rawNoticePipeline(id: BidOpsId) {
@@ -37,7 +68,7 @@ export const bidOpsOperationsApi = {
     return http.post<BackgroundJobRetryResultDto>(`${base}/jobs/${id}/retry`)
   },
 
-  cancelJob(id: string, reason?: string) {
-    return http.post<BackgroundJobCancelResultDto>(`${base}/jobs/${id}/cancel`, { reason })
+  cancelJob(id: string, reason?: string, force = false) {
+    return http.post<BackgroundJobCancelResultDto>(`${base}/jobs/${id}/cancel`, { reason, force })
   },
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Edit, Plus, VideoPlay } from '@element-plus/icons-vue'
+import { Edit, Plus, SwitchButton, Timer, VideoPlay } from '@element-plus/icons-vue'
 import { crawlChannelsApi } from '@/api/bidops/crawlChannels.api'
 import DataTable from '@/shared/components/DataTable.vue'
 import FormDrawer from '@/shared/components/FormDrawer.vue'
@@ -25,6 +25,9 @@ const defaultChannelForm: CreateCrawlChannelRequest = {
   region: '',
   industry: '',
   enabled: true,
+  scheduleMode: 'Interval',
+  scanIntervalMinutes: null,
+  dailyScanTime: '',
 }
 
 const table = useTableQuery<CrawlChannelDto, { keyword: string; pageIndex: number; pageSize: number }>(
@@ -33,9 +36,20 @@ const table = useTableQuery<CrawlChannelDto, { keyword: string; pageIndex: numbe
 )
 
 const drawerOpen = ref(false)
+const backfillOpen = ref(false)
 const editingId = ref<BidOpsId | null>(null)
+const backfillChannel = ref<CrawlChannelDto | null>(null)
 const form = reactive<CreateCrawlChannelRequest>({ ...defaultChannelForm })
+const backfillForm = reactive({
+  startPublishTime: '',
+  endPublishTime: '',
+  startPage: 1,
+  pageSize: 20,
+  maxPagesPerRun: 3,
+  resetCursor: true,
+})
 const submitRequest = useRequest()
+const actionRequest = useRequest()
 
 function openCreate() {
   editingId.value = null
@@ -54,6 +68,9 @@ function openEdit(row: CrawlChannelDto) {
     region: row.region,
     industry: row.industry,
     enabled: row.enabled,
+    scheduleMode: row.scheduleMode || 'Interval',
+    scanIntervalMinutes: row.scanIntervalMinutes || null,
+    dailyScanTime: row.dailyScanTime || '',
   })
   drawerOpen.value = true
 }
@@ -84,6 +101,52 @@ async function scanNow(row: CrawlChannelDto) {
   } catch {
     return
   }
+}
+
+async function toggleEnabled(row: CrawlChannelDto) {
+  const enabled = !row.enabled
+  try {
+    await ElMessageBox.confirm(enabled ? '打开后定时扫描会继续处理该栏目。' : '关闭后定时扫描会跳过该栏目。', enabled ? '打开扫描' : '关闭扫描', {
+      confirmButtonText: enabled ? '打开' : '关闭',
+      cancelButtonText: '取消',
+      type: enabled ? 'success' : 'warning',
+    })
+    await actionRequest.run(() => crawlChannelsApi.setEnabled(row.id, { enabled }))
+    ElMessage.success(enabled ? '栏目扫描已打开' : '栏目扫描已关闭')
+    await table.loadData()
+  } catch {
+    return
+  }
+}
+
+function openBackfill(row: CrawlChannelDto) {
+  backfillChannel.value = row
+  Object.assign(backfillForm, {
+    startPublishTime: '',
+    endPublishTime: '',
+    startPage: 1,
+    pageSize: 20,
+    maxPagesPerRun: 3,
+    resetCursor: true,
+  })
+  backfillOpen.value = true
+}
+
+async function submitBackfill() {
+  if (!backfillChannel.value) return
+  await actionRequest.run(async () => {
+    const job = await crawlChannelsApi.startBackfill(backfillChannel.value!.id, {
+      startPublishTime: backfillForm.startPublishTime || null,
+      endPublishTime: backfillForm.endPublishTime || null,
+      startPage: backfillForm.startPage,
+      pageSize: backfillForm.pageSize,
+      maxPagesPerRun: backfillForm.maxPagesPerRun,
+      resetCursor: backfillForm.resetCursor,
+    })
+    ElMessage.success(`补采已入队：JobId=${job.jobId}`)
+    backfillOpen.value = false
+    await table.loadData()
+  })
 }
 </script>
 
@@ -122,6 +185,11 @@ async function scanNow(row: CrawlChannelDto) {
       <el-table-column label="启用" width="110">
         <template #default="{ row }"><BidOpsStatusTag :value="row.enabled" /></template>
       </el-table-column>
+      <el-table-column label="定时规则" width="150">
+        <template #default="{ row }">
+          {{ row.scheduleMode === 'Daily' ? `每天 ${row.dailyScanTime || '-'}` : `${row.scanIntervalMinutes || '来源'} 分钟` }}
+        </template>
+      </el-table-column>
       <el-table-column label="最近扫描" width="170">
         <template #default="{ row }">{{ formatDateTime(row.lastScanTime) }}</template>
       </el-table-column>
@@ -129,7 +197,7 @@ async function scanNow(row: CrawlChannelDto) {
         <template #default="{ row }">{{ formatDateTime(row.lastSuccessTime) }}</template>
       </el-table-column>
       <el-table-column prop="lastError" label="错误信息" min-width="220" show-overflow-tooltip />
-      <el-table-column label="操作" width="220" fixed="right">
+      <el-table-column label="操作" width="360" fixed="right">
         <template #default="{ row }">
           <div class="table-actions">
             <PermissionButton size="small" :icon="Edit" :permission="BIDOPS_PERMISSIONS.CRAWL_MANAGE" @click="openEdit(row)">
@@ -144,6 +212,25 @@ async function scanNow(row: CrawlChannelDto) {
               @click="scanNow(row)"
             >
               扫描
+            </PermissionButton>
+            <PermissionButton
+              size="small"
+              plain
+              :icon="Timer"
+              :permission="BIDOPS_PERMISSIONS.CRAWL_IMPORT"
+              @click="openBackfill(row)"
+            >
+              补采
+            </PermissionButton>
+            <PermissionButton
+              size="small"
+              :type="row.enabled ? 'warning' : 'success'"
+              plain
+              :icon="SwitchButton"
+              :permission="BIDOPS_PERMISSIONS.CRAWL_MANAGE"
+              @click="toggleEnabled(row)"
+            >
+              {{ row.enabled ? '关闭' : '打开' }}
             </PermissionButton>
           </div>
         </template>
@@ -180,8 +267,53 @@ async function scanNow(row: CrawlChannelDto) {
         <el-form-item label="地区"><el-input v-model.trim="form.region" /></el-form-item>
         <el-form-item label="行业"><el-input v-model.trim="form.industry" /></el-form-item>
         <el-form-item label="启用"><el-switch v-model="form.enabled" /></el-form-item>
+        <el-form-item label="定时规则">
+          <el-segmented
+            v-model="form.scheduleMode"
+            :options="[
+              { label: '按间隔', value: 'Interval' },
+              { label: '每日固定', value: 'Daily' },
+            ]"
+          />
+        </el-form-item>
+        <el-form-item v-if="form.scheduleMode === 'Interval'" label="扫描间隔">
+          <el-input-number v-model="form.scanIntervalMinutes" :min="1" :max="1440" placeholder="留空用来源设置" />
+        </el-form-item>
+        <el-form-item v-if="form.scheduleMode === 'Daily'" label="每日时间">
+          <el-input v-model.trim="form.dailyScanTime" placeholder="HH:mm，例如 09:30" />
+        </el-form-item>
       </el-form>
     </FormDrawer>
+
+    <el-dialog v-model="backfillOpen" title="启动历史补采" width="520px">
+      <el-form :model="backfillForm" label-width="130px">
+        <el-form-item label="栏目">
+          <span>{{ backfillChannel?.name || '-' }}</span>
+        </el-form-item>
+        <el-form-item label="开始发布日期">
+          <el-date-picker v-model="backfillForm.startPublishTime" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" clearable />
+        </el-form-item>
+        <el-form-item label="结束发布日期">
+          <el-date-picker v-model="backfillForm.endPublishTime" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" clearable />
+        </el-form-item>
+        <el-form-item label="起始页">
+          <el-input-number v-model="backfillForm.startPage" :min="1" />
+        </el-form-item>
+        <el-form-item label="每页条数">
+          <el-input-number v-model="backfillForm.pageSize" :min="1" :max="50" />
+        </el-form-item>
+        <el-form-item label="每段页数">
+          <el-input-number v-model="backfillForm.maxPagesPerRun" :min="1" :max="20" />
+        </el-form-item>
+        <el-form-item label="重置游标">
+          <el-switch v-model="backfillForm.resetCursor" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="backfillOpen = false">取消</el-button>
+        <el-button type="primary" :loading="actionRequest.loading" @click="submitBackfill">提交</el-button>
+      </template>
+    </el-dialog>
   </PageContainer>
 </template>
 

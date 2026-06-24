@@ -27,7 +27,7 @@ export const backgroundJobsApi = {
     return http.post<BackgroundJobRetryResultDto>(`${base}/${id}/retry`)
   },
 
-  cancel(id: string, reason?: string) {
-    return http.post<BackgroundJobCancelResultDto>(`${base}/${id}/cancel`, { reason })
+  cancel(id: string, reason?: string, force = false) {
+    return http.post<BackgroundJobCancelResultDto>(`${base}/${id}/cancel`, { reason, force })
   },
 }

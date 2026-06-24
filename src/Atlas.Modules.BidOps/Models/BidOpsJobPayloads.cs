@@ -17,7 +17,8 @@ public sealed record ManualUrlImportJobPayload(
     string? Title,
     string? NoticeType,
     string? TextContent,
-    bool ForceRefresh)
+    bool ForceRefresh,
+    string? ProjectCode = null)
     : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
 
 public sealed record RawAttachmentBackfillJobPayload(
@@ -43,7 +44,14 @@ public sealed record StateGridEcpCrawlJobPayload(
     long? StoreId,
     long UserId,
     string UserName,
-    long ChannelId)
+    long ChannelId,
+    string Mode = BidOpsCrawlModes.Incremental,
+    long? CheckpointId = null,
+    int? StartPage = null,
+    int? PageSize = null,
+    int? MaxPages = null,
+    DateTime? RangeStartPublishTime = null,
+    DateTime? RangeEndPublishTime = null)
     : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
 
 public sealed record AttachmentProcessJobPayload(
@@ -52,7 +60,9 @@ public sealed record AttachmentProcessJobPayload(
     long UserId,
     string UserName,
     long RawNoticeId,
-    string? ForceParseRunId = null)
+    string? ForceParseRunId = null,
+    string? ReviewerPrompt = null,
+    string? ProjectCode = null)
     : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
 
 public sealed record StructuredParseJobPayload(
@@ -61,7 +71,9 @@ public sealed record StructuredParseJobPayload(
     long UserId,
     string UserName,
     long RawNoticeId,
-    string? ForceParseRunId = null)
+    string? ForceParseRunId = null,
+    string? ReviewerPrompt = null,
+    string? ProjectCode = null)
     : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
 
 public sealed record MockAiParseJobPayload(
@@ -69,7 +81,8 @@ public sealed record MockAiParseJobPayload(
     long? StoreId,
     long UserId,
     string UserName,
-    long RawNoticeId)
+    long RawNoticeId,
+    string? ProjectCode = null)
     : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
 
 public sealed record OpportunityMaintenanceJobPayload(
@@ -106,5 +119,19 @@ public sealed record OutcomeSupplierExtractJobPayload(
     long UserId,
     string UserName,
     long RawNoticeId,
-    string? ReviewerPrompt = null)
+    string? ReviewerPrompt = null,
+    string? ProjectCode = null)
+    : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
+
+public sealed record ReviewQualityBackfillJobPayload(
+    long TenantId,
+    long? StoreId,
+    long UserId,
+    string UserName,
+    int MaxItems,
+    string? NoticeType,
+    string? RiskLevel,
+    bool DryRun,
+    long? SourceId,
+    bool PauseSourceAware)
     : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);

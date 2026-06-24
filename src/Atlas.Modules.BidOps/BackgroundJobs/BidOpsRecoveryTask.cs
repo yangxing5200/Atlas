@@ -4,6 +4,7 @@ using Atlas.Data.Abstractions;
 using Atlas.Modules.BidOps.Entities;
 using Atlas.Modules.BidOps.Entities.Crawling;
 using Atlas.Modules.BidOps.Models;
+using Atlas.Modules.BidOps.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -16,6 +17,7 @@ public sealed class BidOpsRecoveryTask : IRecurringTask
     private readonly IRepository<RawNotice> _rawNotices;
     private readonly IRepository<RawAttachment> _attachments;
     private readonly IBackgroundJobClient _jobs;
+    private readonly IBidOpsRuntimeControlService _runtimeControl;
     private readonly ILogger<BidOpsRecoveryTask> _logger;
 
     public BidOpsRecoveryTask(
@@ -24,6 +26,7 @@ public sealed class BidOpsRecoveryTask : IRecurringTask
         IRepository<RawNotice> rawNotices,
         IRepository<RawAttachment> attachments,
         IBackgroundJobClient jobs,
+        IBidOpsRuntimeControlService runtimeControl,
         ILogger<BidOpsRecoveryTask> logger)
     {
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -31,6 +34,7 @@ public sealed class BidOpsRecoveryTask : IRecurringTask
         _rawNotices = rawNotices ?? throw new ArgumentNullException(nameof(rawNotices));
         _attachments = attachments ?? throw new ArgumentNullException(nameof(attachments));
         _jobs = jobs ?? throw new ArgumentNullException(nameof(jobs));
+        _runtimeControl = runtimeControl ?? throw new ArgumentNullException(nameof(runtimeControl));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -65,6 +69,12 @@ public sealed class BidOpsRecoveryTask : IRecurringTask
 
         foreach (var tenantId in tenantIds)
         {
+            if (await _runtimeControl.IsTaskPausedAsync(tenantId, ct))
+            {
+                _logger.LogInformation("BidOps recovery skipped for tenant {TenantId} because global task pause is enabled.", tenantId);
+                continue;
+            }
+
             using var identity = _identityAccessor.Begin(new ExecutionIdentitySnapshot(
                 tenantId,
                 StoreId: null,
@@ -73,8 +83,8 @@ public sealed class BidOpsRecoveryTask : IRecurringTask
                 SessionId: null,
                 IsAuthenticated: true));
 
-            var rawIds = await FindRecoverableRawNoticeIdsAsync(maxRawPerCycle, ct);
-            foreach (var rawId in rawIds)
+            var rawNotices = await FindRecoverableRawNoticesAsync(maxRawPerCycle, ct);
+            foreach (var raw in rawNotices)
             {
                 await _jobs.EnqueueAsync(
                     new EnqueueBackgroundJobRequest<AttachmentProcessJobPayload>
@@ -83,39 +93,50 @@ public sealed class BidOpsRecoveryTask : IRecurringTask
                         Queue = BidOpsBackgroundJobQueues.BidOps,
                         JobName = "BidOps recovery attachment and parse",
                         TenantId = tenantId,
-                        DeduplicationKey = $"bidops:recovery:attachment-process:{tenantId}:{rawId}:{DateTime.UtcNow:yyyyMMddHHmm}",
+                        DeduplicationKey = BidOpsBackgroundJobDeduplicationKeys.AttachmentProcess(
+                            tenantId,
+                            raw.Id,
+                            raw.ContentHash),
                         Payload = new AttachmentProcessJobPayload(
                             tenantId,
                             StoreId: null,
                             userId,
                             userName,
-                            rawId)
+                            raw.Id)
                     },
                     ct);
             }
 
-            if (rawIds.Count > 0)
+            if (rawNotices.Count > 0)
             {
                 _logger.LogInformation(
                     "BidOps recovery enqueued {Count} raw notices for tenant {TenantId}.",
-                    rawIds.Count,
+                    rawNotices.Count,
                     tenantId);
             }
         }
     }
 
-    private async Task<IReadOnlyList<long>> FindRecoverableRawNoticeIdsAsync(
+    private async Task<IReadOnlyList<RawNoticeProjection>> FindRecoverableRawNoticesAsync(
         int maxRawPerCycle,
         CancellationToken ct)
     {
         var rawQuery = await _rawNotices.QueryAsync(ct);
-        var rawIds = await rawQuery
+        var rawRows = await rawQuery
             .Where(x => x.Status == RawNoticeStatus.ParseQueued || x.Status == RawNoticeStatus.Failed)
             .OrderBy(x => x.FetchTime)
             .Take(maxRawPerCycle)
-            .SelectToListAsync(x => new RawNoticeIdProjection { Id = x.Id }, ct);
+            .SelectToListAsync(
+                x => new RawNoticeProjection
+                {
+                    Id = x.Id,
+                    ContentHash = x.ContentHash
+                },
+                ct);
 
-        var ids = rawIds.Select(x => x.Id).ToHashSet();
+        var rowsById = rawRows
+            .GroupBy(x => x.Id)
+            .ToDictionary(x => x.Key, x => x.First());
 
         var attachmentQuery = await _attachments.QueryAsync(ct);
         var attachmentRawIds = await attachmentQuery
@@ -129,16 +150,43 @@ public sealed class BidOpsRecoveryTask : IRecurringTask
 
         foreach (var projection in attachmentRawIds)
         {
-            ids.Add(projection.Id);
-            if (ids.Count >= maxRawPerCycle)
+            rowsById.TryAdd(projection.Id, new RawNoticeProjection { Id = projection.Id });
+            if (rowsById.Count >= maxRawPerCycle)
                 break;
         }
 
-        return ids.ToArray();
+        var missingHashIds = rowsById.Values
+            .Where(x => string.IsNullOrWhiteSpace(x.ContentHash))
+            .Select(x => x.Id)
+            .ToArray();
+        if (missingHashIds.Length > 0)
+        {
+            var hashQuery = await _rawNotices.QueryAsync(ct);
+            var hashRows = await hashQuery
+                .Where(x => missingHashIds.Contains(x.Id))
+                .SelectToListAsync(
+                    x => new RawNoticeProjection
+                    {
+                        Id = x.Id,
+                        ContentHash = x.ContentHash
+                    },
+                    ct);
+            foreach (var row in hashRows)
+                rowsById[row.Id] = row;
+        }
+
+        return rowsById.Values.ToArray();
     }
 
     private sealed class RawNoticeIdProjection
     {
         public long Id { get; init; }
+    }
+
+    private sealed class RawNoticeProjection
+    {
+        public long Id { get; init; }
+
+        public string ContentHash { get; init; } = string.Empty;
     }
 }

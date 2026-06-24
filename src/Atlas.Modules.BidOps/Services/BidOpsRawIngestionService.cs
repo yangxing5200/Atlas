@@ -2,10 +2,12 @@ using System.Text;
 using Atlas.Core.Exceptions;
 using Atlas.Core.IdGenerators;
 using Atlas.Data.Abstractions;
+using Atlas.Modules.BidOps.Ai.Evidence;
 using Atlas.Modules.BidOps.Crawling;
 using Atlas.Modules.BidOps.Documents;
 using Atlas.Modules.BidOps.Entities;
 using Atlas.Modules.BidOps.Entities.Crawling;
+using Microsoft.EntityFrameworkCore;
 
 namespace Atlas.Modules.BidOps.Services;
 
@@ -69,7 +71,7 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
             ? $"<html><body><h1>{title}</h1><p>{text}</p></body></html>"
             : command.HtmlContent;
 
-        var rawId = await UpsertRawNoticeAsync(
+        var result = await UpsertRawNoticeAsync(
             source.Id,
             command.ChannelId,
             title,
@@ -84,10 +86,38 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
             command.ForceRefresh,
             ct);
 
-        return rawId;
+        return result.RawNoticeId;
     }
 
     public async Task<long> IngestPublicNoticeAsync(
+        RawIngestionCommand command,
+        long? backgroundJobId,
+        string operation,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        ArgumentException.ThrowIfNullOrWhiteSpace(command.DetailUrl);
+        if (!command.SourceId.HasValue)
+            throw new AtlasException("SourceId is required for public crawler ingestion.");
+
+        var source = await GetSourceAsync(command.SourceId.Value, ct);
+        EnsureSourceCanRun(source);
+
+        var title = string.IsNullOrWhiteSpace(command.Title)
+            ? $"Public notice import {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}"
+            : command.Title.Trim();
+        var text = string.IsNullOrWhiteSpace(command.TextContent)
+            ? $"Public URL imported for review: {command.DetailUrl}"
+            : command.TextContent.Trim();
+        var html = string.IsNullOrWhiteSpace(command.HtmlContent)
+            ? $"<html><body><h1>{title}</h1><p>{text}</p></body></html>"
+            : command.HtmlContent;
+
+        var result = await IngestPublicNoticeWithResultAsync(command, backgroundJobId, operation, ct);
+        return result.RawNoticeId;
+    }
+
+    public async Task<RawIngestionResult> IngestPublicNoticeWithResultAsync(
         RawIngestionCommand command,
         long? backgroundJobId,
         string operation,
@@ -127,6 +157,26 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
             ct);
     }
 
+    public async Task<long?> FindExistingRawNoticeIdByUrlAsync(
+        string noticeType,
+        string detailUrl,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(detailUrl))
+            return null;
+
+        var normalizedNoticeType = Trim(
+            string.IsNullOrWhiteSpace(noticeType) ? "TenderAnnouncement" : noticeType,
+            64);
+        var urlHash = _hasher.HashUrl(detailUrl);
+        var query = await _rawNotices.QueryAsync(ct);
+        var raw = await query
+            .Where(x => x.NoticeType == normalizedNoticeType && x.DetailUrlHash == urlHash)
+            .OrderBy(x => x.Id)
+            .FirstOrDefaultAsync(ct);
+        return raw?.Id;
+    }
+
     public async Task<long> CreateMockRawNoticeAsync(
         long channelId,
         long? backgroundJobId,
@@ -163,7 +213,7 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
 """;
         var html = $"<html><body><h1>{title}</h1><pre>{text}</pre></body></html>";
 
-        var rawId = await UpsertRawNoticeAsync(
+        var result = await UpsertRawNoticeAsync(
             source.Id,
             channel.Id,
             title,
@@ -182,10 +232,10 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
         channel.LastError = string.Empty;
         await _unitOfWork.SaveChangesAsync(ct);
 
-        return rawId;
+        return result.RawNoticeId;
     }
 
-    private async Task<long> UpsertRawNoticeAsync(
+    private async Task<RawIngestionResult> UpsertRawNoticeAsync(
         long sourceId,
         long? channelId,
         string title,
@@ -202,15 +252,24 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
     {
         var urlHash = _hasher.HashUrl(detailUrl);
         var contentHash = _hasher.HashText(text);
-        var existing = await _rawNotices.FirstOrDefaultAsync(
-            x => x.SourceId == sourceId && x.DetailUrlHash == urlHash,
-            ct);
+        var normalizedNoticeType = Trim(noticeType, 64);
+        var sourceNoticeId = BuildSourceNoticeId(text, urlHash);
+        var existing = await FindExistingRawNoticeAsync(normalizedNoticeType, sourceNoticeId, urlHash, ct);
         if (existing != null)
         {
             if (forceRefresh && existing.Status == RawNoticeStatus.Approved)
                 throw new AtlasException("Approved BidOps raw notices cannot be force-refreshed in MVP.");
 
+            var identityChanged =
+                !string.Equals(existing.SourceNoticeId, sourceNoticeId, StringComparison.Ordinal) ||
+                !string.Equals(existing.NoticeType, normalizedNoticeType, StringComparison.OrdinalIgnoreCase);
             var contentChanged = !string.Equals(existing.ContentHash, contentHash, StringComparison.OrdinalIgnoreCase);
+            if (identityChanged)
+            {
+                existing.SourceNoticeId = sourceNoticeId;
+                existing.NoticeType = normalizedNoticeType;
+            }
+
             if (contentChanged || forceRefresh)
             {
                 var changedHtmlInfo = await SaveTextAsync(html, "notice.html", "text/html", ct);
@@ -218,7 +277,6 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
 
                 existing.Title = Trim(title, 500);
                 existing.DetailUrl = detailUrl.Trim();
-                existing.NoticeType = Trim(noticeType, 64);
                 existing.PublishTime = publishTime;
                 existing.FetchTime = DateTime.UtcNow;
                 existing.ContentHash = contentHash;
@@ -244,12 +302,32 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
             }
             else
             {
-                await AddLogAsync(sourceId, channelId, backgroundJobId, operation, "Skipped", $"Raw notice already exists: {existing.Id}", ct);
+                await AddLogAsync(
+                    sourceId,
+                    channelId,
+                    backgroundJobId,
+                    operation,
+                    identityChanged ? "IdentityUpdated" : "Skipped",
+                    identityChanged
+                        ? $"Raw notice already exists and business identity was updated: {existing.Id}"
+                        : $"Raw notice already exists: {existing.Id}",
+                    ct);
             }
 
             await UpsertRawAttachmentsAsync(existing.Id, attachments, ct);
             await _unitOfWork.SaveChangesAsync(ct);
-            return existing.Id;
+
+            var status = contentChanged
+                ? BidOpsRawIngestionStatuses.Changed
+                : forceRefresh
+                    ? BidOpsRawIngestionStatuses.Refreshed
+                    : identityChanged
+                        ? BidOpsRawIngestionStatuses.IdentityUpdated
+                        : BidOpsRawIngestionStatuses.Skipped;
+            return new RawIngestionResult(
+                existing.Id,
+                status,
+                contentChanged || forceRefresh);
         }
 
         var htmlInfo = await SaveTextAsync(html, "notice.html", "text/html", ct);
@@ -259,11 +337,11 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
             Id = _idGenerator.NextId(),
             SourceId = sourceId,
             ChannelId = channelId,
-            SourceNoticeId = urlHash[..16],
+            SourceNoticeId = sourceNoticeId,
             Title = Trim(title, 500),
             DetailUrl = detailUrl.Trim(),
             DetailUrlHash = urlHash,
-            NoticeType = Trim(noticeType, 64),
+            NoticeType = normalizedNoticeType,
             PublishTime = publishTime,
             FetchTime = DateTime.UtcNow,
             ContentHash = contentHash,
@@ -278,7 +356,50 @@ public sealed class BidOpsRawIngestionService : IBidOpsRawIngestionService
         await UpsertRawAttachmentsAsync(raw.Id, attachments, ct);
         await AddLogAsync(sourceId, channelId, backgroundJobId, operation, "Succeeded", $"Raw notice created: {raw.Id}", ct);
         await _unitOfWork.SaveChangesAsync(ct);
-        return raw.Id;
+        return new RawIngestionResult(raw.Id, BidOpsRawIngestionStatuses.Created, ShouldProcess: true);
+    }
+
+    private async Task<RawNotice?> FindExistingRawNoticeAsync(
+        string noticeType,
+        string sourceNoticeId,
+        string detailUrlHash,
+        CancellationToken ct)
+    {
+        var query = await _rawNotices.QueryTrackingAsync(ct);
+        var candidates = await query
+            .Where(x => x.NoticeType == noticeType &&
+                        (x.SourceNoticeId == sourceNoticeId || x.DetailUrlHash == detailUrlHash))
+            .ToListAsync(ct);
+
+        return candidates
+            .OrderByDescending(x => string.Equals(x.SourceNoticeId, sourceNoticeId, StringComparison.Ordinal))
+            .ThenBy(x => x.Id)
+            .FirstOrDefault();
+    }
+
+    private static string BuildSourceNoticeId(
+        string text,
+        string detailUrlHash)
+    {
+        var projectCode = NormalizeBusinessCode(BidOpsEvidenceText.ExtractProjectCode(text));
+        return string.IsNullOrWhiteSpace(projectCode)
+            ? $"url:{detailUrlHash}"
+            : $"code:{Trim(projectCode, 123)}";
+    }
+
+    private static string NormalizeBusinessCode(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var normalized = value
+            .Replace('／', '/')
+            .Replace('－', '-')
+            .Replace('—', '-')
+            .Replace('–', '-')
+            .Trim();
+
+        return string.Concat(normalized.Where(ch => !char.IsWhiteSpace(ch))).ToUpperInvariant();
     }
 
     private async Task UpsertRawAttachmentsAsync(

@@ -16,6 +16,16 @@ public sealed class ReviewTask : BidOpsTenantEntity
 
     public ReviewTaskStatus Status { get; set; } = ReviewTaskStatus.Pending;
 
+    public int QualityScore { get; set; } = 100;
+
+    public ReviewQualityRiskLevel RiskLevel { get; set; } = ReviewQualityRiskLevel.Low;
+
+    public int QualityIssueCount { get; set; }
+
+    public int HighRiskIssueCount { get; set; }
+
+    public ReviewRecommendation ReviewRecommendation { get; set; } = ReviewRecommendation.BatchConfirmCandidate;
+
     public long? AssignedTo { get; set; }
 
     public long? ReviewerId { get; set; }

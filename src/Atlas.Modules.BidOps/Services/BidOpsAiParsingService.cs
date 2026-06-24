@@ -39,6 +39,7 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
     private readonly IRepository<PackageStaging> _packageStaging;
     private readonly IRepository<RequirementStaging> _requirementStaging;
     private readonly IRepository<ReviewTask> _reviewTasks;
+    private readonly IBidOpsReviewQualityService _qualityService;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IBidOpsAiExtractionService _ai;
     private readonly IBidOpsFileStore _fileStore;
@@ -51,6 +52,7 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
         IRepository<PackageStaging> packageStaging,
         IRepository<RequirementStaging> requirementStaging,
         IRepository<ReviewTask> reviewTasks,
+        IBidOpsReviewQualityService qualityService,
         IUnitOfWork unitOfWork,
         IBidOpsAiExtractionService ai,
         IBidOpsFileStore fileStore,
@@ -62,6 +64,7 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
         _packageStaging = packageStaging ?? throw new ArgumentNullException(nameof(packageStaging));
         _requirementStaging = requirementStaging ?? throw new ArgumentNullException(nameof(requirementStaging));
         _reviewTasks = reviewTasks ?? throw new ArgumentNullException(nameof(reviewTasks));
+        _qualityService = qualityService ?? throw new ArgumentNullException(nameof(qualityService));
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
         _ai = ai ?? throw new ArgumentNullException(nameof(ai));
         _fileStore = fileStore ?? throw new ArgumentNullException(nameof(fileStore));
@@ -69,6 +72,14 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
     }
 
     public async Task<long> ParseRawNoticeAsync(long rawNoticeId, CancellationToken ct = default)
+    {
+        return await ParseRawNoticeAsync(rawNoticeId, null, ct);
+    }
+
+    public async Task<long> ParseRawNoticeAsync(
+        long rawNoticeId,
+        string? reviewerPrompt,
+        CancellationToken ct = default)
     {
         var rawQuery = await _rawNotices.QueryTrackingAsync(ct);
         var raw = await rawQuery.Where(x => x.Id == rawNoticeId).FirstOrDefaultAsync(ct);
@@ -86,10 +97,10 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
             if (raw.Status != RawNoticeStatus.ParseQueued)
                 return existingTask?.Id ?? existingStaging.Id;
 
-            return await ReparseExistingStagingAsync(raw, existingStaging, existingTask, ct);
+            return await ReparseExistingStagingAsync(raw, existingStaging, existingTask, reviewerPrompt, ct);
         }
 
-        var aiRequest = await BuildAiRequestAsync(raw, ct);
+        var aiRequest = await BuildAiRequestAsync(raw, reviewerPrompt, isReparse: false, ct);
         var extract = await _ai.ExtractAsync(aiRequest, ct);
         var rawAiOutput = await SaveAiOutputAsync(extract, ct);
 
@@ -114,35 +125,7 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
         };
 
         await _noticeStaging.AddAsync(noticeStaging, ct);
-
-        foreach (var package in extract.Packages)
-        {
-            var packageStaging = new PackageStaging
-            {
-                Id = _idGenerator.NextId(),
-                NoticeStagingId = noticeStaging.Id,
-                LotNo = Truncate(package.LotNo, LotNoMaxLength),
-                LotName = Truncate(package.LotName, LotNameMaxLength),
-                PackageNo = Truncate(package.PackageNo, PackageNoMaxLength),
-                PackageName = Truncate(package.PackageName, PackageNameMaxLength),
-                Category = Truncate(package.Category, CategoryMaxLength),
-                Quantity = package.Quantity,
-                Unit = Truncate(package.Unit, UnitMaxLength),
-                BudgetAmount = package.BudgetAmount,
-                MaxPrice = package.MaxPrice,
-                DeliveryPlace = Truncate(package.DeliveryPlace, DeliveryPlaceMaxLength),
-                DeliveryPeriod = Truncate(package.DeliveryPeriod, DeliveryPeriodMaxLength),
-                AiConfidence = package.Confidence,
-                ReviewStatus = ReviewStatus.Pending
-            };
-
-            await _packageStaging.AddAsync(packageStaging, ct);
-
-            foreach (var requirement in package.Requirements)
-            {
-                await _requirementStaging.AddAsync(CreateRequirementStaging(packageStaging.Id, requirement), ct);
-            }
-        }
+        var staged = await AddExtractedPackagesAsync(noticeStaging.Id, extract, ct);
 
         var task = new ReviewTask
         {
@@ -155,6 +138,7 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
             Status = ReviewTaskStatus.Pending
         };
         await _reviewTasks.AddAsync(task, ct);
+        await _qualityService.ApplyNoticeQualityAsync(task, noticeStaging, staged.Packages, staged.Requirements, ct);
 
         raw.Status = RawNoticeStatus.ReviewPending;
         raw.LastError = string.Empty;
@@ -167,9 +151,10 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
         RawNotice raw,
         NoticeStaging noticeStaging,
         ReviewTask? reviewTask,
+        string? reviewerPrompt,
         CancellationToken ct)
     {
-        var aiRequest = await BuildAiRequestAsync(raw, ct);
+        var aiRequest = await BuildAiRequestAsync(raw, reviewerPrompt, isReparse: true, ct);
         var extract = await _ai.ExtractAsync(aiRequest, ct);
         var rawAiOutput = await SaveAiOutputAsync(extract, ct);
 
@@ -203,7 +188,7 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
         if (packages.Count > 0)
             await _packageStaging.RemoveRangeAsync(packages, ct);
 
-        await AddExtractedPackagesAsync(noticeStaging.Id, extract, ct);
+        var staged = await AddExtractedPackagesAsync(noticeStaging.Id, extract, ct);
 
         reviewTask ??= new ReviewTask
         {
@@ -228,17 +213,21 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
         if (await _reviewTasks.FirstOrDefaultAsync(x => x.Id == reviewTask.Id, ct) == null)
             await _reviewTasks.AddAsync(reviewTask, ct);
 
+        await _qualityService.ApplyNoticeQualityAsync(reviewTask, noticeStaging, staged.Packages, staged.Requirements, ct);
+
         raw.Status = RawNoticeStatus.ReviewPending;
         raw.LastError = string.Empty;
         await _unitOfWork.SaveChangesAsync(ct);
         return reviewTask.Id;
     }
 
-    private async Task AddExtractedPackagesAsync(
+    private async Task<StagedPackageSet> AddExtractedPackagesAsync(
         long noticeStagingId,
         BidOpsNoticeExtract extract,
         CancellationToken ct)
     {
+        var packages = new List<PackageStaging>();
+        var requirements = new List<RequirementStaging>();
         foreach (var package in extract.Packages)
         {
             var packageStaging = new PackageStaging
@@ -260,16 +249,25 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
                 ReviewStatus = ReviewStatus.Pending
             };
 
+            packages.Add(packageStaging);
             await _packageStaging.AddAsync(packageStaging, ct);
 
             foreach (var requirement in package.Requirements)
             {
-                await _requirementStaging.AddAsync(CreateRequirementStaging(packageStaging.Id, requirement), ct);
+                var requirementStaging = CreateRequirementStaging(packageStaging.Id, requirement);
+                requirements.Add(requirementStaging);
+                await _requirementStaging.AddAsync(requirementStaging, ct);
             }
         }
+
+        return new StagedPackageSet(packages, requirements);
     }
 
-    private async Task<BidOpsNoticeAiExtractionRequest> BuildAiRequestAsync(RawNotice raw, CancellationToken ct)
+    private async Task<BidOpsNoticeAiExtractionRequest> BuildAiRequestAsync(
+        RawNotice raw,
+        string? reviewerPrompt,
+        bool isReparse,
+        CancellationToken ct)
     {
         var text = string.IsNullOrWhiteSpace(raw.TextContentStorageKey)
             ? raw.TextPreview
@@ -307,7 +305,9 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
             raw.PublishTime,
             text,
             html,
-            attachmentInputs);
+            attachmentInputs,
+            reviewerPrompt,
+            isReparse);
     }
 
     private async Task<string> TryReadStoredTextAsync(
@@ -372,4 +372,8 @@ public sealed class BidOpsAiParsingService : IBidOpsAiParsingService
         var trimmed = value.Trim();
         return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
+
+    private sealed record StagedPackageSet(
+        IReadOnlyList<PackageStaging> Packages,
+        IReadOnlyList<RequirementStaging> Requirements);
 }
