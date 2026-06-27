@@ -159,6 +159,12 @@ export const bidOpsRoutes: RouteRecordRaw[] = [
     meta: { title: '正式公告库', permissionsAny: [BIDOPS_PERMISSIONS.BUSINESS_READ] },
   },
   {
+    path: '/bidops/notices/:id',
+    name: 'BidOpsNoticeDetail',
+    component: () => import('./pages/business/NoticeDetailPage.vue'),
+    meta: { title: '公告详情', permissionsAny: [BIDOPS_PERMISSIONS.BUSINESS_READ] },
+  },
+  {
     path: '/bidops/packages',
     name: 'BidOpsPackages',
     component: () => import('./pages/business/PackageListPage.vue'),
@@ -331,12 +337,12 @@ export const bidOpsRoutes: RouteRecordRaw[] = [
     title: '模板库',
     moduleName: '响应矩阵与文件中心',
   }),
-  comingSoonRoute({
+  {
     path: '/bidops/outcomes',
-    name: 'BidOpsOutcomesPlaceholder',
-    title: '结果录入',
-    moduleName: '结果复盘中心',
-  }),
+    name: 'BidOpsLifecycleClosure',
+    component: () => import('./pages/outcomes/LifecycleClosurePage.vue'),
+    meta: { title: '闭环审核中心', permissionsAny: [BIDOPS_PERMISSIONS.REVIEW_READ] },
+  },
   comingSoonRoute({
     path: '/bidops/outcomes/reviews',
     name: 'BidOpsOutcomeReviewsPlaceholder',

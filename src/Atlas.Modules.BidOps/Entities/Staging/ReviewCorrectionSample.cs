@@ -32,5 +32,6 @@ public static class BidOpsReviewCorrectionSourceKinds
     public const string ManualEdit = "ManualEdit";
     public const string BulkApprove = "BulkApprove";
     public const string ReparsePrompt = "ReparsePrompt";
+    public const string ApprovalOutcomeExtract = "ApprovalOutcomeExtract";
     public const string IssueResolved = "IssueResolved";
 }

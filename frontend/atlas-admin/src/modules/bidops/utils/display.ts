@@ -142,6 +142,12 @@ const commonStatusLabels: Record<string, string> = {
   Candidate: '候选',
   Caution: '需确认',
   NotRecommended: '不建议',
+  Suggested: '待确认',
+  Confirmed: '已确认',
+  Rejected: '已驳回',
+  Strong: '强匹配',
+  Weak: '弱匹配',
+  Manual: '人工匹配',
   Missing: '缺失',
   Qualification: '资格材料',
   Technical: '技术文件',
@@ -289,6 +295,19 @@ export const reviewCorrectionSourceKindOptions: DisplayOption[] = Object.entries
   value,
 }))
 
+export const lifecycleLinkStatusOptions: DisplayOption[] = [
+  { label: '待确认', value: 'Suggested' },
+  { label: '已确认', value: 'Confirmed' },
+  { label: '已驳回', value: 'Rejected' },
+]
+
+export const lifecycleLinkMatchTypeOptions: DisplayOption[] = [
+  { label: '强匹配', value: 'Strong' },
+  { label: '建议匹配', value: 'Suggested' },
+  { label: '弱匹配', value: 'Weak' },
+  { label: '人工匹配', value: 'Manual' },
+]
+
 export const pursuitTaskTypeOptions: DisplayOption[] = [
   { label: '资格材料', value: 'Qualification' },
   { label: '技术文件', value: 'Technical' },
@@ -386,6 +405,15 @@ export function formatPursuitFollowType(value?: string | null) {
 
 export function formatNoticeType(value?: string | null) {
   return formatByMap(value, noticeTypeLabels)
+}
+
+export function isResultNoticeType(noticeType?: string | null, title?: string | null) {
+  const type = String(noticeType || '')
+  if (type === 'AwardAnnouncement' || type === 'ResultAnnouncement') return true
+
+  const signal = `${title || ''} ${type}`
+  return /(?:中标|成交)(?:结果)?公告|(?:中标|成交)结果/.test(signal) &&
+    !/(?:候选人|候选供应商|候选成交|候选中标|候选公示)/.test(signal)
 }
 
 export function formatSourceType(value?: string | null) {

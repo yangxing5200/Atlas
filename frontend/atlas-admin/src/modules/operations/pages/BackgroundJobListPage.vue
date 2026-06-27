@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Close, Refresh, Search, View } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -59,6 +59,8 @@ const query = reactive<JobTableQuery>({
 if (bidOpsMode.value) {
   query.queue = 'bidops'
 }
+const statusDefaultSortApplied = ref(isSucceededStatus(query.status) && query.sortBy === 'CompletedAt' && query.sortDescending !== false)
+applySucceededStatusDefaultSort()
 const result = ref<BackgroundJobPagedResult>({
   total: 0,
   items: [],
@@ -243,6 +245,7 @@ async function reload() {
 
 async function search() {
   query.pageIndex = 1
+  applySucceededStatusDefaultSort()
   await reload()
   saveCachedQuery()
 }
@@ -263,11 +266,13 @@ async function reset() {
     pageIndex: 1,
     pageSize: 20,
   })
+  statusDefaultSortApplied.value = false
   await reload()
   saveCachedQuery()
 }
 
 async function handleSortChange({ prop, order }: { prop: string; order: SortOrder }) {
+  statusDefaultSortApplied.value = false
   if (prop === 'completedAt' && order) {
     query.sortBy = 'CompletedAt'
     query.sortDescending = order === 'descending'
@@ -350,6 +355,36 @@ function canForceCancel(row: BackgroundJobListItemDto) {
 function jobDetailPath(id: string | number) {
   return bidOpsMode.value ? `/bidops/operations/jobs/${id}` : `/ops/jobs/${id}`
 }
+
+function isSucceededStatus(value: BackgroundJobStatus | '') {
+  const normalized = String(value || '').trim()
+  return normalized === 'Succeeded' || normalized === '2'
+}
+
+function applySucceededStatusDefaultSort() {
+  if (!isSucceededStatus(query.status) || query.sortBy)
+    return
+
+  query.sortBy = 'CompletedAt'
+  query.sortDescending = true
+  statusDefaultSortApplied.value = true
+}
+
+watch(
+  () => query.status,
+  () => {
+    if (isSucceededStatus(query.status)) {
+      applySucceededStatusDefaultSort()
+      return
+    }
+
+    if (statusDefaultSortApplied.value && query.sortBy === 'CompletedAt' && query.sortDescending !== false) {
+      query.sortBy = ''
+      query.sortDescending = null
+    }
+    statusDefaultSortApplied.value = false
+  },
+)
 
 onMounted(async () => {
   await reload()

@@ -8,6 +8,7 @@ import {
   Document,
   Fold,
   HomeFilled,
+  Link,
   List,
   Menu as MenuIcon,
   Operation,
@@ -323,9 +324,9 @@ const menuTree: MenuItem[] = [
     children: [
       {
         index: '/bidops/outcomes',
-        title: '结果录入',
-        icon: Tickets,
-        permissionsAny: bidOpsAnyRead,
+        title: '闭环审核中心',
+        icon: Link,
+        permissionsAny: [BIDOPS_PERMISSIONS.REVIEW_READ],
       },
       {
         index: '/bidops/outcomes/reviews',
@@ -472,6 +473,7 @@ const activeMenu = computed(() => {
   if (route.path.startsWith('/bidops/crawl/raw-notices')) return '/bidops/crawl/raw-notices'
   if (route.path.startsWith('/bidops/processing/review-tasks')) return '/bidops/review/tasks'
   if (route.path.startsWith('/bidops/review/tasks')) return '/bidops/review/tasks'
+  if (route.path.startsWith('/bidops/notices')) return '/bidops/notices'
   if (route.path.startsWith('/bidops/packages')) return '/bidops/packages'
   if (route.path.startsWith('/bidops/matching/packages')) return '/bidops/matching/packages'
   if (route.path.startsWith('/bidops/matching/decisions')) return '/bidops/matching/decisions'

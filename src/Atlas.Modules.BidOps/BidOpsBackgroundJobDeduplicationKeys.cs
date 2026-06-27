@@ -51,6 +51,23 @@ internal static class BidOpsBackgroundJobDeduplicationKeys
             StringComparison.Ordinal);
     }
 
+    public static string LifecycleReverseClosure(
+        long tenantId,
+        long? rawNoticeId,
+        string? awardUrl,
+        bool persistLinks)
+    {
+        return $"bidops:lifecycle:reverse-closure:{tenantId}:raw:{rawNoticeId?.ToString() ?? "none"}:url:{NormalizePart(awardUrl, "none")}:persist:{persistLinks}";
+    }
+
+    public static string LifecycleFieldEnrichment(
+        long tenantId,
+        long linkId,
+        string? reviewerPrompt)
+    {
+        return $"bidops:lifecycle:field-enrichment:{tenantId}:link:{linkId}:prompt:{NormalizePart(reviewerPrompt, "auto")}";
+    }
+
     private static string FormatStamp(DateTime value)
     {
         return value == default

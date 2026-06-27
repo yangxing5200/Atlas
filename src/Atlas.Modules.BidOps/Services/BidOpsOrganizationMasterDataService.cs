@@ -112,8 +112,15 @@ public sealed class BidOpsOrganizationMasterDataService : IBidOpsOrganizationMas
         if (buyerNames.Length == 0)
             return (0, 0);
 
+        var buyerNameNormalized = buyerNames
+            .Select(BidOpsOrganizationNameNormalizer.NormalizeForMatch)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         var query = await _buyers.QueryTrackingAsync(tenantId, ct);
-        var existing = await query.ToListAsync(ct);
+        var existing = await query
+            .Where(x => buyerNameNormalized.Contains(x.NameNormalized))
+            .ToListAsync(ct);
         var map = existing
             .Where(x => !string.IsNullOrWhiteSpace(x.NameNormalized))
             .GroupBy(x => x.NameNormalized, StringComparer.OrdinalIgnoreCase)
@@ -182,13 +189,19 @@ public sealed class BidOpsOrganizationMasterDataService : IBidOpsOrganizationMas
         if (supplierNames.Length == 0)
             return (0, 0);
 
+        var supplierNameNormalized = supplierNames
+            .Select(BidOpsOrganizationNameNormalizer.NormalizeForMatch)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         var query = await _suppliers.QueryTrackingAsync(tenantId, ct);
-        var existing = await query.ToListAsync(ct);
+        var existing = await query
+            .Where(x => supplierNameNormalized.Contains(x.NameNormalized))
+            .ToListAsync(ct);
         var map = existing
-            .Select(x => new { Normalized = BidOpsOrganizationNameNormalizer.NormalizeForMatch(x.Name), Supplier = x })
-            .Where(x => !string.IsNullOrWhiteSpace(x.Normalized))
-            .GroupBy(x => x.Normalized, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(x => x.Key, x => x.First().Supplier, StringComparer.OrdinalIgnoreCase);
+            .Where(x => !string.IsNullOrWhiteSpace(x.NameNormalized))
+            .GroupBy(x => x.NameNormalized, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
 
         var created = 0;
         var updated = 0;
@@ -213,6 +226,7 @@ public sealed class BidOpsOrganizationMasterDataService : IBidOpsOrganizationMas
                     TenantId = tenantId,
                     SupplierNo = BidOpsBusinessNumberBuilder.Build("SUP", id, now),
                     Name = Truncate(name, 300),
+                    NameNormalized = Truncate(normalized, 191),
                     Region = Truncate(latest.Region, 128),
                     Status = BidOpsSupplierStatuses.Active,
                     Remark = "Auto-created from public BidOps outcome/candidate notice.",

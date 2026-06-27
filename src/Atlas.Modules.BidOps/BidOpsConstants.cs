@@ -57,6 +57,7 @@ public static class BidOpsDataResources
     public const string Supplier = "bidops.supplier";
     public const string SupplierEvidence = "bidops.supplier-evidence";
     public const string OutcomeSupplierRecord = "bidops.outcome-supplier-record";
+    public const string LifecyclePackageLink = "bidops.lifecycle-package-link";
     public const string Matching = "bidops.matching";
     public const string GoNoGoDecision = "bidops.go-no-go-decision";
     public const string Pursuit = "bidops.pursuit";
@@ -130,6 +131,8 @@ public static class BidOpsBackgroundJobTypes
     public const string SupplierMatchRun = "bidops.matching.supplier-match-run";
     public const string OutcomeSupplierExtract = "bidops.outcome.supplier-extract";
     public const string ReviewQualityBackfill = "bidops.review.quality-backfill";
+    public const string LifecycleReverseClosure = "bidops.lifecycle.reverse-closure";
+    public const string LifecycleFieldEnrichment = "bidops.lifecycle.field-enrichment";
 }
 
 public static class BidOpsBackgroundJobPriorities
@@ -157,9 +160,16 @@ public static class BidOpsSystemValues
     public const string CodexCliManualReparseReasoningEffortRuntimeSettingKey = "ai.codex-cli.manual-reparse.reasoning-effort";
     public const string CodexCliReviewerPromptModelRuntimeSettingKey = "ai.codex-cli.reviewer-prompt.model";
     public const string CodexCliReviewerPromptReasoningEffortRuntimeSettingKey = "ai.codex-cli.reviewer-prompt.reasoning-effort";
+    public const string DeepSeekApiKeyRuntimeSettingKey = "ai.deepseek.api-key";
+    public const string MimoApiKeyRuntimeSettingKey = "ai.mimo.api-key";
     public const string TaskPauseRuntimeSettingKey = "runtime.task-pause";
     public const string AiProviderDeepSeek = "DeepSeek";
+    public const string AiProviderMimo = "Mimo";
     public const string AiProviderCodexCli = "CodexCli";
+    public const string DefaultDeepSeekBaseUrl = "https://api.deepseek.com";
+    public const string DefaultDeepSeekModel = "deepseek-v4-pro";
+    public const string DefaultMimoBaseUrl = "https://token-plan-cn.xiaomimimo.com/v1";
+    public const string DefaultMimoModel = "mimo-v2.5-pro";
     public const string DefaultCodexCliModel = "gpt-5.5";
     public const string DefaultCodexCliReasoningEffort = "low";
     public const string DefaultCodexCliComplexReasoningEffort = "medium";

@@ -31,6 +31,25 @@ public sealed record StateGridEcpCrawlRequest(
     DateTime? RangeStartPublishTime = null,
     DateTime? RangeEndPublishTime = null);
 
+public sealed record StateGridEcpNoticeSearchRequest(
+    string ProjectCode,
+    int PageSize = 10,
+    IReadOnlyCollection<string>? MenuIds = null);
+
+public sealed record StateGridEcpPublicNoticeCandidate(
+    long SourceId,
+    long? ChannelId,
+    string NoticeType,
+    string Title,
+    string DetailUrl,
+    string Doctype,
+    string MenuId,
+    long NoticeId,
+    long? FirstPageDocId,
+    DateTime? PublishTime,
+    string PublishOrgName,
+    string ProjectCode);
+
 public interface IStateGridEcpCrawler
 {
     Task<StateGridEcpCrawlResult> CrawlAsync(
@@ -50,5 +69,9 @@ public interface IStateGridEcpCrawler
         string? noticeType,
         long? backgroundJobId,
         bool forceRefresh = false,
+        CancellationToken ct = default);
+
+    Task<IReadOnlyList<StateGridEcpPublicNoticeCandidate>> SearchPublicNoticesAsync(
+        StateGridEcpNoticeSearchRequest request,
         CancellationToken ct = default);
 }

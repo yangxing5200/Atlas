@@ -135,3 +135,22 @@ public sealed record ReviewQualityBackfillJobPayload(
     long? SourceId,
     bool PauseSourceAware)
     : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
+
+public sealed record LifecycleReverseClosureJobPayload(
+    long TenantId,
+    long? StoreId,
+    long UserId,
+    string UserName,
+    long? RawNoticeId,
+    string? AwardUrl,
+    bool PersistLifecycleLinks)
+    : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
+
+public sealed record LifecycleFieldEnrichmentJobPayload(
+    long TenantId,
+    long? StoreId,
+    long UserId,
+    string UserName,
+    long LinkId,
+    string? ReviewerPrompt = null)
+    : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);

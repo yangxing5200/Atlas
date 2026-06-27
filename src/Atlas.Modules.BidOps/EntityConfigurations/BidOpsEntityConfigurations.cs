@@ -570,6 +570,7 @@ public sealed class SupplierConfiguration : IEntityTypeConfiguration<Supplier>
         builder.ConfigureTenantEntity();
         builder.Property(x => x.SupplierNo).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
         builder.Property(x => x.Name).HasColumnType("varchar(300)").HasMaxLength(300).IsRequired();
+        builder.Property(x => x.NameNormalized).HasColumnType("varchar(191)").HasMaxLength(191).IsRequired();
         builder.Property(x => x.UnifiedSocialCreditCode).HasColumnType("varchar(64)").HasMaxLength(64);
         builder.Property(x => x.Region).HasColumnType("varchar(128)").HasMaxLength(128);
         builder.Property(x => x.Address).HasColumnType("varchar(500)").HasMaxLength(500);
@@ -583,6 +584,7 @@ public sealed class SupplierConfiguration : IEntityTypeConfiguration<Supplier>
         builder.Property(x => x.CreatedFromSourceUrl).HasColumnType("varchar(1500)").HasMaxLength(1500);
         builder.Property(x => x.LastOutcomeNoticeTitle).HasColumnType("varchar(500)").HasMaxLength(500);
         builder.HasIndex(x => new { x.TenantId, x.SupplierNo }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.NameNormalized });
         builder.HasIndex(x => new { x.TenantId, x.UnifiedSocialCreditCode });
         builder.HasIndex(x => new { x.TenantId, x.Status, x.CreatedAt });
         builder.HasIndex(x => new { x.TenantId, x.CreatedFromRawNoticeId });

@@ -41,6 +41,8 @@ public interface IBidOpsQueryService
 
     Task<PagedResult<NoticeDto>> SearchNoticesAsync(NoticeSearchQuery query, CancellationToken ct = default);
 
+    Task<NoticeDto?> GetNoticeAsync(long id, CancellationToken ct = default);
+
     Task<PagedResult<TenderPackageDto>> SearchPackagesAsync(PackageSearchQuery query, CancellationToken ct = default);
 
     Task<TenderPackageDto?> GetPackageAsync(long id, CancellationToken ct = default);

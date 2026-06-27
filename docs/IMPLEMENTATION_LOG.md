@@ -1,5 +1,164 @@
 # Implementation Log
 
+## 2026-06-27 BidOps Lifecycle Field-Level AI Enrichment
+
+Completed:
+
+- Added a field-level lifecycle AI enrichment service that outputs structured field suggestions with source stage, source RawNotice/attachment, evidence text, confidence, reason, conflicts, and manual-review flag.
+- Added the `bidops.lifecycle.field-enrichment` Worker job type and payload. The job collects award/candidate/procurement public evidence, invokes the current runtime AI provider or Codex CLI, writes the result to `LifecyclePackageLink.EvidenceJson.fieldEnrichment`, and only fills missing suggestion fields.
+- Added `POST /api/bidops/lifecycle/debug/links/{linkId}/field-enrichment/enqueue` for queuing automatic or reviewer-prompt enrichment.
+- Added lifecycle center UI actions for `AI补全` and `提示词` enrichment, plus a detail-section table showing the latest field suggestions, evidence, confidence, and conflicts.
+- Kept award/result evidence as the highest-priority source for amount and other fields. Procurement-side budget/max-price/guide-price values are treated as review-required suggestions, not confirmed award amounts.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsModule_RegistersServicesAndBackgroundHandlers|ReviewTasksController_DeclaresOutcomeAiReparseContract|LifecycleDebugController_DeclaresReverseClosureRoutes" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LifecycleFieldEnrichmentTests\"` succeeded: 3 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LifecycleFieldEnrichmentWebApi\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LifecycleFieldEnrichmentWorker\"` succeeded with 0 warnings and 0 errors.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+
+## 2026-06-27 BidOps Lifecycle Supplier Name Hardening
+
+Completed:
+
+- Fixed supplier-name cleanup so a valid company prefix such as `四川` is not interpreted as an ordinal/rank prefix and stripped to `川`.
+- Hardened lifecycle award evidence merging to treat one- or two-character prefix truncations as compatible only when the rest of the supplier name matches.
+- Updated lifecycle outcome-context matching to prefer exact row evidence text before supplier-name comparison, so lifecycle links can be corrected from existing `OutcomeSupplierRecord` evidence even when the stored link supplier name is truncated.
+- Updated lifecycle link read-time enrichment to backfill the displayed supplier name from the matched outcome record, not just lot/package fields.
+- Added regression coverage for the observed `四川利安易昂科技有限公司` paragraph evidence and for correcting a truncated lifecycle-link supplier from matching outcome evidence.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsAwardEvidenceParser_DoesNotStripChineseNumberProvincePrefix|BidOpsReverseLifecycleClosureService_EnrichesLifecycleLinkLotContextByEvidenceText|BidOpsAwardEvidenceParser_ExtractsParagraphPackageSupplier" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LifecycleSupplierHardeningTests\"` succeeded: 3 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReverseClosureTests" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LifecycleSupplierHardeningReverseClosureAll\"` succeeded: 42 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LifecycleSupplierHardeningWebApi\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LifecycleSupplierHardeningWorker\"` succeeded with 0 warnings and 0 errors.
+
+## 2026-06-27 BidOps Lifecycle Review Table Sorting And Lot Enrichment
+
+Completed:
+
+- Replaced the lifecycle closure center's standalone sort dropdown with table-header sorting on the commonly used review columns.
+- Added header sorting for project code, lot number, lot name, package number, supplier, award amount, match score, status, manual-review flag, and update time.
+- Investigated `RawNoticeId=328339628681728000` / review task `328547208658030783`. Local data showed `bidops_lifecycle_package_link` had 160 rows with empty stored lot number/name, while `bidops_outcome_supplier_record` had 251 rows with populated lot names and matching row evidence text, and `bidops_package_staging` had 191 rows with lot number/name context.
+- Updated lifecycle link DTO enrichment to match historical link `EvidenceJson.award.evidence.evidenceText` against outcome supplier `EvidenceText` before falling back to supplier/package matching.
+- Added read-time display-context sorting for `rawNoticeId` filtered lifecycle pages, so historical rows with empty stored lot fields can still sort by the enriched lot number/name shown in the table.
+- Added a regression test for same-supplier/same-package historical rows so the correct lot name is selected from evidence text.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReverseLifecycleClosureService_EnrichesLifecycleLinkLotContextByEvidenceText|BidOpsReverseLifecycleClosureService_BuildsOutcomeAwardEvidenceWithReviewPackageLotContext" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LifecycleEvidenceTextEnrichTests3\"` succeeded: 2 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors after rerunning separately. A prior parallel WebApi/Worker build hit a transient shared `obj` file lock.
+- `git diff --check` succeeded with the existing EF snapshot line-ending warning.
+- Restarted local WebApi and Worker. WebApi probe returned `HTTP 401` at `http://localhost:5260/api/auth/context`; frontend probe returned `HTTP 200` at `http://localhost:5173`; Worker restarted as process `18204`.
+
+## 2026-06-27 BidOps Lifecycle Procurement Notice Search
+
+Completed:
+
+- Added State Grid ECP public notice search by project/procurement code through the existing WCM `index/noteList` API with `key=<projectCode>`.
+- Search covers the verified SGCC 招标公告及投标邀请书 menu `2018032700291334` and 采购公告 menu `2018032900295987`, then filters lifecycle procurement candidates to `doci-bid` notices.
+- Added lifecycle debug APIs to search procurement candidates for a lifecycle link and import/link a selected candidate.
+- Linked an already-collected procurement RawNotice directly to `ProcurementRawNoticeId`; otherwise the selected candidate queues the existing Worker-backed manual URL import job.
+- Added frontend types/API wrappers and UI actions in `闭环任务与审核中心`: missing procurement notices can be searched from the table or detail drawer, candidates show project code, notice type, publish org/time, local RawNotice status, and support open/import/link actions.
+
+Verification:
+
+- Direct SGCC API probe confirmed project `282602` returns the base procurement/tender notice under menu `2018032700291334` with title `国网青海省电力公司2026年第二次（282602）物资公开招标采购`; the screenshot menu `2018032900295987` returned no match for that project.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "LifecycleDebugController_DeclaresReverseClosureRoutes|BidOpsModule_RegistersServicesAndBackgroundHandlers|StateGridEcpWcmParser_ParsesNoticeListAndDetail" --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded: 3 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- Initial normal WebApi/Worker builds hit Windows DLL locks from running local `Atlas.WebApi` and `Atlas.Worker` processes. After stopping those processes, `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded with 0 warnings and 0 errors.
+- After stopping the running Worker, `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded with 0 warnings and 0 errors.
+- Restarted local WebApi and Worker from their built DLLs with `BidOpsLocal` environment. `GET http://localhost:5260/api/auth/context` returned `401 Unauthorized` as expected for an unauthenticated probe, and `http://localhost:5173/` returned `200`.
+
+## 2026-06-25 BidOps Mimo AI Provider
+
+Completed:
+
+- Added `Mimo` as a BidOps AI provider value alongside DeepSeek and Codex CLI.
+- Extended the OpenAI-compatible HTTP settings factory to resolve Mimo endpoint, model, and credential configuration from `BidOps:Mimo:*` or `MIMO_API_KEY`.
+- Protected Mimo runtime switching from accidentally inheriting existing DeepSeek-compatible generic `BidOps:Ai:BaseUrl`, `BidOps:Ai:Model`, or `BidOps:Ai:ApiKey` values unless the configured provider is also Mimo.
+- Exposed Mimo in the operations dashboard AI provider options through the existing backend settings DTO, so the frontend switch can select it without a separate hardcoded UI option.
+- Added non-secret local Mimo base URL/model defaults to WebApi and Worker BidOps local appsettings. The provided token was not written to source-controlled files.
+- Added provider/endpoint scoped HTTP pacing for OpenAI-compatible AI calls. Mimo defaults to a 15-second minimum request interval and a 180-second backoff after `HTTP 429`.
+- Documented the Mimo provider, credential location, and Token Plan usage assumption in BidOps operations/decision docs.
+
+Verification:
+
+- `Get-Content src\Atlas.WebApi\appsettings.BidOpsLocal.json -Raw | ConvertFrom-Json | Out-Null` succeeded.
+- `Get-Content src\Atlas.Worker\appsettings.BidOpsLocal.json -Raw | ConvertFrom-Json | Out-Null` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierAiExtractionService_UsesMimoProviderSettings|BidOpsOutcomeSupplierAiExtractionService_ExtractsDeepSeekJsonRecords" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsMimoProviderTests\"` succeeded: 2 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsMimoBuild\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\WebApiMimoBuild\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\WorkerMimoBuild\"` succeeded with 0 warnings and 0 errors.
+- `git diff --check` succeeded.
+- A direct Xiaomi Mimo Token Plan smoke request to `/v1/chat/completions` returned `HTTP 200` for model `mimo-v2.5-pro`.
+- Authenticated WebApi smoke as `bidops_admin` confirmed `GET /api/bidops/operations/ai-settings` reports `EffectiveProvider=Mimo`, `EffectiveModel=mimo-v2.5-pro`, and the Mimo option is available.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierAiExtractionService_UsesMimoProviderSettings|BidOpsOutcomeSupplierAiExtractionService_ExtractsDeepSeekJsonRecords" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsMimoRateLimitTests\"` succeeded: 2 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsMimoRateLimitBuild\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\WebApiMimoRateLimitBuild\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\WorkerMimoRateLimitBuild2\"` succeeded with 0 warnings and 0 errors. A prior parallel build attempt hit a transient Windows `obj` file lock.
+
+Local restart note:
+
+- Stopped the stale local WebApi/Worker process tree, rebuilt WebApi and Worker sequentially into their normal `bin\Debug\net8.0` outputs, and started both executables directly to avoid `dotnet run` rebuild locks.
+- Started WebApi and Worker with the Mimo credential only in process environment variables. The token was not written to appsettings or docs.
+- Temporarily paused BidOps jobs after earlier Mimo `429 Too many requests` responses, then resumed after the Mimo direct smoke succeeded and Worker-side pacing was enabled.
+- Worker completed live Mimo extraction after resume: structured parsing returned `statusCode=200` with package counts, and outcome supplier extraction returned `statusCode=200` with record counts. No new `429` appeared during the observation window.
+- Final authenticated dashboard smoke showed `EffectiveProvider=Mimo`, `MimoAvailable=true`, `TaskPaused=false`, `PendingJobs=267`, `RunningJobs=6`, `FailedJobs=0`, and `DeadJobs=8`.
+
+## 2026-06-25 BidOps Lifecycle Closure UI
+
+Completed:
+
+- Added paged lifecycle-link search through `GET /api/bidops/lifecycle/debug/links`, with filters for keyword, procurement number, lot, package number, supplier, link status, match type, manual-review flag, raw notice id, and sort order.
+- Exposed `UpdatedAt` on `LifecyclePackageLinkDto` for operator sorting and list display.
+- Added the `/bidops/outcomes` lifecycle closure page, replacing the previous result-entry placeholder.
+- Added UI actions to enqueue award-driven reverse closure from a public award URL or RawNoticeId, generate persisted suggestions for an already collected RawNotice, inspect evidence JSON, and confirm or reject suggested lifecycle links.
+- Added a front-end API wrapper and TypeScript DTO/request types for lifecycle closure operations.
+- Updated the BidOps results-center menu entry to `生命周期闭环`.
+- Moved the primary `分析闭环` action to the formal notice list and new notice detail page. The action is shown only for result-like notices and passes the linked `RawNoticeId` to the Worker-backed lifecycle reverse-closure job.
+- Added `GET /api/bidops/notices/{id}` and the `/bidops/notices/:id` detail page so operators can launch lifecycle analysis from a specific result notice without re-entering the public URL.
+- Reframed `/bidops/outcomes` as `闭环任务与审核中心`, removing the free-form URL/RawNotice trigger panel and keeping it for progress inspection, lifecycle package suggestions, evidence JSON, missing/failure reasons, and manual confirm/reject.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsLifecycleUi2\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\WebApiLifecycleUi\"` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "LifecycleDebugController_DeclaresReverseClosureRoutes" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LifecycleUiTests\"` succeeded: 1 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsLifecycleEntry\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\WebApiLifecycleEntry\"` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsNoticeListContracts_ExposeNoticeTypeFiltersAndUpdatedAt|LifecycleDebugController_DeclaresReverseClosureRoutes" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LifecycleEntryTests3\"` succeeded: 2 passed. A prior attempt hit a transient Windows file lock while WebApi was running; rerun after stopping WebApi succeeded.
+- `npm run typecheck` succeeded in `frontend/atlas-admin` after moving the lifecycle entry.
+
+## 2026-06-24 BidOps Award-Driven Reverse Lifecycle Closure
+
+Completed:
+
+- Extended lifecycle reverse closure output with structured amount semantics, including amount kind, source stage, base amount, rate type/value, formula, confidence, evidence, and manual-review flag.
+- Added conservative rate parsing for discount rate, reduction rate, coefficient, and ambiguous bare percentages.
+- Added package guide-price extraction to procurement/tender evidence parsing.
+- Added `BidOpsPricingInferenceService` so direct award amount, candidate final quote, and rate-based inferred amount selection are tested independently from orchestration.
+- Added `BidOpsNoticeCorrelationService` to score candidate/procurement notices by project code, project name, lot/package hints, supplier evidence, notice type, and publish-time sequence, returning score, confidence level, reasons, and missing reasons.
+- Extended `BidOpsReverseLifecycleClosureService` to emit structured failure reasons, use targeted raw-notice metadata lookup, persist suggested lifecycle links idempotently, and preserve confirmed manual links.
+- Added Worker-backed lifecycle reverse-closure job support plus lifecycle debug API endpoints for enqueue, persist, confirm, and reject.
+- Registered the lifecycle link data resource, pricing service, and reverse-closure job handler in the BidOps module.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReverseClosureTests|BidOpsModule_RegistersServicesAndBackgroundHandlers|BidOpsModule_RegistersAuthorizationCatalogEntries" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsReverseClosurePlanTests\"` succeeded: 39 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsModuleTests|BidOpsReverseClosureTests" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsReverseClosureWideTests\"` succeeded: 166 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsReverseClosureBuild\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsReverseClosureWebApiBuild\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsReverseClosureWorkerBuild\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsReverseClosureLocalSetupBuild\"` succeeded with 0 warnings and 0 errors.
+- `dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-restore -- inspect-bidops-sgcc-notices --url "https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-win/2606128522123684_2018060501171111" --url "https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-bid/2606028335014767_2018032900295987" --package-take 5` succeeded. The `doci-win` sample returned project code `0711-26OTL04213025`; the `doci-bid` sample downloaded one ZIP attachment and extracted 28 package rows, all with amount references, plus 49 requirement rows.
+- `rg "AtlasTenantDbContext|ITenantDbContextFactory|DbContext|\.Set<|FromSql|ExecuteSql|IgnoreQueryFilters" src\Atlas.Modules.BidOps` returned no matches.
+- `git diff --check` succeeded.
+
 ## 2026-06-24 BidOps Local AI Worker Concurrency Observation
 
 Completed:
@@ -2381,3 +2540,134 @@ Verification:
 - `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
 - `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
 - `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+
+## 2026-06-25 BidOps Bulk Approval Timeout Mitigation
+
+Completed:
+
+- Investigated a bulk review timeout and confirmed the primary bottleneck was the WebApi approval path synchronously calling outcome supplier extraction, which can invoke the currently selected AI provider such as Mimo.
+- Changed review approval so it commits the approved notice first, then enqueues a `bidops.outcome.supplier-extract` background job only when a result/candidate notice has no outcome supplier records yet.
+- Added `ApprovalOutcomeExtract` review correction samples so the review detail background-job view can still show the post-approval extraction job without mixing it into reviewer-prompt reparse metrics.
+- Added `Supplier.NameNormalized`, a non-unique `(TenantId, NameNormalized)` index, and a tenant migration to backfill existing supplier rows.
+- Updated supplier creation/update and approved-notice organization sync to maintain and query `NameNormalized`, avoiding full tenant supplier materialization during bulk approval.
+- Updated the local `atlas_bidops_runtime.bidops_supplier` table with the additive column, backfill, and index because this local database lacks EF migration history even though BidOps tables already exist.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsModule_RegistersServicesAndBackgroundHandlers|OutcomeSupplierExtractJobHandler_ReturnsJsonResultSummary|StructuredParseJobHandler_ReturnsJsonResultSummary" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsBulkApproveOptimizedTests\"` succeeded: 3 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsBulkApproveOptimizedRetry\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\WebApiBulkApproveOptimized\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\TenantMigrationsSupplierNormFinal\"` succeeded with 0 warnings and 0 errors.
+- Local MySQL verification showed `bidops_supplier` has `NameNormalized`, index `IX_bidops_supplier_TenantId_NameNormalized`, and 24,551 of 24,562 rows backfilled with a non-empty normalized name.
+- `EXPLAIN SELECT * FROM bidops_supplier WHERE TenantId=300001 AND NameNormalized IN (...)` uses `IX_bidops_supplier_TenantId_NameNormalized` with index condition.
+
+Local restart note:
+
+- Restarted WebApi and Worker from default `bin/Debug/net8.0` outputs after applying the local supplier-name index patch.
+- WebApi probe returned `HTTP 401` at `http://localhost:5260/api/auth/context`, confirming the API is alive and auth is enforced.
+- Worker started under `DOTNET_ENVIRONMENT=BidOpsLocal`; logs show active Mimo structured AI requests after restart, and runtime setting `ai.provider` remains `Mimo`.
+
+## 2026-06-26 BidOps Runtime Mimo Token UI
+
+Completed:
+
+- Added operations API endpoints for saving and testing the tenant runtime Mimo token.
+- Added runtime Mimo token metadata to the AI settings DTO without returning the raw token.
+- Updated Mimo HTTP settings resolution so Worker prefers the saved runtime token before configuration or environment variables.
+- Updated structured notice extraction and outcome supplier extraction to read the latest runtime Mimo token before each HTTP AI call.
+- Added a Mimo token panel to the BidOps operations dashboard, visible when the effective AI provider is `Mimo`, with save and test actions.
+- The Mimo token test action verifies token/model/endpoint connectivity without requiring WebApi AI extraction to be enabled; Worker execution still follows Worker-side AI settings.
+- Registered BidOps crypto support for Worker hosts when `Security:Crypto:Key` is configured, and added local Worker development crypto configuration.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsMimoTokenModule\"` succeeded with 0 warnings and 0 errors.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierAiExtractionService_UsesMimoProviderSettings|OperationsControllers_DeclareP0Routes|BidOpsModule_RegistersServicesAndBackgroundHandlers" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsMimoTokenTests\"` succeeded: 3 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- An initial WebApi build attempt failed because old local WebApi/Worker processes locked `obj` outputs; stopping those processes and rebuilding resolved it.
+- Restarted local WebApi and Worker. WebApi probe returned `HTTP 401` at `http://localhost:5260/api/auth/context`; Worker process started from `src/Atlas.Worker/bin/Debug/net8.0`; frontend probe returned `HTTP 200` at `http://localhost:5173`.
+
+## 2026-06-26 BidOps Runtime DeepSeek Token UI
+
+Completed:
+
+- Added operations API endpoints for saving and testing the tenant runtime DeepSeek token.
+- Added DeepSeek runtime token metadata to the AI settings DTO without returning the raw token.
+- Updated DeepSeek HTTP settings resolution so Worker prefers the saved runtime token before configuration or environment variables.
+- Updated structured notice extraction and outcome supplier extraction to read the latest provider-specific HTTP token before each DeepSeek or Mimo AI call.
+- Added a DeepSeek token panel to the BidOps operations dashboard, visible when the effective AI provider is `DeepSeek`, with save and test actions.
+- Kept token test behavior provider-neutral: it verifies token/model/endpoint connectivity without requiring WebApi AI extraction to be enabled; Worker execution still follows Worker-side AI settings.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsDeepSeekTokenModule\"` succeeded with 0 warnings and 0 errors.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierAiExtractionService_ExtractsDeepSeekJsonRecords|BidOpsOutcomeSupplierAiExtractionService_UsesMimoProviderSettings|OperationsControllers_DeclareP0Routes|BidOpsModule_RegistersServicesAndBackgroundHandlers" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsDeepSeekTokenTests\"` succeeded: 4 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- Restarted local WebApi and Worker. WebApi probe returned `HTTP 401` at `http://localhost:5260/api/auth/context`; frontend probe returned `HTTP 200` at `http://localhost:5173`.
+
+## 2026-06-27 BidOps Lifecycle Retry Dead Jobs
+
+Completed:
+
+- Investigated retried jobs that immediately returned to `Dead`. Worker error logs showed `bidops.lifecycle.reverse-closure` failing with MySQL duplicate-key errors on `IX_bidops_lifecycle_link_Tenant_SourceHash`.
+- Confirmed retry scheduling was not the root cause: the same lifecycle reverse-closure job regenerated duplicate link suggestions inside one persistence batch, then attempted to insert two rows with the same tenant-scoped `SourceHash`.
+- Added lifecycle-link draft deduplication before persistence. Duplicate suggestions with the same persistence hash are collapsed to one candidate, preferring lower manual-review risk, higher confidence, and richer amount/candidate/tender evidence.
+- Added a warning log when duplicate suggestions are collapsed so future retries can be diagnosed from Worker logs without dumping sensitive payloads.
+- Added a regression test covering same-hash collapse while preserving distinct supplier/package outcomes.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReverseLifecycleClosureService_DeduplicatesLifecycleLinkDraftsByPersistenceHash|BidOpsReverseLifecycleClosureService_DoesNotCrossLinkSamePackageAcrossLots|LifecyclePackageLinkConfiguration_UsesTenantScopedMatchIndex" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LifecycleRetryDeadFixTests\"` succeeded: 3 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- Restarted local WebApi and Worker. WebApi probe returned `HTTP 401` at `http://localhost:5260/api/auth/context`; frontend probe returned `HTTP 200` at `http://localhost:5173`; Worker restarted as process `31828`.
+
+## 2026-06-27 BidOps Lifecycle Closure Lot Name Display
+
+Completed:
+
+- Split the lifecycle closure center table from a combined `分标 / 包件` column into separate `分标编号`, `分标名称`, and `包件` columns so lot names are visible without relying on overflow tooltip text.
+- Split the lifecycle link detail drawer into separate lot-number and lot-name fields.
+- Added a lightweight display fallback from lifecycle evidence JSON (`lotName`, `award.lotName`, `matchedCandidate.lotName`, `tender.lotName`) when the persisted link row itself does not have `LotName`.
+- Investigated `rawNoticeId=328339628681728000` versus review task `328547208658030783`. The review task had lot names in `bidops_outcome_supplier_record` and lot numbers/names in `bidops_package_staging`, while existing `bidops_lifecycle_package_link` rows had empty `LotNo/LotName`.
+- Updated lifecycle reverse-closure generation to enrich award evidence from existing outcome supplier rows plus review package rows before building lifecycle links.
+- Updated lifecycle link list/detail responses to display-enrich missing lot/package fields from the same outcome/package context, so historical link rows become readable without mutating stored audit data.
+- Extended lifecycle link DTOs with procurement/candidate/award RawNotice references, original public attachments, and an explicit procurement-missing reason.
+- Updated the lifecycle closure center list with a `采购公告` column and renamed the supplier column to `中标商家`.
+- Updated the lifecycle detail drawer into a review workbench surface: it now shows procurement notice evidence, procurement attachments, award/result notice attachments, optional candidate-publicity attachments, winning supplier, lot name, package identity, and final award amount.
+- Local investigation of project code `282602` found only the award-result RawNotice in `atlas_bidops_runtime`; no corresponding procurement-announcement RawNotice was present locally. The closure center now surfaces that as a missing procurement notice rather than a blank field.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReverseLifecycleClosureService_BuildsOutcomeAwardEvidenceWithReviewPackageLotContext|BidOpsReverseLifecycleClosureService_DeduplicatesLifecycleLinkDraftsByPersistenceHash|BidOpsModule_RegistersServicesAndBackgroundHandlers" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LifecycleLotNameContextTests3\"` succeeded: 3 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- Restarted local WebApi and Worker. WebApi probe returned `HTTP 401` at `http://localhost:5260/api/auth/context`; frontend probe returned `HTTP 200` at `http://localhost:5173`; Worker restarted as process `3600`.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReverseLifecycleClosureService_BuildsOutcomeAwardEvidenceWithReviewPackageLotContext|BidOpsReverseLifecycleClosureService_DeduplicatesLifecycleLinkDraftsByPersistenceHash|LifecycleDebugController_DeclaresReverseClosureRoutes|BidOpsModule_RegistersServicesAndBackgroundHandlers" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LifecycleEvidenceCenterTests\"` succeeded: 4 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin` after adding procurement/award attachment evidence to the lifecycle center.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors after the lifecycle evidence DTO changes.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors after the lifecycle evidence DTO changes.
+- Restarted local WebApi and Worker. WebApi probe returned `HTTP 401` at `http://localhost:5260/api/auth/context`; frontend probe returned `HTTP 200` at `http://localhost:5173`; Worker restarted as process `27636`.
+
+## 2026-06-27 BidOps Review Sorting Defaults
+
+Completed:
+
+- Updated the background-job list so choosing status `成功/Succeeded` applies `CompletedAt` descending when no explicit sort is already selected.
+- Kept completed-time table-header sorting manual and sticky, so operator-selected sort is not overwritten by the success-status convenience default.
+- Extended the lifecycle closure center sort dropdown with lot number/name, package number, supplier, project code, amount, match score, review flag, status, confirmation time, update time, and creation time options.
+- Extended lifecycle link backend sorting to accept the new `SortBy` values used by the closure center.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "LifecycleDebugController_DeclaresReverseClosureRoutes|BidOpsModule_RegistersServicesAndBackgroundHandlers" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\ReviewSortingTests\"` succeeded: 2 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- `git diff --check` succeeded with the existing EF snapshot line-ending warning.
+- Restarted local WebApi and Worker. WebApi probe returned `HTTP 401` at `http://localhost:5260/api/auth/context`; frontend probe returned `HTTP 200` at `http://localhost:5173`; Worker restarted as process `34260`.

@@ -1,5 +1,62 @@
 # Decisions
 
+## 2026-06-27 BidOps Lifecycle Field-Level AI Enrichment
+
+- Lifecycle closure now treats missing lot/package/amount context as field-level enrichment rather than one-off parser special cases. The same mechanism can apply to `LotNo`, `LotName`, `PackageNo`, `PackageName`, `SupplierName`, `FinalAwardAmount`, `ProjectCode`, and similar review fields.
+- Field source priority is explicit: award/result notice evidence wins first, candidate notice can fill gaps second, and procurement/tender notice evidence can fill remaining gaps. Tender-side budget/max-price/guide-price values are not treated as confirmed award amounts; they are suggestions requiring manual review.
+- The first implementation does not add a table or migration. AI enrichment writes a `fieldEnrichment` proposal into `LifecyclePackageLink.EvidenceJson` and may fill currently empty suggestion fields on the lifecycle link. It does not confirm the link or write formal business records.
+- Automatic AI enrichment and reviewer-prompt enrichment use the same job pipeline. A blank prompt runs the normal enrichment path; a reviewer prompt uses the existing reviewer-prompt Codex scenario and the current runtime HTTP provider token settings when the provider is DeepSeek or Mimo.
+- The UI exposes this as a single-record action in the lifecycle closure center. Operators can run automatic enrichment first, inspect field-level evidence/conflicts, then rerun with a manual prompt when the automatic pass cannot identify a field.
+
+## 2026-06-27 BidOps Lifecycle Supplier Name Hardening
+
+- Supplier-name cleanup must not treat a bare leading Chinese numeral as a rank marker. Names such as `四川...` are valid organization names and must not be shortened to `川...`; rank cleanup now requires an explicit rank suffix or list punctuation.
+- Lifecycle reverse closure treats existing `OutcomeSupplierRecord` rows as higher-confidence award evidence when their row evidence text matches the lifecycle evidence text. This lets previously reviewed/extracted outcome rows correct parser fallbacks without mutating Raw or Staging source data.
+- Read-time lifecycle link enrichment may correct the displayed supplier name from matching outcome evidence, in addition to lot/package context. Historical link rows remain auditable in storage, while the operator UI shows the more reliable outcome-context value.
+- Prefix-truncated supplier names are considered compatible only when the shorter name is almost the full longer name with one or two leading characters missing. This is intentionally conservative so unrelated regional or parent/subsidiary names are not merged by broad substring matching.
+
+## 2026-06-27 BidOps Lifecycle Review Table Sorting And Lot Enrichment
+
+- The lifecycle closure center uses table-header custom sorting instead of a standalone sort dropdown. This matches the background-job table interaction pattern and keeps sorting close to the visible column being ordered.
+- Lifecycle link rows may predate the richer outcome/package context and have empty stored `LotNo`, `LotName`, or `PackageName`. The review API enriches DTOs from existing outcome supplier records and review package staging rows at read time instead of mutating historical lifecycle-link audit rows.
+- For historical rows where the same supplier and package number appear in multiple lots, enrichment first matches `EvidenceJson.award.evidence.evidenceText` to `OutcomeSupplierRecord.EvidenceText`. This mirrors the review-detail display source and avoids cross-linking reused package numbers.
+- When a lifecycle page is filtered by `RawNoticeId`, lot-number/name sorting may use the same read-time enriched display context before pagination for small result sets. This keeps the table order aligned with the lot values operators actually see while avoiding broad cross-notice in-memory sorting.
+
+## 2026-06-27 BidOps Lifecycle Procurement Notice Search
+
+- Lifecycle closure keeps result/award notices as the main entry point, but missing procurement notices can now be searched from the closure center by project/procurement code.
+- The SGCC public search uses the existing WCM `index/noteList` endpoint and the portal's `key` parameter. It searches both verified procurement-related public menus: `2018032700291334` for 招标公告及投标邀请书 and `2018032900295987` for 采购公告. This covers cases where the visible portal page supports project-number search but the actual base procurement announcement is under the tender-announcement menu.
+- Search is a lightweight WebApi read operation over public list metadata only. Downloading detail content, attachments, and parsing still goes through the existing Worker-backed manual URL import job.
+- Lifecycle import accepts only SGCC public `doci-bid` detail URLs for procurement/tender candidates. Existing local RawNotice rows are linked directly to the lifecycle record; otherwise an import job is queued and the closure page can infer the procurement notice after Worker ingestion.
+
+## 2026-06-27 BidOps Review Sorting Defaults
+
+- When operators filter the background-job list to `Succeeded` without choosing an explicit sort, the frontend defaults to `CompletedAt` descending so successful jobs show the latest completed work first.
+- The default is applied only as a UI convenience and only while no manual sort is set. Existing backend background-job sorting remains the `SortBy=CompletedAt&SortDescending=true` contract.
+- The lifecycle closure center continues to use a single `SortBy` query value. It now supports common review ordering fields including lot number/name, package number, supplier, project code, amount, match score, review-required flag, status, confirmation time, update time, and creation time without adding a new schema or API shape.
+
+## 2026-06-25 BidOps Mimo AI Provider
+
+- Mimo is integrated as another OpenAI-compatible HTTP AI provider behind the existing runtime `ai.provider` switch. Operators can select `Mimo` from the BidOps operations dashboard, and Worker resolves the provider when a job starts.
+- Mimo credentials are runtime configuration, not source-controlled settings. The provider supports `BidOps:Mimo:ApiKey` or `MIMO_API_KEY`; local appsettings only carry the non-secret base URL and default model.
+- Mimo resolves `BidOps:Mimo:*` before generic `BidOps:Ai:*`, and generic base URL/model/API key values are only applied to Mimo when the configured provider is also Mimo. This prevents existing DeepSeek-compatible defaults from leaking into Mimo requests after a runtime provider switch.
+- Mimo calls are paced by provider and endpoint host in the Worker process. The local default is one Mimo request start every 15 seconds and a 180-second backoff after `HTTP 429`, because the current Token Plan credential rate-limited under the earlier multi-job backlog.
+- If Mimo returns repeated `HTTP 429`, operators should pause BidOps background tasks through the operations dashboard instead of letting the queue spin through fast failures.
+- Xiaomi Token Plan usage must be validated against the active account terms before enabling BidOps background extraction with that credential. The code is configuration-only and does not commit or automatically enable the provided token.
+
+## 2026-06-24 BidOps Award-Driven Reverse Lifecycle Closure
+
+- Award/result notices are the primary entry for lifecycle closure. The first implementation extends the existing `BidOpsReverseLifecycleClosureService` instead of creating a parallel pipeline.
+- Phase 1 does not add a new table or migration. Closure suggestions are persisted into the existing `bidops_lifecycle_package_link` table, and detailed amount semantics are stored in `EvidenceJson` as a versionable proposal payload.
+- Amount semantics are now explicit in the closure JSON: direct award amount, candidate final quote, inferred discount/reduction/coefficient amount, and unknown are separated. `FinalAwardAmountSource` remains a compact compatibility field, while `PricingDecision` carries source stage, base amount, rate, formula, confidence, evidence, and manual-review requirements.
+- Rate-based inferred amounts are always marked for manual review. A bare percentage without discount/reduction/coefficient wording is treated as `Unknown` and is not multiplied by a base amount.
+- Package-level base amount inference is conservative. A package guide price is preferred; otherwise only one unambiguous package budget or max price may be used. Conflicting budget/max-price values without a guide price produce `BaseAmountMissing` instead of an inferred成交金额.
+- Lifecycle link persistence is idempotent by a tenant-scoped source hash built from award/candidate/tender raw notice evidence plus package and supplier identity. Confirmed links are not overwritten by subsequent automatic suggestions.
+- The first UI/API surface remains the existing lifecycle debug controller plus Worker-backed enqueue, persist, confirm, and reject endpoints. A larger review UI can build on the same lifecycle link rows later.
+- The operator UI is placed at `/bidops/outcomes` under the results center and backed by a paged search endpoint over `bidops_lifecycle_package_link`. The route replaces the previous result-entry placeholder without introducing a new table or lifecycle workflow boundary.
+- The primary lifecycle-analysis entry is the formal result notice context, not a free-form URL form. The notice list/detail pages show `分析闭环` only for result-like notices and enqueue analysis with the linked `RawNoticeId`; `/bidops/outcomes` remains an operations/review center for progress, suggestions, evidence, failure/missing reasons, and manual decisions.
+- Real SGCC sample inspection on 2026-06-24 confirmed the provided `doci-win` sample is publicly readable and exposes project code `0711-26OTL04213025`; the provided `doci-bid` sample downloaded a ZIP attachment and produced 28 package rows, 28 amount references, and 49 requirement rows through the existing inspector/extractor path.
+
 ## 2026-06-24 BidOps Local AI Worker Concurrency Observation
 
 - Local `BidOpsLocal` Worker AI concurrency was raised one step for observation: `BackgroundTasks:OneTimeJobs:MaxConcurrency=8`, `bidops.ai.structured-parse=3`, and `bidops.outcome.supplier-extract=3`.
@@ -619,8 +676,8 @@
 
 ## 2026-06-22 BidOps Runtime AI Provider Switch
 
-- BidOps stores the tenant-level runtime AI provider in `bidops_runtime_setting` under key `ai.provider`. Supported values are `DeepSeek` and `CodexCli`.
-- The operations dashboard exposes the switch so operators can move extraction between DeepSeek/OpenAI-compatible HTTP and Codex CLI without redeploying Worker/WebApi.
+- BidOps stores the tenant-level runtime AI provider in `bidops_runtime_setting` under key `ai.provider`. Supported values are `DeepSeek`, `Mimo`, and `CodexCli`.
+- The operations dashboard exposes the switch so operators can move extraction between DeepSeek/OpenAI-compatible HTTP, Xiaomi Mimo/OpenAI-compatible HTTP, and Codex CLI without redeploying Worker/WebApi.
 - The switch only controls provider selection. API keys, endpoints, Codex binary path/model/reasoning settings, and other secrets remain in configuration/environment variables and are not stored in tenant data.
 
 ## 2026-06-22 BidOps Outcome Package Identity
@@ -677,3 +734,33 @@
 - Force cancellation is an operator action for stuck running jobs. It immediately marks the job `Canceled`, clears the lock, stops retry scheduling, and keeps the task history instead of deleting the row.
 - Force cancellation is not a business rollback. Handler code must remain idempotent, and the Worker re-checks cancellation state before writing a successful result so a late external response cannot overwrite a forced cancellation.
 - BidOps job progress messages use provider-neutral `AI 正在...` wording because runtime provider can be DeepSeek or Codex CLI and can change between jobs.
+
+## 2026-06-25 BidOps Bulk Approval Timeout Mitigation
+
+- Review approval must not synchronously call external AI providers. If a result/candidate notice is approved before outcome supplier records exist, the WebApi approval path enqueues `bidops.outcome.supplier-extract` after the approval transaction instead of calling Mimo/DeepSeek/Codex directly.
+- The post-approval outcome extraction job is audit-linked to the review task through a dedicated `ApprovalOutcomeExtract` correction-sample source kind, so review detail can still show the background job without counting it as a reviewer-prompt reparse.
+- Supplier master-data matching needs the same normalized-name index pattern already used for buyers. `bidops_supplier.NameNormalized` is non-unique because historical supplier data may contain duplicates; the index is for lookup performance, not uniqueness enforcement.
+- Local `atlas_bidops_runtime` had no EF migration history despite existing BidOps tables, so the development database was updated with a targeted additive DDL patch for `bidops_supplier.NameNormalized`; the repository migration remains the canonical deployment path.
+
+## 2026-06-26 BidOps Runtime HTTP AI Tokens
+
+- BidOps operators can manage Mimo and DeepSeek API tokens from the operations UI. Values are stored in `bidops_runtime_setting` under `ai.mimo.api-key` and `ai.deepseek.api-key`, using the existing Atlas crypto service when `Security:Crypto:Key` is configured.
+- Mimo HTTP extraction resolves API keys in this order: runtime token, `BidOps:Mimo:ApiKey`, provider-matching `BidOps:Ai:ApiKey`, then `MIMO_API_KEY`. DeepSeek resolves runtime token, `BidOps:Ai:ApiKey`, `BidOps:DeepSeek:ApiKey`, then `DEEPSEEK_API_KEY`.
+- The operations API never returns raw tokens. It exposes only configured status, source, masked suffix, update metadata, and test status.
+- The token test endpoints validate token/model/endpoint connectivity even when WebApi `BidOps:Ai:Enabled` is false, because WebApi may not run AI extraction while Worker does. Worker extraction still respects the Worker host's own AI enablement settings.
+- Worker hosts need the same `Security:Crypto:Key` as WebApi to decrypt runtime tokens. The local Worker appsettings now includes the same development crypto key pattern already used by WebApi; production should override it through secure configuration.
+
+## 2026-06-27 BidOps Lifecycle Retry Idempotency
+
+- Retrying `bidops.lifecycle.reverse-closure` jobs should not mutate the original retry semantics just to hide deterministic business errors. If a retry repeatedly dies, the handler must make its persistence idempotent or surface a real validation failure.
+- Lifecycle link uniqueness remains tenant-scoped by `TenantId + SourceHash`. The reverse-closure handler now collapses duplicate suggestions with the same persistence hash before saving, preferring the suggestion with less manual review risk, higher confidence, and richer amount/candidate/tender evidence.
+- Duplicate closure suggestions are an extraction/persistence artifact, not separate business outcomes. Collapsing them before writing prevents a single job from inserting two `bidops_lifecycle_package_link` rows that would violate the existing unique index.
+
+## 2026-06-27 BidOps Lifecycle Lot Context Enrichment
+
+- Lifecycle closure should align with the review detail's visible package context when the same RawNotice already has parsed outcome rows or review package rows. Those rows are treated as previously extracted/reviewed public evidence, not as a separate business import.
+- New lifecycle reverse-closure runs enrich award evidence from `bidops_outcome_supplier_record` and the associated review `bidops_package_staging` rows before building package links. This fills lot number/name when the award-document parser only extracted package number and supplier.
+- Lifecycle link list/detail responses may display-enrich missing lot/package text from outcome/package context without mutating the stored link row. This keeps historical suggestions readable while preserving their original audit record.
+- The lifecycle closure center should function as a review workbench, not just a raw link list. Each row should expose the winning supplier, lot/package identity, final award amount, matched procurement notice evidence, and original public attachments when available.
+- If the corresponding procurement notice has not been collected into RawNotice, the UI should show an explicit missing-procurement reason instead of silently leaving the procurement notice blank. Operators can then import/crawl the procurement announcement and rerun or refresh closure review.
+- Attachment evidence is shown from the underlying RawNotice rows. Procurement attachments are primary for package-scope review; award/result attachments remain visible because they are the public source for supplier and amount evidence.

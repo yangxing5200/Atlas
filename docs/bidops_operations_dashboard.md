@@ -95,8 +95,8 @@ and turn the other channels off.
 ## AI Provider
 
 The operations dashboard shows the effective BidOps AI provider and exposes a
-runtime switch between DeepSeek and Codex CLI. When Codex CLI is selected, the
-same panel can update the Codex model and reasoning effort used by Worker
+runtime switch between DeepSeek, Mimo, and Codex CLI. When Codex CLI is selected,
+the same panel can update the Codex model and reasoning effort used by Worker
 extraction jobs.
 
 - `bidops_runtime_setting` stores the tenant-level runtime key `ai.provider`.
@@ -124,6 +124,9 @@ extraction jobs.
 - Runtime Codex CLI changes take effect on the next Worker extraction job without
   a Worker restart.
 - `DeepSeek` uses the configured OpenAI-compatible HTTP settings when selected.
+- `Mimo` uses `BidOps:Mimo:BaseUrl`, `BidOps:Mimo:Endpoint`, and
+  `BidOps:Mimo:Model`, with `MIMO_API_KEY` or `BidOps:Mimo:ApiKey` for the
+  credential. Do not store the token in tracked appsettings files.
 - Switching the provider does not move secrets into the database; API keys,
   endpoints, and Codex CLI paths remain in appsettings or environment variables.
 

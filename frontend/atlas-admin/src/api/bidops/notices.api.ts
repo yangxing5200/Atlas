@@ -7,4 +7,8 @@ export const noticesApi = {
   search(params: NoticeSearchQuery) {
     return http.get<PagedResult<NoticeDto>>(base, { params })
   },
+
+  get(id: string) {
+    return http.get<NoticeDto>(`${base}/${id}`)
+  },
 }

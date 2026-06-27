@@ -654,7 +654,8 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         var evidenceItems = await sampleQuery
             .Where(x =>
                 x.ReviewTaskId == id &&
-                x.SourceKind == BidOpsReviewCorrectionSourceKinds.ReparsePrompt &&
+                (x.SourceKind == BidOpsReviewCorrectionSourceKinds.ReparsePrompt ||
+                 x.SourceKind == BidOpsReviewCorrectionSourceKinds.ApprovalOutcomeExtract) &&
                 x.OriginalRowJson.Contains("backgroundJobId"))
             .OrderByDescending(x => x.CreatedAt)
             .Select(x => x.OriginalRowJson)
@@ -1576,6 +1577,13 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         return new PagedResult<NoticeDto>(total, items, pageIndex, pageSize);
     }
 
+    public async Task<NoticeDto?> GetNoticeAsync(long id, CancellationToken ct = default)
+    {
+        var builder = await _notices.QueryDataScopeAsync(BidOpsDataResources.Notice, AtlasDataScopeType.AllTenant, ct);
+        var notice = await builder.Where(x => x.Id == id).FirstOrDefaultAsync(ct);
+        return notice == null ? null : MapNotice(notice);
+    }
+
     public async Task<PagedResult<TenderPackageDto>> SearchPackagesAsync(PackageSearchQuery query, CancellationToken ct = default)
     {
         var (pageIndex, pageSize) = NormalizePaging(query);
@@ -1615,6 +1623,27 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             }, ct);
 
         return new PagedResult<TenderPackageDto>(total, items, pageIndex, pageSize);
+    }
+
+    private static NoticeDto MapNotice(Notice notice)
+    {
+        return new NoticeDto
+        {
+            Id = notice.Id,
+            RawNoticeId = notice.RawNoticeId,
+            Title = notice.Title,
+            NoticeType = notice.NoticeType,
+            ProjectName = notice.ProjectName,
+            ProjectCode = notice.ProjectCode,
+            BuyerName = notice.BuyerName,
+            Region = notice.Region,
+            BudgetAmount = notice.BudgetAmount,
+            PublishTime = notice.PublishTime,
+            BidDeadline = notice.BidDeadline,
+            Status = notice.Status,
+            CreatedAt = notice.CreatedAt,
+            UpdatedAt = notice.UpdatedAt
+        };
     }
 
     public async Task<TenderPackageDto?> GetPackageAsync(long id, CancellationToken ct = default)

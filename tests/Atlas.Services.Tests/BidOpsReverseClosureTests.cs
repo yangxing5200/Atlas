@@ -1,6 +1,10 @@
 using System.Reflection;
 using Atlas.Modules.BidOps.Ai.Evidence;
 using Atlas.Modules.BidOps.Controllers;
+using Atlas.Modules.BidOps.Entities.Crawling;
+using Atlas.Modules.BidOps.Entities.Outcomes;
+using Atlas.Modules.BidOps.Entities.Staging;
+using Atlas.Modules.BidOps.Models;
 using Atlas.Modules.BidOps.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -39,6 +43,26 @@ public sealed class BidOpsReverseClosureTests
     public void BidOpsMoneyNormalizer_DoesNotTreatRatesOrScoresAsMoney(string input)
     {
         Assert.Null(BidOpsMoneyNormalizer.TryNormalize(input));
+    }
+
+    [Theory]
+    [InlineData("折扣率90%", BidOpsRateTypes.DiscountRate, "0.9")]
+    [InlineData("下浮率10%", BidOpsRateTypes.ReductionRate, "0.1")]
+    [InlineData("报价系数0.92", BidOpsRateTypes.Coefficient, "0.92")]
+    [InlineData("9折", BidOpsRateTypes.DiscountRate, "0.9")]
+    [InlineData("比例90%", BidOpsRateTypes.Unknown, "0.9")]
+    public void BidOpsRateNormalizer_ParsesSupportedRateSemantics(
+        string input,
+        string expectedType,
+        string expectedRateText)
+    {
+        var expectedRate = decimal.Parse(expectedRateText);
+
+        var rate = BidOpsRateNormalizer.TryNormalize(input, Source("AwardNotice"));
+
+        Assert.NotNull(rate);
+        Assert.Equal(expectedType, rate.RateType);
+        Assert.Equal(expectedRate, rate.RateValue);
     }
 
     [Fact]
@@ -176,6 +200,21 @@ public sealed class BidOpsReverseClosureTests
     }
 
     [Fact]
+    public void BidOpsAwardEvidenceParser_DoesNotStripChineseNumberProvincePrefix()
+    {
+        Assert.Equal("四川利安易昂科技有限公司", BidOpsSupplierNameNormalizer.Clean("四川利安易昂科技有限公司"));
+
+        var records = BidOpsAwardEvidenceParser.Extract([Doc("""
+项目编号：282602
+073 金属检测仪器 包 2 四川利安易昂科技有限公司
+""")]);
+
+        var record = Assert.Single(records);
+        Assert.Equal("2", record.NormalizedPackageNo);
+        Assert.Equal("四川利安易昂科技有限公司", record.AwardedSupplierName);
+    }
+
+    [Fact]
     public void BidOpsCandidateEvidenceParser_ExtractsFullCandidateTableWithFillDown()
     {
         var records = BidOpsCandidateEvidenceParser.Extract([Doc("""
@@ -253,6 +292,21 @@ public sealed class BidOpsReverseClosureTests
     }
 
     [Fact]
+    public void BidOpsTenderPackageEvidenceParser_ExtractsGuidePrice()
+    {
+        var records = BidOpsTenderPackageEvidenceParser.Extract([Doc("""
+项目编号：P-007
+| 分标编号 | 包号 | 包名称 | 指导价 | 最高限价 |
+| --- | --- | --- | --- | --- |
+| LOT-C | 包1 | 运维服务 | 100万元 | 120万元 |
+""", "P-007采购公告", "ProcurementAnnouncement")]);
+
+        var record = Assert.Single(records);
+        Assert.Equal(1000000m, record.GuidePrice);
+        Assert.Equal(1200000m, record.MaxPrice);
+    }
+
+    [Fact]
     public void BidOpsReverseLifecycleClosureService_UsesCandidateFinalQuoteWhenAwardAmountMissing()
     {
         var award = Award("包1", "北京甲科技有限公司", amount: null);
@@ -263,7 +317,95 @@ public sealed class BidOpsReverseClosureTests
 
         Assert.Equal(860000m, closure.FinalAwardAmount);
         Assert.Equal("CandidateFinalQuote", closure.FinalAwardAmountSource);
+        Assert.Equal(BidOpsAmountKinds.CandidateFinalQuote, closure.PricingDecision?.AmountKind);
         Assert.Contains("Awarded supplier matched candidate rank 1", closure.MatchReasons);
+    }
+
+    [Fact]
+    public void BidOpsReverseLifecycleClosureService_UsesDirectAwardAmountBeforeCandidateQuote()
+    {
+        var award = Award("包1", "北京甲科技有限公司", amount: 800000m);
+        var candidate = Candidate("包1", "北京甲科技有限公司", rank: 1, amount: 860000m);
+
+        var closure = Assert.Single(BidOpsReverseLifecycleClosureService.LinkEvidenceForDebug([award], [candidate], []));
+
+        Assert.Equal(800000m, closure.FinalAwardAmount);
+        Assert.Equal(BidOpsAmountKinds.DirectAwardAmount, closure.FinalAwardAmountSource);
+        Assert.Equal(BidOpsAmountKinds.DirectAwardAmount, closure.PricingDecision?.AmountKind);
+    }
+
+    [Fact]
+    public void BidOpsReverseLifecycleClosureService_InfersAmountFromDiscountRateAndPackageGuidePrice()
+    {
+        var award = Award("包1", "北京甲科技有限公司", amount: null) with
+        {
+            AmountSource = BidOpsRateTypes.DiscountRate,
+            RateEvidence = new BidOpsRateEvidence(
+                BidOpsRateTypes.DiscountRate,
+                0.9m,
+                "折扣率90%",
+                Source("AwardNotice"),
+                0.9)
+        };
+        var tender = Tender("包1", budget: null) with
+        {
+            GuidePrice = 1000000m
+        };
+
+        var closure = Assert.Single(BidOpsReverseLifecycleClosureService.LinkEvidenceForDebug([award], [], [tender]));
+
+        Assert.Equal(900000m, closure.FinalAwardAmount);
+        Assert.Equal(BidOpsAmountKinds.InferredFromDiscountRate, closure.FinalAwardAmountSource);
+        Assert.Equal("1000000 * 0.9", closure.PricingDecision?.Formula);
+        Assert.True(closure.RequiresManualReview);
+    }
+
+    [Fact]
+    public void BidOpsPricingInferenceService_DoesNotInferWhenBaseAmountIsAmbiguous()
+    {
+        var award = Award("包1", "北京甲科技有限公司", amount: null) with
+        {
+            RateEvidence = new BidOpsRateEvidence(
+                BidOpsRateTypes.DiscountRate,
+                0.9m,
+                "折扣率90%",
+                Source("AwardNotice"),
+                0.9)
+        };
+        var tender = Tender("包1", budget: 1000000m) with
+        {
+            MaxPrice = 1200000m
+        };
+
+        var decision = BidOpsPricingInferenceService.Infer(award, null, [], tender);
+
+        Assert.Null(decision.AmountValue);
+        Assert.Equal(BidOpsAmountKinds.Unknown, decision.AmountKind);
+        Assert.Contains("BaseAmountMissing", decision.MissingReasons);
+    }
+
+    [Fact]
+    public void BidOpsPricingInferenceService_DoesNotInferUnknownPercentSemantics()
+    {
+        var award = Award("包1", "北京甲科技有限公司", amount: null) with
+        {
+            RateEvidence = new BidOpsRateEvidence(
+                BidOpsRateTypes.Unknown,
+                0.9m,
+                "比例90%",
+                Source("AwardNotice"),
+                0.6)
+        };
+        var tender = Tender("包1", budget: null) with
+        {
+            GuidePrice = 1000000m
+        };
+
+        var decision = BidOpsPricingInferenceService.Infer(award, null, [], tender);
+
+        Assert.Null(decision.AmountValue);
+        Assert.Equal(BidOpsAmountKinds.Unknown, decision.AmountKind);
+        Assert.Contains("RateSemanticsAmbiguous", decision.MissingReasons);
     }
 
     [Fact]
@@ -313,6 +455,158 @@ public sealed class BidOpsReverseClosureTests
     }
 
     [Fact]
+    public void BidOpsReverseLifecycleClosureService_DeduplicatesLifecycleLinkDraftsByPersistenceHash()
+    {
+        var closure = Assert.Single(BidOpsReverseLifecycleClosureService.LinkEvidenceForDebug(
+            [Award("包1", "北京甲科技有限公司", amount: null)],
+            [Candidate("包1", "北京甲科技有限公司", rank: 1, amount: 860000m)],
+            [Tender("包1", budget: 1000000m)]));
+        var weakerDuplicate = closure with
+        {
+            LinkConfidence = 0.5d,
+            RequiresManualReview = true,
+            FinalAwardAmount = null,
+            MissingFields = ["manual review required"]
+        };
+        var differentSupplier = Assert.Single(BidOpsReverseLifecycleClosureService.LinkEvidenceForDebug(
+            [Award("包1", "上海乙工程有限公司", amount: 900000m)],
+            [Candidate("包1", "上海乙工程有限公司", rank: 1, amount: 900000m)],
+            [Tender("包1", budget: 1000000m)]));
+
+        var drafts = BidOpsReverseLifecycleClosureService.DeduplicateLifecycleClosuresForDebug(
+            300001,
+            [weakerDuplicate, closure, differentSupplier]);
+
+        Assert.Equal(2, drafts.Count);
+        Assert.Contains(drafts, x => x.Award.AwardedSupplierName == "北京甲科技有限公司" && x.FinalAwardAmount == 860000m);
+        Assert.Contains(drafts, x => x.Award.AwardedSupplierName == "上海乙工程有限公司");
+    }
+
+    [Fact]
+    public void BidOpsReverseLifecycleClosureService_BuildsOutcomeAwardEvidenceWithReviewPackageLotContext()
+    {
+        var raw = new RawNotice
+        {
+            Id = 328339628681728000,
+            SourceNoticeId = "code:282602",
+            Title = "国网青海省电力公司2026年第二次（282602）物资招标采购项目中标人名单",
+            NoticeType = "AwardAnnouncement",
+            DetailUrl = "https://example.test/award",
+            FetchTime = new DateTime(2026, 6, 27)
+        };
+        var record = new OutcomeSupplierRecord
+        {
+            RawNoticeId = raw.Id,
+            ProjectCode = "282602",
+            LotName = "干式电磁CT",
+            PackageNo = "包 1",
+            SupplierName = "广东四会互感器厂有限公司",
+            ExtractionConfidence = 0.9m
+        };
+        var package = new PackageStaging
+        {
+            NoticeStagingId = 1,
+            LotNo = "005",
+            LotName = "干式电磁 CT",
+            PackageNo = "包 1",
+            PackageName = "国网青海省电力公司2026年第二次（282602）物资招标采购项目中标人名单"
+        };
+
+        var award = Assert.Single(BidOpsReverseLifecycleClosureService.BuildOutcomeAwardEvidenceForDebug(raw, [record], [package]));
+        var closure = Assert.Single(BidOpsReverseLifecycleClosureService.LinkEvidenceForDebug([award], [], []));
+
+        Assert.Equal("005", award.LotNo);
+        Assert.Equal("干式电磁CT", award.LotName);
+        Assert.Equal("1", award.NormalizedPackageNo);
+        Assert.Equal("005", closure.LotNo);
+        Assert.Equal("干式电磁CT", closure.LotName);
+    }
+
+    [Fact]
+    public void BidOpsReverseLifecycleClosureService_EnrichesLifecycleLinkLotContextByEvidenceText()
+    {
+        var link = new LifecyclePackageLinkDto
+        {
+            AwardRawNoticeId = 328339628681728000,
+            ProjectCode = "282602",
+            PackageNo = "包 1",
+            SupplierName = "电南瑞南京控制系统有限公司",
+            EvidenceJson = """
+            {
+              "award": {
+                "evidence": {
+                  "evidenceText": "003 移动变电站 包 1 国电南瑞南京控制系统有限公司"
+                }
+              }
+            }
+            """
+        };
+        var unrelatedSameSupplierAndPackage = new OutcomeSupplierRecord
+        {
+            Id = 1,
+            RawNoticeId = link.AwardRawNoticeId.Value,
+            LotName = "电能质量监测及在线监测",
+            PackageNo = "包 1",
+            SupplierName = "国电南瑞南京控制系统有限公司",
+            EvidenceText = "023 电能质量监测及在线监测 包 1 国电南瑞南京控制系统有限公司"
+        };
+        var expected = new OutcomeSupplierRecord
+        {
+            Id = 2,
+            RawNoticeId = link.AwardRawNoticeId.Value,
+            LotName = "移动变电站",
+            PackageNo = "包 1",
+            SupplierName = "国电南瑞南京控制系统有限公司",
+            EvidenceText = "003 移动变电站 包 1 国电南瑞南京控制系统有限公司"
+        };
+        var package = new PackageStaging
+        {
+            LotNo = "003",
+            LotName = "移动变电站",
+            PackageNo = "包 1",
+            PackageName = "国网青海省电力公司2026年第二次（282602）物资招标采购项目中标人名单"
+        };
+
+        BidOpsReverseLifecycleClosureService.EnrichLifecycleLinkFromOutcomeContextForDebug(
+            link,
+            [unrelatedSameSupplierAndPackage, expected],
+            [package]);
+
+        Assert.Equal("003", link.LotNo);
+        Assert.Equal("移动变电站", link.LotName);
+        Assert.Equal("包 1", link.PackageNo);
+        Assert.Equal("国电南瑞南京控制系统有限公司", link.SupplierName);
+    }
+
+    [Fact]
+    public void BidOpsNoticeCorrelationService_ScoresProjectPackageSupplierAndTimeEvidence()
+    {
+        var award = Award("包1", "北京甲科技有限公司", amount: null);
+        var raw = new RawNotice
+        {
+            Id = 10,
+            Title = "P-008 推荐中标候选人公示",
+            NoticeType = "CandidateAnnouncement",
+            DetailUrl = "https://example.test/candidate",
+            SourceNoticeId = "code:P-008",
+            PublishTime = new DateTime(2026, 6, 1),
+            TextPreview = "项目编号：P-008 分标编号：LOT-A 包1 北京甲科技有限公司 第一候选人"
+        };
+
+        var match = BidOpsNoticeCorrelationService.Match(
+            raw,
+            [Doc(raw.TextPreview, raw.Title, raw.NoticeType)],
+            [award],
+            "Candidate",
+            new DateTime(2026, 6, 2));
+
+        Assert.Equal("High", match.ConfidenceLevel);
+        Assert.True(match.Confidence >= 0.75);
+        Assert.Contains("ProjectCode exact match", match.MatchReasons);
+        Assert.Contains("Awarded supplier appears in candidate notice text", match.MatchReasons);
+    }
+
+    [Fact]
     public void LifecycleDebugController_DeclaresReverseClosureRoutes()
     {
         var controllerRoute = typeof(LifecycleDebugController)
@@ -328,10 +622,46 @@ public sealed class BidOpsReverseClosureTests
             .GetCustomAttributes<HttpPostAttribute>()
             .SingleOrDefault()?
             .Template;
+        var enqueueRoute = typeof(LifecycleDebugController)
+            .GetMethod(nameof(LifecycleDebugController.EnqueueReverseCloseAsync))?
+            .GetCustomAttributes<HttpPostAttribute>()
+            .SingleOrDefault()?
+            .Template;
+        var persistRoute = typeof(LifecycleDebugController)
+            .GetMethod(nameof(LifecycleDebugController.ReverseCloseRawNoticeAndPersistAsync))?
+            .GetCustomAttributes<HttpPostAttribute>()
+            .SingleOrDefault()?
+            .Template;
+        var linksRoute = typeof(LifecycleDebugController)
+            .GetMethod(nameof(LifecycleDebugController.SearchLifecycleLinksAsync))?
+            .GetCustomAttributes<HttpGetAttribute>()
+            .SingleOrDefault()?
+            .Template;
+        var procurementCandidatesRoute = typeof(LifecycleDebugController)
+            .GetMethod(nameof(LifecycleDebugController.SearchProcurementNoticeCandidatesAsync))?
+            .GetCustomAttributes<HttpGetAttribute>()
+            .SingleOrDefault()?
+            .Template;
+        var procurementImportRoute = typeof(LifecycleDebugController)
+            .GetMethod(nameof(LifecycleDebugController.ImportProcurementNoticeCandidateAsync))?
+            .GetCustomAttributes<HttpPostAttribute>()
+            .SingleOrDefault()?
+            .Template;
+        var fieldEnrichmentRoute = typeof(LifecycleDebugController)
+            .GetMethod(nameof(LifecycleDebugController.EnqueueFieldEnrichmentAsync))?
+            .GetCustomAttributes<HttpPostAttribute>()
+            .SingleOrDefault()?
+            .Template;
 
         Assert.Equal("api/bidops/lifecycle/debug", controllerRoute);
+        Assert.Equal("links", linksRoute);
+        Assert.Equal("links/{linkId:long}/procurement-candidates", procurementCandidatesRoute);
+        Assert.Equal("links/{linkId:long}/procurement-candidates/import", procurementImportRoute);
+        Assert.Equal("links/{linkId:long}/field-enrichment/enqueue", fieldEnrichmentRoute);
         Assert.Equal("reverse-close-url", urlRoute);
         Assert.Equal("reverse-close-raw-notice/{rawNoticeId:long}", rawRoute);
+        Assert.Equal("reverse-close/enqueue", enqueueRoute);
+        Assert.Equal("reverse-close-raw-notice/{rawNoticeId:long}/persist", persistRoute);
     }
 
     private static BidOpsEvidenceDocument Doc(

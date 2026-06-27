@@ -40,6 +40,19 @@ export interface PackageSearchQuery extends BidOpsPagedQuery {
   noticeId?: BidOpsId
 }
 
+export interface LifecyclePackageLinkSearchQuery extends BidOpsPagedQuery {
+  projectCode?: string
+  lotNo?: string
+  lotName?: string
+  packageNo?: string
+  supplierName?: string
+  linkStatus?: string
+  matchType?: string
+  requiresManualReview?: boolean
+  rawNoticeId?: BidOpsId
+  sortBy?: string
+}
+
 export interface OpportunitySearchQuery extends BidOpsPagedQuery {
   noticeId?: BidOpsId
   packageId?: BidOpsId
@@ -681,6 +694,94 @@ export interface OutcomeSupplierRecordDto {
   createdAt: string
 }
 
+export interface LifecyclePackageLinkDto {
+  id: BidOpsId
+  procurementDetailId?: BidOpsId | null
+  procurementDetailStagingId?: BidOpsId | null
+  tenderPackageId?: BidOpsId | null
+  candidateOutcomeRecordId?: BidOpsId | null
+  awardOutcomeRecordId?: BidOpsId | null
+  procurementRawNoticeId?: BidOpsId | null
+  candidateRawNoticeId?: BidOpsId | null
+  awardRawNoticeId?: BidOpsId | null
+  procurementNotice?: LifecycleNoticeRefDto | null
+  candidateNotice?: LifecycleNoticeRefDto | null
+  awardNotice?: LifecycleNoticeRefDto | null
+  procurementAttachments: RawAttachmentDto[]
+  candidateAttachments: RawAttachmentDto[]
+  awardAttachments: RawAttachmentDto[]
+  procurementNoticeMissingReason: string
+  projectCode: string
+  projectName: string
+  lotNo: string
+  lotName: string
+  packageNo: string
+  packageName: string
+  supplierName: string
+  finalAwardAmount?: number | null
+  finalAwardAmountSource: string
+  currency: string
+  matchScore: number
+  matchType: string
+  linkStatus: string
+  requiresManualReview: boolean
+  matchReasonsJson: string
+  missingFieldsJson: string
+  evidenceJson: string
+  manualRemark: string
+  confirmedBy?: BidOpsId | null
+  confirmedAt?: string | null
+  createdAt: string
+  updatedAt?: string | null
+}
+
+export interface LifecycleNoticeRefDto {
+  rawNoticeId: BidOpsId
+  title: string
+  noticeType: string
+  detailUrl: string
+  publishTime?: string | null
+  matchSource: string
+}
+
+export interface LifecycleProcurementNoticeCandidateDto {
+  sourceId: BidOpsId
+  channelId?: BidOpsId | null
+  noticeType: string
+  title: string
+  detailUrl: string
+  doctype: string
+  menuId: string
+  noticeId: BidOpsId
+  firstPageDocId?: BidOpsId | null
+  publishTime?: string | null
+  publishOrgName: string
+  projectCode: string
+  existingRawNoticeId?: BidOpsId | null
+  existingRawNoticeStatus?: RawNoticeStatus | null
+  isExactProjectCodeMatch: boolean
+}
+
+export interface LifecycleProcurementNoticeImportRequest {
+  detailUrl: string
+  title?: string | null
+  noticeType?: string | null
+  projectCode?: string | null
+  sourceId?: BidOpsId | number | null
+  channelId?: BidOpsId | number | null
+  forceRefresh?: boolean
+}
+
+export interface LifecycleProcurementNoticeImportResultDto {
+  rawNoticeId?: BidOpsId | null
+  importJob?: EnqueueJobDto | null
+  message: string
+}
+
+export interface LifecycleFieldEnrichmentRequest {
+  reviewerPrompt?: string | null
+}
+
 export interface SupplierOutcomeStatDto {
   supplierName: string
   supplierId?: BidOpsId | null
@@ -1007,6 +1108,21 @@ export interface EnqueueJobDto {
   jobTypeName: string
   queue: string
   alreadyExists: boolean
+}
+
+export interface BidOpsReverseCloseJobRequest {
+  rawNoticeId?: BidOpsId | number | null
+  url?: string
+  persistEvidence?: boolean
+  persistLifecycleLinks?: boolean
+  persistLifecycleLinksOnCompletion?: boolean
+}
+
+export interface LifecyclePackageLinkDecisionRequest {
+  remark: string
+  finalAwardAmount?: number | null
+  finalAwardAmountSource?: string | null
+  requiresManualReview?: boolean | null
 }
 
 export interface CreateCrawlSourceRequest {

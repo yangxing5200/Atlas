@@ -100,6 +100,10 @@ public static partial class BidOpsAwardEvidenceParser
                     ColumnIndex = supplierIndex,
                     EvidenceText = row.RawText
                 };
+                var rateEvidence = amount.HasValue
+                    ? null
+                    : BidOpsRateNormalizer.TryNormalize(amountText, evidence)
+                      ?? BidOpsRateNormalizer.TryNormalize(row.RawText, evidence);
 
                 results.Add(new AwardEvidence(
                     ProjectCode: FirstNonEmpty(BidOpsEvidenceTableParser.GetCell(row, projectIndex), projectCodeFallbackForTable),
@@ -112,9 +116,10 @@ public static partial class BidOpsAwardEvidenceParser
                     PackageName: EmptyToNull(BidOpsEvidenceTableParser.GetCell(row, packageNameIndex)),
                     AwardedSupplierName: supplier,
                     AwardAmount: amount,
-                    AmountSource: amount.HasValue ? "AwardNotice" : "Missing",
+                    AmountSource: amount.HasValue ? "AwardNotice" : rateEvidence?.RateType ?? "Missing",
                     Evidence: evidence,
-                    Confidence: amount.HasValue ? 0.93 : 0.88));
+                    Confidence: amount.HasValue ? 0.93 : 0.88,
+                    RateEvidence: rateEvidence));
             }
         }
     }

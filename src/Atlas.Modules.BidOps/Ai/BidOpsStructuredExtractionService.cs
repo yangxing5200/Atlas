@@ -152,9 +152,14 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
             }
         }
 
-        if (!BidOpsAiHttpSettingsFactory.TryCreate(_configuration, BidOpsAiUse.NoticeStaging, runtimeSettings?.Provider, out var settings))
+        if (!BidOpsAiHttpSettingsFactory.TryCreate(
+            _configuration,
+            BidOpsAiUse.NoticeStaging,
+            runtimeSettings?.Provider,
+            runtimeSettings?.HttpApiKey,
+            out var settings))
         {
-            LogUnavailableSettings(runtimeSettings?.Provider);
+            LogUnavailableSettings(runtimeSettings?.Provider, runtimeSettings?.HttpApiKey);
             return deterministic;
         }
 
@@ -182,10 +187,16 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
             var codexSettings = settings.CodexCliScenarios
                 .FirstOrDefault(x => x.Scenario.Equals(scenario, StringComparison.OrdinalIgnoreCase)) ??
                 settings.CodexCliScenarios.FirstOrDefault(x => x.Scenario.Equals(BidOpsCodexCliScenarios.Default, StringComparison.OrdinalIgnoreCase));
+            var httpApiKey = settings.EffectiveProvider.Equals(BidOpsSystemValues.AiProviderMimo, StringComparison.OrdinalIgnoreCase)
+                ? await _aiSettings.GetEffectiveMimoApiKeyAsync(ct)
+                : settings.EffectiveProvider.Equals(BidOpsSystemValues.AiProviderDeepSeek, StringComparison.OrdinalIgnoreCase)
+                    ? await _aiSettings.GetEffectiveDeepSeekApiKeyAsync(ct)
+                    : string.Empty;
             return new BidOpsEffectiveAiRuntimeSettings(
                 settings.EffectiveProvider,
                 codexSettings?.Model ?? settings.CodexCliModel,
-                codexSettings?.ReasoningEffort ?? settings.CodexCliReasoningEffort);
+                codexSettings?.ReasoningEffort ?? settings.CodexCliReasoningEffort,
+                httpApiKey);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -214,9 +225,13 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
             sourceCharacters >= ComplexSourceCharacters;
     }
 
-    private void LogUnavailableSettings(string? providerOverride)
+    private void LogUnavailableSettings(string? providerOverride, string? apiKeyOverride)
     {
-        var diagnostics = BidOpsAiHttpSettingsFactory.Diagnose(_configuration, BidOpsAiUse.NoticeStaging, providerOverride);
+        var diagnostics = BidOpsAiHttpSettingsFactory.Diagnose(
+            _configuration,
+            BidOpsAiUse.NoticeStaging,
+            providerOverride,
+            apiKeyOverride);
         var level = diagnostics.Enabled && diagnostics.UseEnabled ? LogLevel.Warning : LogLevel.Debug;
         _logger.Log(
             level,
@@ -275,6 +290,7 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
             "BidOps structured AI request body before DeepSeek call. requestBody={RequestBody}",
             requestJson);
 
+        await BidOpsAiHttpRateLimiter.WaitAsync(settings, _configuration, ct);
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, settings.Endpoint)
         {
             Content = new StringContent(requestJson, Encoding.UTF8, "application/json")
@@ -302,6 +318,9 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
             "BidOps structured AI raw DeepSeek response. statusCode={StatusCode}, responseBody={ResponseBody}",
             (int)response.StatusCode,
             BidOpsAiJsonLogging.FormatJsonForLog(responseText));
+        if ((int)response.StatusCode == 429)
+            BidOpsAiHttpRateLimiter.RegisterRateLimit(settings, _configuration);
+
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogWarning(
@@ -901,7 +920,8 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
     private sealed record BidOpsEffectiveAiRuntimeSettings(
         string Provider,
         string CodexCliModel,
-        string CodexCliReasoningEffort);
+        string CodexCliReasoningEffort,
+        string HttpApiKey);
 }
 
 public static partial class BidOpsDeterministicNoticeParser

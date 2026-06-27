@@ -18,7 +18,27 @@ public interface IBidOpsAiSettingsService
         UpdateBidOpsCodexCliScenarioSettingsRequest request,
         CancellationToken ct = default);
 
+    Task<BidOpsAiProviderSettingsDto> SetDeepSeekTokenAsync(
+        UpdateBidOpsDeepSeekTokenRequest request,
+        CancellationToken ct = default);
+
+    Task<BidOpsDeepSeekTokenTestResultDto> TestDeepSeekTokenAsync(
+        TestBidOpsDeepSeekTokenRequest request,
+        CancellationToken ct = default);
+
+    Task<BidOpsAiProviderSettingsDto> SetMimoTokenAsync(
+        UpdateBidOpsMimoTokenRequest request,
+        CancellationToken ct = default);
+
+    Task<BidOpsMimoTokenTestResultDto> TestMimoTokenAsync(
+        TestBidOpsMimoTokenRequest request,
+        CancellationToken ct = default);
+
     Task<string> GetEffectiveProviderAsync(CancellationToken ct = default);
+
+    Task<string> GetEffectiveDeepSeekApiKeyAsync(CancellationToken ct = default);
+
+    Task<string> GetEffectiveMimoApiKeyAsync(CancellationToken ct = default);
 
     Task<BidOpsCodexCliRuntimeSettingsDto> GetEffectiveCodexCliSettingsAsync(
         string scenario = BidOpsCodexCliScenarios.Default,
