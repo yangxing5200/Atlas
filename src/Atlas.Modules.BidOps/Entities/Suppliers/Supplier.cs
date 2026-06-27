@@ -8,6 +8,8 @@ public sealed class Supplier : BidOpsTenantEntity
 
     public string Name { get; set; } = string.Empty;
 
+    public string NameNormalized { get; set; } = string.Empty;
+
     public string UnifiedSocialCreditCode { get; set; } = string.Empty;
 
     public string Region { get; set; } = string.Empty;

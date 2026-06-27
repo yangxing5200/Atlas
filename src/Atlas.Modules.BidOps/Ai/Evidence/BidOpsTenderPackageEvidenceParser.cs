@@ -87,7 +87,8 @@ public static class BidOpsTenderPackageEvidenceParser
         var columns = BuildCommonColumns(table);
         var budgetIndex = BidOpsEvidenceTableParser.FindColumn(table.Headers, "预算金额", "概算金额", "估算金额", "预算");
         var maxPriceIndex = BidOpsEvidenceTableParser.FindColumn(table.Headers, "最高限价", "最高投标限价", "控制价", "限价");
-        if (columns.PackageIndex < 0 || (budgetIndex < 0 && maxPriceIndex < 0))
+        var guidePriceIndex = BidOpsEvidenceTableParser.FindColumn(table.Headers, "指导价", "基准价", "参考价", "计价基准", "价格基准");
+        if (columns.PackageIndex < 0 || (budgetIndex < 0 && maxPriceIndex < 0 && guidePriceIndex < 0))
             return;
 
         foreach (var row in table.Rows)
@@ -98,6 +99,7 @@ public static class BidOpsTenderPackageEvidenceParser
 
             var budget = BidOpsMoneyNormalizer.TryNormalize(BidOpsEvidenceTableParser.GetCell(row, budgetIndex));
             var maxPrice = BidOpsMoneyNormalizer.TryNormalize(BidOpsEvidenceTableParser.GetCell(row, maxPriceIndex));
+            var guidePrice = BidOpsMoneyNormalizer.TryNormalize(BidOpsEvidenceTableParser.GetCell(row, guidePriceIndex));
             results.Add(new TenderPackageEvidence(
                 ProjectCode: EmptyToNull(FirstNonEmpty(BidOpsEvidenceTableParser.GetCell(row, columns.ProjectIndex), projectCodeFallback)),
                 ProjectName: EmptyToNull(FirstNonEmpty(BidOpsEvidenceTableParser.GetCell(row, columns.ProjectNameIndex), projectNameFallback)),
@@ -122,7 +124,8 @@ public static class BidOpsTenderPackageEvidenceParser
                     RowIndex = row.RowIndex,
                     EvidenceText = row.RawText
                 },
-                Confidence: budget.HasValue || maxPrice.HasValue ? 0.92 : 0.8));
+                Confidence: budget.HasValue || maxPrice.HasValue || guidePrice.HasValue ? 0.92 : 0.8,
+                GuidePrice: guidePrice));
         }
     }
 
@@ -193,7 +196,10 @@ public static class BidOpsTenderPackageEvidenceParser
         return normalized.Contains("包号", StringComparison.OrdinalIgnoreCase) &&
                (normalized.Contains("预算金额", StringComparison.OrdinalIgnoreCase) ||
                 normalized.Contains("最高限价", StringComparison.OrdinalIgnoreCase) ||
-                normalized.Contains("控制价", StringComparison.OrdinalIgnoreCase));
+                normalized.Contains("控制价", StringComparison.OrdinalIgnoreCase) ||
+                normalized.Contains("指导价", StringComparison.OrdinalIgnoreCase) ||
+                normalized.Contains("基准价", StringComparison.OrdinalIgnoreCase) ||
+                normalized.Contains("参考价", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool LooksLikeQualificationTable(string headers)

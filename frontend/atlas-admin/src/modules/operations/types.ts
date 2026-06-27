@@ -187,6 +187,17 @@ export interface BidOpsAiProviderSettingsDto {
   effectiveModel: string
   reasoningEffort: string
   deepSeekModel: string
+  deepSeekTokenConfigured: boolean
+  deepSeekTokenSource: string
+  deepSeekTokenMasked: string
+  deepSeekTokenUpdatedAt?: string | null
+  deepSeekTokenUpdatedByUserName: string
+  mimoModel: string
+  mimoTokenConfigured: boolean
+  mimoTokenSource: string
+  mimoTokenMasked: string
+  mimoTokenUpdatedAt?: string | null
+  mimoTokenUpdatedByUserName: string
   codexCliModel: string
   codexCliReasoningEffort: string
   codexCliModelSource: string
@@ -220,6 +231,44 @@ export interface UpdateBidOpsCodexCliScenarioSettingsRequest {
   scenario: string
   model: string
   reasoningEffort: string
+}
+
+export interface UpdateBidOpsDeepSeekTokenRequest {
+  apiKey: string
+}
+
+export interface TestBidOpsDeepSeekTokenRequest {
+  apiKey?: string | null
+}
+
+export interface BidOpsDeepSeekTokenTestResultDto {
+  succeeded: boolean
+  statusCode: number
+  elapsedMilliseconds: number
+  provider: string
+  model: string
+  endpoint: string
+  message: string
+  responsePreview: string
+}
+
+export interface UpdateBidOpsMimoTokenRequest {
+  apiKey: string
+}
+
+export interface TestBidOpsMimoTokenRequest {
+  apiKey?: string | null
+}
+
+export interface BidOpsMimoTokenTestResultDto {
+  succeeded: boolean
+  statusCode: number
+  elapsedMilliseconds: number
+  provider: string
+  model: string
+  endpoint: string
+  message: string
+  responsePreview: string
 }
 
 export interface BidOpsRuntimeStatusDto {

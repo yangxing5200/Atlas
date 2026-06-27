@@ -13,6 +13,7 @@ using Atlas.Modules.BidOps.Entities.Outcomes;
 using Atlas.Modules.BidOps.Entities.Staging;
 using Atlas.Modules.BidOps.Entities.Tendering;
 using Atlas.Modules.BidOps.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Atlas.Modules.BidOps.Services;
 
@@ -31,12 +32,12 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
     private readonly IRepository<OutcomeSupplierRecord> _outcomeRecords;
     private readonly IRepository<ReviewCorrectionSample> _correctionSamples;
     private readonly IBidOpsOrganizationMasterDataService _organizationMasterData;
-    private readonly IBidOpsOutcomeSupplierExtractionService _outcomeSupplierExtraction;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IBackgroundJobClient _jobs;
     private readonly ICurrentIdentity _identity;
     private readonly IIdGenerator _idGenerator;
     private readonly IBidOpsRuntimeControlService _runtimeControl;
+    private readonly ILogger<BidOpsReviewService> _logger;
 
     public BidOpsReviewService(
         IRepository<ReviewTask> reviewTasks,
@@ -50,12 +51,12 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         IRepository<OutcomeSupplierRecord> outcomeRecords,
         IRepository<ReviewCorrectionSample> correctionSamples,
         IBidOpsOrganizationMasterDataService organizationMasterData,
-        IBidOpsOutcomeSupplierExtractionService outcomeSupplierExtraction,
         IUnitOfWork unitOfWork,
         IBackgroundJobClient jobs,
         ICurrentIdentity identity,
         IIdGenerator idGenerator,
-        IBidOpsRuntimeControlService runtimeControl)
+        IBidOpsRuntimeControlService runtimeControl,
+        ILogger<BidOpsReviewService> logger)
     {
         _reviewTasks = reviewTasks ?? throw new ArgumentNullException(nameof(reviewTasks));
         _noticeStaging = noticeStaging ?? throw new ArgumentNullException(nameof(noticeStaging));
@@ -68,12 +69,12 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         _outcomeRecords = outcomeRecords ?? throw new ArgumentNullException(nameof(outcomeRecords));
         _correctionSamples = correctionSamples ?? throw new ArgumentNullException(nameof(correctionSamples));
         _organizationMasterData = organizationMasterData ?? throw new ArgumentNullException(nameof(organizationMasterData));
-        _outcomeSupplierExtraction = outcomeSupplierExtraction ?? throw new ArgumentNullException(nameof(outcomeSupplierExtraction));
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
         _jobs = jobs ?? throw new ArgumentNullException(nameof(jobs));
         _identity = identity ?? throw new ArgumentNullException(nameof(identity));
         _idGenerator = idGenerator ?? throw new ArgumentNullException(nameof(idGenerator));
         _runtimeControl = runtimeControl ?? throw new ArgumentNullException(nameof(runtimeControl));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     public async Task<NoticeDto> ApproveAsync(
@@ -83,11 +84,13 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        await EnsureOutcomeRecordsBeforeApprovalAsync(reviewTaskId, ct);
-
-        return await _unitOfWork.ExecuteInTransactionAsync(
+        var notice = await _unitOfWork.ExecuteInTransactionAsync(
             token => ApproveCoreAsync(reviewTaskId, request, token),
             ct);
+
+        await EnqueueOutcomeSupplierExtractionAfterApprovalIfMissingAsync(reviewTaskId, notice, ct);
+
+        return notice;
     }
 
     public async Task<BulkReviewTaskActionResultDto> BulkApproveAsync(
@@ -952,25 +955,93 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         return record;
     }
 
-    private async Task EnsureOutcomeRecordsBeforeApprovalAsync(long reviewTaskId, CancellationToken ct)
+    private async Task EnqueueOutcomeSupplierExtractionAfterApprovalIfMissingAsync(
+        long reviewTaskId,
+        NoticeDto approvedNotice,
+        CancellationToken ct)
     {
-        var task = await _reviewTasks.GetByIdAsync(reviewTaskId, ct);
-        if (task == null || task.BizType != "NoticeStaging")
-            return;
+        try
+        {
+            var task = await _reviewTasks.GetByIdAsync(reviewTaskId, ct);
+            if (task == null || task.BizType != "NoticeStaging")
+                return;
 
-        var noticeStaging = await _noticeStaging.GetByIdAsync(task.BizId, ct);
-        if (noticeStaging == null)
-            return;
+            var noticeStaging = await _noticeStaging.GetByIdAsync(task.BizId, ct);
+            if (noticeStaging == null)
+                return;
 
-        var raw = await _rawNotices.GetByIdAsync(noticeStaging.RawNoticeId, ct);
-        if (raw == null)
-            return;
+            var raw = await _rawNotices.GetByIdAsync(noticeStaging.RawNoticeId, ct);
+            if (raw == null || !LooksLikeOutcomeReviewNotice(raw, noticeStaging))
+                return;
 
-        var outcomeQuery = await _outcomeRecords.QueryAsync(raw.TenantId, ct);
-        if (await outcomeQuery.Where(x => x.RawNoticeId == raw.Id).AnyAsync(ct))
-            return;
+            var outcomeQuery = await _outcomeRecords.QueryAsync(raw.TenantId, ct);
+            if (await outcomeQuery.Where(x => x.RawNoticeId == raw.Id).AnyAsync(ct))
+                return;
 
-        await _outcomeSupplierExtraction.ExtractRawNoticeAsync(raw.Id, ct);
+            var tenant = RequireTenant();
+            var userId = RequireUser();
+            var result = await _jobs.EnqueueAsync(
+                new EnqueueBackgroundJobRequest<OutcomeSupplierExtractJobPayload>
+                {
+                    JobType = BidOpsBackgroundJobTypes.OutcomeSupplierExtract,
+                    Queue = BidOpsBackgroundJobQueues.BidOps,
+                    JobName = "BidOps outcome supplier extract after review approval",
+                    TenantId = tenant,
+                    StoreId = _identity.StoreId,
+                    DeduplicationKey = $"bidops:approval-outcome-supplier-extract:{tenant}:{raw.Id}:{approvedNotice.Id}",
+                    Priority = BidOpsBackgroundJobPriorities.Manual,
+                    MaxAttempts = 3,
+                    Payload = new OutcomeSupplierExtractJobPayload(
+                        tenant,
+                        _identity.StoreId,
+                        userId,
+                        _identity.UserName,
+                        raw.Id,
+                        ProjectCode: BidOpsJobProjectCode.FirstMeaningful(
+                            approvedNotice.ProjectCode,
+                            noticeStaging.ProjectCode,
+                            BidOpsJobProjectCode.FromRawNotice(raw)))
+                },
+                ct);
+
+            await AddCorrectionSampleAsync(
+                task,
+                noticeStaging,
+                raw,
+                BidOpsReviewCorrectionSourceKinds.ApprovalOutcomeExtract,
+                "OutcomeSupplierExtractionAfterApproval",
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                BuildBackgroundJobEvidenceJson(result, "ApprovalOutcomeSupplierExtract"),
+                null,
+                result.AlreadyExists
+                    ? "Outcome supplier extraction job already exists after approval."
+                    : "Outcome supplier extraction enqueued after approval.",
+                ct);
+            await _unitOfWork.SaveChangesAsync(ct);
+
+            _logger.LogInformation(
+                "BidOps enqueued outcome supplier extraction after review approval. reviewTask={ReviewTaskId}; notice={NoticeId}; rawNotice={RawNoticeId}; job={JobId}; alreadyExists={AlreadyExists}.",
+                reviewTaskId,
+                approvedNotice.Id,
+                raw.Id,
+                result.JobId,
+                result.AlreadyExists);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "BidOps could not enqueue outcome supplier extraction after review approval. reviewTask={ReviewTaskId}; notice={NoticeId}; rawNotice={RawNoticeId}.",
+                reviewTaskId,
+                approvedNotice.Id,
+                approvedNotice.RawNoticeId);
+        }
     }
 
     private static string BuildReparseReason(string? reason)

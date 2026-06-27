@@ -1,19 +1,26 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Box } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { Box, DataAnalysis, View } from '@element-plus/icons-vue'
+import { lifecycleApi } from '@/api/bidops/lifecycle.api'
 import { noticesApi } from '@/api/bidops/notices.api'
 import DataTable from '@/shared/components/DataTable.vue'
 import PageContainer from '@/shared/components/PageContainer.vue'
 import SearchForm from '@/shared/components/SearchForm.vue'
+import { usePermission } from '@/shared/composables/usePermission'
 import { useTableQuery } from '@/shared/composables/useTableQuery'
 import { formatDateTime } from '@/shared/utils/date'
 import { formatMoney } from '@/shared/utils/money'
 import BidOpsStatusTag from '../../components/BidOpsStatusTag.vue'
 import DeadlineCountdown from '../../components/DeadlineCountdown.vue'
+import { BIDOPS_PERMISSIONS } from '../../constants'
 import type { NoticeDto } from '../../types'
-import { formatNoticeType, noticeTypeOptions } from '../../utils/display'
+import { formatNoticeType, isResultNoticeType, noticeTypeOptions } from '../../utils/display'
 
 const router = useRouter()
+const analyzingRawNoticeId = ref('')
+const { visible: canAnalyzeLifecycle } = usePermission(BIDOPS_PERMISSIONS.CRAWL_IMPORT)
 const table = useTableQuery<NoticeDto, { keyword: string; noticeType?: string; pageIndex: number; pageSize: number }>(
   (params) => noticesApi.search({ ...params, noticeType: params.noticeType || undefined }),
   {
@@ -23,10 +30,32 @@ const table = useTableQuery<NoticeDto, { keyword: string; noticeType?: string; p
     pageSize: 20,
   },
 )
+
+function canAnalyze(row: NoticeDto) {
+  return canAnalyzeLifecycle.value && isResultNoticeType(row.noticeType, row.title) && !!row.rawNoticeId
+}
+
+async function analyzeLifecycle(row: NoticeDto) {
+  if (!canAnalyze(row)) return
+
+  analyzingRawNoticeId.value = row.rawNoticeId
+  try {
+    const job = await lifecycleApi.enqueueReverseClose({
+      rawNoticeId: row.rawNoticeId,
+      persistEvidence: true,
+      persistLifecycleLinks: false,
+      persistLifecycleLinksOnCompletion: true,
+    })
+    ElMessage.success(job.alreadyExists ? `闭环分析任务已存在：${job.jobId}` : `闭环分析任务已入队：${job.jobId}`)
+    await router.push(`/bidops/outcomes?rawNoticeId=${row.rawNoticeId}`)
+  } finally {
+    analyzingRawNoticeId.value = ''
+  }
+}
 </script>
 
 <template>
-  <PageContainer title="正式公告库" description="审核通过后生成的正式业务公告；详情接口待后端补充。">
+  <PageContainer title="正式公告库" description="审核通过后生成的正式业务公告；结果类公告可直接发起生命周期闭环分析。">
     <SearchForm @search="table.search" @reset="table.reset()">
       <el-form-item label="关键词">
         <el-input v-model="table.query.keyword" clearable placeholder="标题 / 项目 / 采购人" />
@@ -53,9 +82,21 @@ const table = useTableQuery<NoticeDto, { keyword: string; noticeType?: string; p
       <el-table-column label="最后更新时间" width="170"><template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template></el-table-column>
       <el-table-column label="倒计时" width="110"><template #default="{ row }"><DeadlineCountdown :value="row.bidDeadline" /></template></el-table-column>
       <el-table-column label="状态" width="130"><template #default="{ row }"><BidOpsStatusTag :value="row.status" /></template></el-table-column>
-      <el-table-column label="操作" width="140" fixed="right">
+      <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" :icon="Box" @click="router.push(`/bidops/packages?noticeId=${row.id}`)">查看包件</el-button>
+          <el-button size="small" :icon="View" @click="router.push(`/bidops/notices/${row.id}`)">详情</el-button>
+          <el-button size="small" :icon="Box" @click="router.push(`/bidops/packages?noticeId=${row.id}`)">包件</el-button>
+          <el-button
+            v-if="canAnalyze(row)"
+            size="small"
+            type="primary"
+            plain
+            :icon="DataAnalysis"
+            :loading="analyzingRawNoticeId === row.rawNoticeId"
+            @click="analyzeLifecycle(row)"
+          >
+            分析闭环
+          </el-button>
         </template>
       </el-table-column>
     </DataTable>

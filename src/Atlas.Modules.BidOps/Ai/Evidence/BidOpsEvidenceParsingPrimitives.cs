@@ -127,6 +127,111 @@ public static partial class BidOpsMoneyNormalizer
     private static partial Regex AmountRegex();
 }
 
+public static partial class BidOpsRateNormalizer
+{
+    public static BidOpsRateEvidence? TryNormalize(
+        string? value,
+        EvidenceSourceRef evidence,
+        double confidence = 0.82)
+    {
+        var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+        if (string.IsNullOrWhiteSpace(cleaned))
+            return null;
+
+        var rateType = ResolveRateType(cleaned);
+        if (rateType == null)
+            return null;
+
+        var rate = TryParseRate(cleaned, rateType);
+        if (!rate.HasValue)
+            return null;
+
+        return new BidOpsRateEvidence(
+            rateType,
+            Math.Round(rate.Value, 6),
+            cleaned,
+            evidence,
+            confidence);
+    }
+
+    private static string? ResolveRateType(string value)
+    {
+        if (value.Contains("下浮", StringComparison.Ordinal) ||
+            value.Contains("降幅", StringComparison.Ordinal) ||
+            value.Contains("优惠率", StringComparison.Ordinal))
+        {
+            return BidOpsRateTypes.ReductionRate;
+        }
+
+        if (value.Contains("报价系数", StringComparison.Ordinal) ||
+            value.Contains("投标系数", StringComparison.Ordinal) ||
+            value.Contains("响应系数", StringComparison.Ordinal) ||
+            value.Contains("成交系数", StringComparison.Ordinal) ||
+            value.Contains("系数", StringComparison.Ordinal))
+        {
+            return BidOpsRateTypes.Coefficient;
+        }
+
+        if (value.Contains("折扣率", StringComparison.Ordinal) ||
+            value.Contains("折扣", StringComparison.Ordinal) ||
+            Regex.IsMatch(value, @"\d+(?:\.\d+)?\s*折", RegexOptions.CultureInvariant))
+        {
+            return BidOpsRateTypes.DiscountRate;
+        }
+
+        if (value.Contains('%', StringComparison.Ordinal) ||
+            value.Contains('％', StringComparison.Ordinal))
+        {
+            return BidOpsRateTypes.Unknown;
+        }
+
+        return null;
+    }
+
+    private static decimal? TryParseRate(string value, string rateType)
+    {
+        var fold = FoldRegex().Match(value);
+        if (fold.Success &&
+            decimal.TryParse(fold.Groups["value"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var foldValue))
+        {
+            return foldValue / 10m;
+        }
+
+        var match = RateRegex().Match(value.Replace(",", string.Empty, StringComparison.Ordinal));
+        if (!match.Success ||
+            !decimal.TryParse(match.Groups["value"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return null;
+        }
+
+        var hasPercent = match.Groups["unit"].Value is "%" or "％";
+        if (hasPercent)
+            return parsed / 100m;
+
+        if (rateType is BidOpsRateTypes.DiscountRate or BidOpsRateTypes.Coefficient)
+        {
+            return parsed > 1m && parsed <= 100m
+                ? parsed / 100m
+                : parsed;
+        }
+
+        if (rateType == BidOpsRateTypes.ReductionRate)
+        {
+            return parsed > 1m && parsed <= 100m
+                ? parsed / 100m
+                : parsed;
+        }
+
+        return null;
+    }
+
+    [GeneratedRegex(@"(?<value>\d+(?:\.\d+)?)\s*折", RegexOptions.CultureInvariant)]
+    private static partial Regex FoldRegex();
+
+    [GeneratedRegex(@"(?<value>\d+(?:\.\d+)?)(?:\s*)(?<unit>%|％)?", RegexOptions.CultureInvariant)]
+    private static partial Regex RateRegex();
+}
+
 public static partial class BidOpsSupplierNameNormalizer
 {
     private static readonly string[] Labels =
@@ -169,7 +274,7 @@ public static partial class BidOpsSupplierNameNormalizer
             .ToUpperInvariant();
     }
 
-    [GeneratedRegex(@"^第?[一二三四五六七八九十\d]+(?:名|位)?", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^(?:第?[一二三四五六七八九十\d]+(?:名|位)|[一二三四五六七八九十\d]+[、.．:：)）-])\s*", RegexOptions.CultureInvariant)]
     private static partial Regex RankPrefixRegex();
 
     [GeneratedRegex(@"(?<name>[\u4e00-\u9fa5A-Za-z0-9（）()·\-\s]{2,120}(?:有限责任公司|股份有限公司|集团有限公司|有限公司|分公司|集团|公司|工厂|厂|勘测设计研究院|工程设计有限公司|研究院|设计院|测绘院|勘测院|勘察院|规划院|科学院|检验院|检测院|计量院|研究所|事务所|大学|学院|学校|医院|中心))", RegexOptions.CultureInvariant)]

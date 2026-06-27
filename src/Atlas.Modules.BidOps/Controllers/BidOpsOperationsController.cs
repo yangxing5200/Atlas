@@ -88,6 +88,42 @@ public sealed class BidOpsOperationsController : ControllerBase
     }
 
     [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.OpsManage)]
+    [HttpPut("ai-settings/deepseek-token")]
+    public async Task<ActionResult<BidOpsAiProviderSettingsDto>> UpdateDeepSeekTokenAsync(
+        [FromBody] UpdateBidOpsDeepSeekTokenRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _aiSettings.SetDeepSeekTokenAsync(request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.OpsManage)]
+    [HttpPost("ai-settings/deepseek-token/test")]
+    public async Task<ActionResult<BidOpsDeepSeekTokenTestResultDto>> TestDeepSeekTokenAsync(
+        [FromBody] TestBidOpsDeepSeekTokenRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _aiSettings.TestDeepSeekTokenAsync(request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.OpsManage)]
+    [HttpPut("ai-settings/mimo-token")]
+    public async Task<ActionResult<BidOpsAiProviderSettingsDto>> UpdateMimoTokenAsync(
+        [FromBody] UpdateBidOpsMimoTokenRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _aiSettings.SetMimoTokenAsync(request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.OpsManage)]
+    [HttpPost("ai-settings/mimo-token/test")]
+    public async Task<ActionResult<BidOpsMimoTokenTestResultDto>> TestMimoTokenAsync(
+        [FromBody] TestBidOpsMimoTokenRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _aiSettings.TestMimoTokenAsync(request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.OpsManage)]
     [HttpPut("runtime/task-pause")]
     public async Task<ActionResult<BidOpsRuntimeStatusDto>> UpdateTaskPauseAsync(
         [FromBody] UpdateBidOpsTaskPauseRequest request,

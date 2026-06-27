@@ -112,6 +112,17 @@ public sealed class BidOpsAiProviderSettingsDto
     public string EffectiveModel { get; set; } = string.Empty;
     public string ReasoningEffort { get; set; } = string.Empty;
     public string DeepSeekModel { get; set; } = string.Empty;
+    public bool DeepSeekTokenConfigured { get; set; }
+    public string DeepSeekTokenSource { get; set; } = string.Empty;
+    public string DeepSeekTokenMasked { get; set; } = string.Empty;
+    public DateTime? DeepSeekTokenUpdatedAt { get; set; }
+    public string DeepSeekTokenUpdatedByUserName { get; set; } = string.Empty;
+    public string MimoModel { get; set; } = string.Empty;
+    public bool MimoTokenConfigured { get; set; }
+    public string MimoTokenSource { get; set; } = string.Empty;
+    public string MimoTokenMasked { get; set; } = string.Empty;
+    public DateTime? MimoTokenUpdatedAt { get; set; }
+    public string MimoTokenUpdatedByUserName { get; set; } = string.Empty;
     public string CodexCliModel { get; set; } = string.Empty;
     public string CodexCliReasoningEffort { get; set; } = string.Empty;
     public string CodexCliModelSource { get; set; } = string.Empty;
@@ -127,6 +138,30 @@ public sealed class BidOpsCodexCliRuntimeSettingsDto
     public string Scenario { get; set; } = BidOpsCodexCliScenarios.Default;
     public string Model { get; set; } = string.Empty;
     public string ReasoningEffort { get; set; } = string.Empty;
+}
+
+public sealed class BidOpsMimoTokenTestResultDto
+{
+    public bool Succeeded { get; set; }
+    public int StatusCode { get; set; }
+    public long ElapsedMilliseconds { get; set; }
+    public string Provider { get; set; } = BidOpsSystemValues.AiProviderMimo;
+    public string Model { get; set; } = string.Empty;
+    public string Endpoint { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public string ResponsePreview { get; set; } = string.Empty;
+}
+
+public sealed class BidOpsDeepSeekTokenTestResultDto
+{
+    public bool Succeeded { get; set; }
+    public int StatusCode { get; set; }
+    public long ElapsedMilliseconds { get; set; }
+    public string Provider { get; set; } = BidOpsSystemValues.AiProviderDeepSeek;
+    public string Model { get; set; } = string.Empty;
+    public string Endpoint { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public string ResponsePreview { get; set; } = string.Empty;
 }
 
 public sealed class BidOpsCodexCliScenarioSettingsDto

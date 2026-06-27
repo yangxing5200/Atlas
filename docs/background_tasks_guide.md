@@ -168,7 +168,7 @@ WHERE Id = @jobId
 }
 ```
 
-跨机器消费同一队列时，每台 Worker 必须使用不同的 Snowflake `WorkerId` / `DatacenterId`，并指向同一套 Global/Tenant 数据库。BidOps 当前本地文件存储模式还要求所有会处理附件、文本抽取或依赖文件内容的 Worker 能访问同一份 `BidOps:FileStore:LocalRootPath`；否则应先切到共享目录、MinIO 或 S3 兼容存储。AI 专用 Worker 仍需要安装并配置相同的 AI Provider，例如 Codex CLI 或 DeepSeek API Key。
+跨机器消费同一队列时，每台 Worker 必须使用不同的 Snowflake `WorkerId` / `DatacenterId`，并指向同一套 Global/Tenant 数据库。BidOps 当前本地文件存储模式还要求所有会处理附件、文本抽取或依赖文件内容的 Worker 能访问同一份 `BidOps:FileStore:LocalRootPath`；否则应先切到共享目录、MinIO 或 S3 兼容存储。AI 专用 Worker 仍需要安装并配置相同的 AI Provider，例如 Codex CLI、DeepSeek API Key 或 Mimo API Key。
 
 ## Demo: 租户缓存预热
 

@@ -2,7 +2,9 @@ using System.Reflection;
 using Atlas.BackgroundTasks;
 using Atlas.Core.Authorization;
 using Atlas.Core.Enums;
+using Atlas.Core.Security;
 using Atlas.Extensions.DependencyInjection;
+using Atlas.Infrastructure.Security;
 using Atlas.Modules.BidOps.Ai;
 using Atlas.Modules.BidOps.BackgroundJobs;
 using Atlas.Modules.BidOps.Crawling;
@@ -34,6 +36,13 @@ public sealed class BidOpsModule : AtlasModule
 
     public override void AddServices(AtlasModuleContext context)
     {
+        if (!string.IsNullOrWhiteSpace(context.Configuration["Security:Crypto:Key"]))
+        {
+            context.Services.AddOptions<CryptoOptions>()
+                .Bind(context.Configuration.GetSection("Security:Crypto"));
+            context.Services.TryAddSingleton<ICryptoService, CryptoService>();
+        }
+
         context.Services.AddScoped<IBidOpsCrawlService, BidOpsCrawlService>();
         context.Services.AddScoped<IBidOpsRawIngestionService, BidOpsRawIngestionService>();
         context.Services.AddScoped<IBidOpsAiParsingService, BidOpsAiParsingService>();
@@ -51,6 +60,7 @@ public sealed class BidOpsModule : AtlasModule
         context.Services.AddScoped<IBidOpsSupplierMaintenanceService, BidOpsSupplierMaintenanceService>();
         context.Services.AddScoped<IBidOpsMatchingService, BidOpsMatchingService>();
         context.Services.AddScoped<IBidOpsPursuitService, BidOpsPursuitService>();
+        context.Services.AddScoped<IBidOpsPricingInferenceService, BidOpsPricingInferenceService>();
         context.Services.AddScoped<IBidOpsReverseLifecycleClosureService, BidOpsReverseLifecycleClosureService>();
         context.Services.AddScoped<IBidOpsQueryService, BidOpsQueryService>();
         context.Services.AddScoped<IBidOpsOperationsQueryService, BidOpsOperationsQueryService>();
@@ -67,6 +77,10 @@ public sealed class BidOpsModule : AtlasModule
             client.Timeout = AiHttpTimeout;
         });
         context.Services.AddHttpClient<IBidOpsOutcomeSupplierAiExtractionService, BidOpsOutcomeSupplierAiExtractionService>(client =>
+        {
+            client.Timeout = AiHttpTimeout;
+        });
+        context.Services.AddHttpClient<IBidOpsLifecycleFieldEnrichmentAiService, BidOpsLifecycleFieldEnrichmentAiService>(client =>
         {
             client.Timeout = AiHttpTimeout;
         });
@@ -107,6 +121,10 @@ public sealed class BidOpsModule : AtlasModule
             ServiceDescriptor.Scoped<IBackgroundJobHandler, OutcomeSupplierExtractJobHandler>());
         context.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IBackgroundJobHandler, ReviewQualityBackfillJobHandler>());
+        context.Services.TryAddEnumerable(
+            ServiceDescriptor.Scoped<IBackgroundJobHandler, LifecycleReverseClosureJobHandler>());
+        context.Services.TryAddEnumerable(
+            ServiceDescriptor.Scoped<IBackgroundJobHandler, LifecycleFieldEnrichmentJobHandler>());
         context.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IRecurringTask, BidOpsScheduledScanTask>());
         context.Services.TryAddEnumerable(
@@ -517,6 +535,11 @@ public sealed class BidOpsModule : AtlasModule
                 BidOpsDataResources.OutcomeSupplierRecord,
                 "BidOps outcome supplier record",
                 entityType: typeof(OutcomeSupplierRecord).FullName,
+                supportedScopes: new[] { AtlasDataScopeType.AllTenant })
+            .AddDataResource(
+                BidOpsDataResources.LifecyclePackageLink,
+                "BidOps lifecycle package link",
+                entityType: typeof(LifecyclePackageLink).FullName,
                 supportedScopes: new[] { AtlasDataScopeType.AllTenant })
             .AddDataResource(
                 BidOpsDataResources.Matching,

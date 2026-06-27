@@ -750,6 +750,13 @@ public sealed class LifecyclePackageLinkDto
     public long? ProcurementRawNoticeId { get; set; }
     public long? CandidateRawNoticeId { get; set; }
     public long? AwardRawNoticeId { get; set; }
+    public LifecycleNoticeRefDto? ProcurementNotice { get; set; }
+    public LifecycleNoticeRefDto? CandidateNotice { get; set; }
+    public LifecycleNoticeRefDto? AwardNotice { get; set; }
+    public List<RawAttachmentDto> ProcurementAttachments { get; set; } = [];
+    public List<RawAttachmentDto> CandidateAttachments { get; set; } = [];
+    public List<RawAttachmentDto> AwardAttachments { get; set; } = [];
+    public string ProcurementNoticeMissingReason { get; set; } = string.Empty;
     public string ProjectCode { get; set; } = string.Empty;
     public string ProjectName { get; set; } = string.Empty;
     public string LotNo { get; set; } = string.Empty;
@@ -771,6 +778,43 @@ public sealed class LifecyclePackageLinkDto
     public long? ConfirmedBy { get; set; }
     public DateTime? ConfirmedAt { get; set; }
     public DateTime CreatedAt { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+}
+
+public sealed class LifecycleNoticeRefDto
+{
+    public long RawNoticeId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string NoticeType { get; set; } = string.Empty;
+    public string DetailUrl { get; set; } = string.Empty;
+    public DateTime? PublishTime { get; set; }
+    public string MatchSource { get; set; } = string.Empty;
+}
+
+public sealed class LifecycleProcurementNoticeCandidateDto
+{
+    public long SourceId { get; set; }
+    public long? ChannelId { get; set; }
+    public string NoticeType { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string DetailUrl { get; set; } = string.Empty;
+    public string Doctype { get; set; } = string.Empty;
+    public string MenuId { get; set; } = string.Empty;
+    public long NoticeId { get; set; }
+    public long? FirstPageDocId { get; set; }
+    public DateTime? PublishTime { get; set; }
+    public string PublishOrgName { get; set; } = string.Empty;
+    public string ProjectCode { get; set; } = string.Empty;
+    public long? ExistingRawNoticeId { get; set; }
+    public RawNoticeStatus? ExistingRawNoticeStatus { get; set; }
+    public bool IsExactProjectCodeMatch { get; set; }
+}
+
+public sealed class LifecycleProcurementNoticeImportResultDto
+{
+    public long? RawNoticeId { get; set; }
+    public EnqueueJobDto? ImportJob { get; set; }
+    public string Message { get; set; } = string.Empty;
 }
 
 public sealed class SupplierOutcomeStatDto

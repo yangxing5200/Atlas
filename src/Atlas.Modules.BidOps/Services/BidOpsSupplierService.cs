@@ -537,6 +537,7 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
             TenantId = tenantId,
             SupplierNo = BidOpsBusinessNumberBuilder.Build("SUP", id, now),
             Name = Truncate(name, 300),
+            NameNormalized = Truncate(BidOpsOrganizationNameNormalizer.NormalizeForMatch(name), 191),
             UnifiedSocialCreditCode = Truncate(request.UnifiedSocialCreditCode, 64),
             Region = Truncate(request.Region, 128),
             Address = Truncate(request.Address, 500),
@@ -563,7 +564,11 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
             ?? throw new AtlasException($"BidOps supplier does not exist: {id}");
 
         if (request.Name != null)
-            supplier.Name = Truncate(CleanRequired(request.Name, "供应商名称"), 300);
+        {
+            var name = CleanRequired(request.Name, "供应商名称");
+            supplier.Name = Truncate(name, 300);
+            supplier.NameNormalized = Truncate(BidOpsOrganizationNameNormalizer.NormalizeForMatch(name), 191);
+        }
         if (request.UnifiedSocialCreditCode != null)
             supplier.UnifiedSocialCreditCode = Truncate(request.UnifiedSocialCreditCode, 64);
         if (request.Region != null)

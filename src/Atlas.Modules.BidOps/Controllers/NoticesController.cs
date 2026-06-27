@@ -23,4 +23,12 @@ public sealed class NoticesController : ControllerBase
     {
         return Ok(await _queries.SearchNoticesAsync(query, ct));
     }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.BusinessRead)]
+    [HttpGet("{id:long}")]
+    public async Task<ActionResult<NoticeDto>> GetAsync(long id, CancellationToken ct)
+    {
+        var notice = await _queries.GetNoticeAsync(id, ct);
+        return notice == null ? NotFound() : Ok(notice);
+    }
 }

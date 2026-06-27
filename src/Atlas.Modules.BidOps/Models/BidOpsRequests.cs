@@ -58,6 +58,29 @@ public sealed class PackageSearchQuery : BidOpsPagedQuery
     public long? NoticeId { get; set; }
 }
 
+public sealed class LifecyclePackageLinkSearchQuery : BidOpsPagedQuery
+{
+    public string? ProjectCode { get; set; }
+
+    public string? LotNo { get; set; }
+
+    public string? LotName { get; set; }
+
+    public string? PackageNo { get; set; }
+
+    public string? SupplierName { get; set; }
+
+    public string? LinkStatus { get; set; }
+
+    public string? MatchType { get; set; }
+
+    public bool? RequiresManualReview { get; set; }
+
+    public long? RawNoticeId { get; set; }
+
+    public string? SortBy { get; set; }
+}
+
 public sealed class OpportunitySearchQuery : BidOpsPagedQuery
 {
     public long? NoticeId { get; set; }
@@ -195,6 +218,26 @@ public sealed class UpdateBidOpsCodexCliScenarioSettingsRequest
     public string? ReasoningEffort { get; set; }
 }
 
+public sealed class UpdateBidOpsDeepSeekTokenRequest
+{
+    public string ApiKey { get; set; } = string.Empty;
+}
+
+public sealed class TestBidOpsDeepSeekTokenRequest
+{
+    public string? ApiKey { get; set; }
+}
+
+public sealed class UpdateBidOpsMimoTokenRequest
+{
+    public string ApiKey { get; set; } = string.Empty;
+}
+
+public sealed class TestBidOpsMimoTokenRequest
+{
+    public string? ApiKey { get; set; }
+}
+
 public sealed class UpdateBidOpsTaskPauseRequest
 {
     public bool Paused { get; set; }
@@ -291,6 +334,39 @@ public sealed class ReviewOutcomeSupplierRecordEditRequest
     public decimal? ProcurementAgencyServiceFeeAmount { get; set; }
 
     public string? EvidenceText { get; set; }
+}
+
+public sealed class LifecyclePackageLinkDecisionRequest
+{
+    public string Remark { get; set; } = string.Empty;
+
+    public decimal? FinalAwardAmount { get; set; }
+
+    public string? FinalAwardAmountSource { get; set; }
+
+    public bool? RequiresManualReview { get; set; }
+}
+
+public sealed class LifecycleFieldEnrichmentRequest
+{
+    public string? ReviewerPrompt { get; set; }
+}
+
+public sealed class LifecycleProcurementNoticeImportRequest
+{
+    public string DetailUrl { get; set; } = string.Empty;
+
+    public string? Title { get; set; }
+
+    public string? NoticeType { get; set; }
+
+    public string? ProjectCode { get; set; }
+
+    public long? SourceId { get; set; }
+
+    public long? ChannelId { get; set; }
+
+    public bool ForceRefresh { get; set; }
 }
 
 public sealed class ReparseRawNoticeRequest

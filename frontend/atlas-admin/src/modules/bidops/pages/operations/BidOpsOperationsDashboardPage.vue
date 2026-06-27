@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Check, Refresh, Tickets, VideoPause, VideoPlay, Warning } from '@element-plus/icons-vue'
+import { Check, Connection, Key, Refresh, Tickets, VideoPause, VideoPlay, Warning } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { bidOpsOperationsApi } from '@/api/bidops/operations.api'
@@ -9,15 +9,27 @@ import PageContainer from '@/shared/components/PageContainer.vue'
 import { formatDateTime } from '@/shared/utils/date'
 import { usePermission } from '@/shared/composables/usePermission'
 import JobStatusTag from '@/modules/operations/components/JobStatusTag.vue'
-import type { BidOpsOperationsDashboardDto } from '@/modules/operations/types'
+import type {
+  BidOpsDeepSeekTokenTestResultDto,
+  BidOpsMimoTokenTestResultDto,
+  BidOpsOperationsDashboardDto,
+} from '@/modules/operations/types'
 import { formatJobType, severityType } from '@/modules/operations/utils/display'
 import { BIDOPS_PERMISSIONS } from '../../constants'
 
 const router = useRouter()
 const loading = ref(false)
 const aiProviderSaving = ref(false)
+const deepSeekTokenSaving = ref(false)
+const deepSeekTokenTesting = ref(false)
+const mimoTokenSaving = ref(false)
+const mimoTokenTesting = ref(false)
 const runtimeSaving = ref(false)
 const aiProvider = ref('')
+const deepSeekToken = ref('')
+const mimoToken = ref('')
+const deepSeekTestResult = ref<BidOpsDeepSeekTokenTestResultDto | null>(null)
+const mimoTestResult = ref<BidOpsMimoTokenTestResultDto | null>(null)
 const codexScenarioForms = ref<Record<string, { model: string; reasoningEffort: string }>>({})
 const codexScenarioSaving = ref<Record<string, boolean>>({})
 const dashboard = ref<BidOpsOperationsDashboardDto | null>(null)
@@ -60,6 +72,52 @@ const aiProviderLabel = computed(() => {
 })
 const aiReasoningLabel = computed(() => aiSettings.value?.reasoningEffort || '-')
 const codexScenarios = computed(() => aiSettings.value?.codexCliScenarios || [])
+const deepSeekTokenSourceLabel = computed(() => {
+  const source = aiSettings.value?.deepSeekTokenSource || 'None'
+  if (source === 'Runtime') return '运行时'
+  if (source === 'DEEPSEEK_API_KEY') return '环境变量'
+  if (source === 'BidOps:DeepSeek:ApiKey' || source === 'BidOps:Ai:ApiKey') return '配置文件'
+  return '未配置'
+})
+const deepSeekTokenUpdatedLabel = computed(() => {
+  const settings = aiSettings.value
+  if (!settings?.deepSeekTokenUpdatedAt) return ''
+
+  return `${settings.deepSeekTokenUpdatedByUserName || '-'} · ${formatDateTime(settings.deepSeekTokenUpdatedAt)}`
+})
+const deepSeekTestAlertType = computed(() => (deepSeekTestResult.value?.succeeded ? 'success' : 'warning'))
+const deepSeekTestDescription = computed(() => {
+  const result = deepSeekTestResult.value
+  if (!result) return ''
+
+  const status = result.statusCode > 0 ? `HTTP ${result.statusCode}` : '无 HTTP 状态'
+  const elapsed = `${result.elapsedMilliseconds}ms`
+  const endpoint = result.endpoint || '-'
+  return `${status} · ${elapsed} · ${endpoint}`
+})
+const mimoTokenSourceLabel = computed(() => {
+  const source = aiSettings.value?.mimoTokenSource || 'None'
+  if (source === 'Runtime') return '运行时'
+  if (source === 'MIMO_API_KEY') return '环境变量'
+  if (source === 'BidOps:Mimo:ApiKey' || source === 'BidOps:Ai:ApiKey') return '配置文件'
+  return '未配置'
+})
+const mimoTokenUpdatedLabel = computed(() => {
+  const settings = aiSettings.value
+  if (!settings?.mimoTokenUpdatedAt) return ''
+
+  return `${settings.mimoTokenUpdatedByUserName || '-'} · ${formatDateTime(settings.mimoTokenUpdatedAt)}`
+})
+const mimoTestAlertType = computed(() => (mimoTestResult.value?.succeeded ? 'success' : 'warning'))
+const mimoTestDescription = computed(() => {
+  const result = mimoTestResult.value
+  if (!result) return ''
+
+  const status = result.statusCode > 0 ? `HTTP ${result.statusCode}` : '无 HTTP 状态'
+  const elapsed = `${result.elapsedMilliseconds}ms`
+  const endpoint = result.endpoint || '-'
+  return `${status} · ${elapsed} · ${endpoint}`
+})
 const runtimeStatusLabel = computed(() => (runtimeStatus.value?.taskPaused ? '已暂停' : '运行中'))
 const runtimeSummary = computed(() =>
   runtimeStatus.value?.taskPaused ? '新任务暂停执行' : '后台任务正常接收与执行',
@@ -159,6 +217,88 @@ async function saveCodexScenarioSettings(scenario: string) {
     ElMessage.success('Codex CLI 场景设置已应用到 Worker')
   } finally {
     codexScenarioSaving.value = { ...codexScenarioSaving.value, [scenario]: false }
+  }
+}
+
+async function saveDeepSeekToken() {
+  const apiKey = deepSeekToken.value.trim()
+  if (!apiKey) {
+    ElMessage.warning('请填写 DeepSeek token')
+    return
+  }
+
+  deepSeekTokenSaving.value = true
+  try {
+    const updated = await bidOpsOperationsApi.updateDeepSeekToken({ apiKey })
+    if (dashboard.value) dashboard.value.aiSettings = updated
+    syncAiSettingsForm(updated)
+    deepSeekToken.value = ''
+    deepSeekTestResult.value = null
+    ElMessage.success('DeepSeek token 已保存，Worker 下次任务会使用最新 token')
+  } finally {
+    deepSeekTokenSaving.value = false
+  }
+}
+
+async function testDeepSeekToken() {
+  const apiKey = deepSeekToken.value.trim()
+  if (!apiKey && !aiSettings.value?.deepSeekTokenConfigured) {
+    ElMessage.warning('请先填写或保存 DeepSeek token')
+    return
+  }
+
+  deepSeekTokenTesting.value = true
+  try {
+    const result = await bidOpsOperationsApi.testDeepSeekToken({ apiKey: apiKey || null })
+    deepSeekTestResult.value = result
+    if (result.succeeded) {
+      ElMessage.success('DeepSeek token 测试通过')
+    } else {
+      ElMessage.warning(result.message || 'DeepSeek token 测试未通过')
+    }
+  } finally {
+    deepSeekTokenTesting.value = false
+  }
+}
+
+async function saveMimoToken() {
+  const apiKey = mimoToken.value.trim()
+  if (!apiKey) {
+    ElMessage.warning('请填写 Mimo token')
+    return
+  }
+
+  mimoTokenSaving.value = true
+  try {
+    const updated = await bidOpsOperationsApi.updateMimoToken({ apiKey })
+    if (dashboard.value) dashboard.value.aiSettings = updated
+    syncAiSettingsForm(updated)
+    mimoToken.value = ''
+    mimoTestResult.value = null
+    ElMessage.success('Mimo token 已保存，Worker 下次任务会使用最新 token')
+  } finally {
+    mimoTokenSaving.value = false
+  }
+}
+
+async function testMimoToken() {
+  const apiKey = mimoToken.value.trim()
+  if (!apiKey && !aiSettings.value?.mimoTokenConfigured) {
+    ElMessage.warning('请先填写或保存 Mimo token')
+    return
+  }
+
+  mimoTokenTesting.value = true
+  try {
+    const result = await bidOpsOperationsApi.testMimoToken({ apiKey: apiKey || null })
+    mimoTestResult.value = result
+    if (result.succeeded) {
+      ElMessage.success('Mimo token 测试通过')
+    } else {
+      ElMessage.warning(result.message || 'Mimo token 测试未通过')
+    }
+  } finally {
+    mimoTokenTesting.value = false
   }
 }
 
@@ -307,6 +447,106 @@ onMounted(loadData)
             <span>更新人</span>
             <strong>{{ aiSettings.updatedByUserName || '-' }}</strong>
           </div>
+        </div>
+        <div v-if="aiSettings.effectiveProvider === 'DeepSeek'" class="mimo-token-panel">
+          <div class="mimo-token-status">
+            <el-tag :type="aiSettings.deepSeekTokenConfigured ? 'success' : 'warning'" effect="light">
+              {{ aiSettings.deepSeekTokenConfigured ? 'Token 已配置' : 'Token 未配置' }}
+            </el-tag>
+            <span>{{ deepSeekTokenSourceLabel }}</span>
+            <strong>{{ aiSettings.deepSeekTokenMasked || '-' }}</strong>
+            <small v-if="deepSeekTokenUpdatedLabel">{{ deepSeekTokenUpdatedLabel }}</small>
+          </div>
+          <div class="mimo-token-actions">
+            <el-input
+              v-model="deepSeekToken"
+              class="mimo-token-input"
+              type="password"
+              show-password
+              clearable
+              maxlength="320"
+              placeholder="填写新的 DeepSeek token"
+              :prefix-icon="Key"
+              :disabled="!canManageOps || deepSeekTokenSaving"
+              @keyup.enter="saveDeepSeekToken"
+            />
+            <el-button
+              type="primary"
+              :icon="Check"
+              :loading="deepSeekTokenSaving"
+              :disabled="!canManageOps || !deepSeekToken.trim()"
+              @click="saveDeepSeekToken"
+            >
+              保存 Token
+            </el-button>
+            <el-button
+              :icon="Connection"
+              :loading="deepSeekTokenTesting"
+              :disabled="!canManageOps || (!deepSeekToken.trim() && !aiSettings.deepSeekTokenConfigured)"
+              @click="testDeepSeekToken"
+            >
+              测试 DeepSeek
+            </el-button>
+          </div>
+          <el-alert
+            v-if="deepSeekTestResult"
+            :title="deepSeekTestResult.message || (deepSeekTestResult.succeeded ? 'DeepSeek token 测试通过' : 'DeepSeek token 测试未通过')"
+            :description="deepSeekTestDescription"
+            :type="deepSeekTestAlertType"
+            show-icon
+            :closable="false"
+          />
+          <pre v-if="deepSeekTestResult?.responsePreview" class="mimo-token-test-preview">{{ deepSeekTestResult.responsePreview }}</pre>
+        </div>
+        <div v-if="aiSettings.effectiveProvider === 'Mimo'" class="mimo-token-panel">
+          <div class="mimo-token-status">
+            <el-tag :type="aiSettings.mimoTokenConfigured ? 'success' : 'warning'" effect="light">
+              {{ aiSettings.mimoTokenConfigured ? 'Token 已配置' : 'Token 未配置' }}
+            </el-tag>
+            <span>{{ mimoTokenSourceLabel }}</span>
+            <strong>{{ aiSettings.mimoTokenMasked || '-' }}</strong>
+            <small v-if="mimoTokenUpdatedLabel">{{ mimoTokenUpdatedLabel }}</small>
+          </div>
+          <div class="mimo-token-actions">
+            <el-input
+              v-model="mimoToken"
+              class="mimo-token-input"
+              type="password"
+              show-password
+              clearable
+              maxlength="320"
+              placeholder="填写新的 Mimo token"
+              :prefix-icon="Key"
+              :disabled="!canManageOps || mimoTokenSaving"
+              @keyup.enter="saveMimoToken"
+            />
+            <el-button
+              type="primary"
+              :icon="Check"
+              :loading="mimoTokenSaving"
+              :disabled="!canManageOps || !mimoToken.trim()"
+              @click="saveMimoToken"
+            >
+              保存 Token
+            </el-button>
+            <el-button
+              :icon="Connection"
+              :loading="mimoTokenTesting"
+              :disabled="!canManageOps || (!mimoToken.trim() && !aiSettings.mimoTokenConfigured)"
+              @click="testMimoToken"
+            >
+              测试 Mimo
+            </el-button>
+          </div>
+          <el-alert
+            v-if="mimoTestResult"
+            :title="mimoTestResult.message || (mimoTestResult.succeeded ? 'Mimo token 测试通过' : 'Mimo token 测试未通过')"
+            :description="mimoTestDescription"
+            :type="mimoTestAlertType"
+            show-icon
+            :closable="false"
+          />
+          <pre v-if="mimoTestResult?.responsePreview" class="mimo-token-test-preview">{{ mimoTestResult.responsePreview }}</pre>
         </div>
         <el-alert
           v-if="aiSettings.effectiveProvider === 'CodexCli'"
@@ -509,6 +749,50 @@ onMounted(loadData)
   --el-switch-off-color: #1f8f5f;
 }
 
+.mimo-token-panel {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid #edf1f7;
+}
+
+.mimo-token-status,
+.mimo-token-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mimo-token-status span,
+.mimo-token-status small {
+  color: #687385;
+  font-size: 13px;
+}
+
+.mimo-token-status strong {
+  color: #17202a;
+  font-size: 14px;
+}
+
+.mimo-token-input {
+  max-width: 440px;
+}
+
+.mimo-token-test-preview {
+  overflow: auto;
+  max-height: 120px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid #dce3ee;
+  border-radius: 6px;
+  background: #f7f9fc;
+  color: #394556;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .codex-scenarios {
   display: grid;
   gap: 12px;
@@ -576,6 +860,17 @@ onMounted(loadData)
   .ai-panel-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .mimo-token-status,
+  .mimo-token-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mimo-token-input {
+    max-width: none;
+    width: 100%;
   }
 
   .codex-scenario-row {

@@ -26,7 +26,8 @@ public sealed record AwardEvidence(
     decimal? AwardAmount,
     string AmountSource,
     EvidenceSourceRef Evidence,
-    double Confidence);
+    double Confidence,
+    BidOpsRateEvidence? RateEvidence = null);
 
 public sealed record CandidateEvidence(
     string? ProjectCode,
@@ -64,7 +65,73 @@ public sealed record TenderPackageEvidence(
     string? PerformanceRequirement,
     string? PersonnelRequirement,
     EvidenceSourceRef Evidence,
+    double Confidence,
+    decimal? GuidePrice = null);
+
+public sealed record BidOpsRateEvidence(
+    string RateType,
+    decimal RateValue,
+    string SourceText,
+    EvidenceSourceRef Evidence,
     double Confidence);
+
+public static class BidOpsAmountKinds
+{
+    public const string DirectAwardAmount = "DirectAwardAmount";
+    public const string CandidateFinalQuote = "CandidateFinalQuote";
+    public const string InferredFromDiscountRate = "InferredFromDiscountRate";
+    public const string InferredFromReductionRate = "InferredFromReductionRate";
+    public const string InferredFromCoefficient = "InferredFromCoefficient";
+    public const string EstimatedFrameworkValue = "EstimatedFrameworkValue";
+    public const string Unknown = "Unknown";
+}
+
+public static class BidOpsAmountSourceStages
+{
+    public const string AwardNotice = "AwardNotice";
+    public const string CandidateNotice = "CandidateNotice";
+    public const string TenderNotice = "TenderNotice";
+    public const string Unknown = "Unknown";
+}
+
+public static class BidOpsRateTypes
+{
+    public const string DiscountRate = "DiscountRate";
+    public const string ReductionRate = "ReductionRate";
+    public const string Coefficient = "Coefficient";
+    public const string Unknown = "Unknown";
+}
+
+public static class BidOpsBaseAmountTypes
+{
+    public const string PackageGuidePrice = "PackageGuidePrice";
+    public const string PackageBudget = "PackageBudget";
+    public const string PackageMaxPrice = "PackageMaxPrice";
+    public const string LotGuidePrice = "LotGuidePrice";
+    public const string ProjectGuidePrice = "ProjectGuidePrice";
+    public const string UnitPrice = "UnitPrice";
+    public const string FrameworkEstimatedAmount = "FrameworkEstimatedAmount";
+    public const string Unknown = "Unknown";
+}
+
+public sealed record BidOpsPricingDecision(
+    decimal? AmountValue,
+    string AmountKind,
+    string AmountSourceStage,
+    long? AmountSourceNoticeId,
+    long? AmountSourceAttachmentId,
+    string? AmountSourceTableOrSheet,
+    int? AmountSourceRow,
+    decimal? BaseAmount,
+    string BaseAmountType,
+    decimal? RateValue,
+    string? RateType,
+    string? Formula,
+    double Confidence,
+    bool RequiresManualReview,
+    string? EvidenceText,
+    IReadOnlyList<string> Reasons,
+    IReadOnlyList<string> MissingReasons);
 
 public sealed record LifecyclePackageClosure(
     string? ProjectCode,
@@ -84,7 +151,9 @@ public sealed record LifecyclePackageClosure(
     double LinkConfidence,
     IReadOnlyList<string> MatchReasons,
     IReadOnlyList<string> MissingFields,
-    bool RequiresManualReview);
+    bool RequiresManualReview,
+    BidOpsPricingDecision? PricingDecision = null,
+    CandidateEvidence? MatchedCandidate = null);
 
 public sealed record LifecycleLinkSuggestion(
     AwardEvidence Award,
@@ -109,7 +178,17 @@ public sealed record BidOpsNoticeMatch(
     DateTime? PublishTime,
     double Confidence,
     IReadOnlyList<string> MatchReasons,
-    string? MissingReason);
+    string? MissingReason,
+    string ConfidenceLevel = "Low",
+    IReadOnlyList<string>? MissingReasons = null);
+
+public sealed record BidOpsReverseClosureFailure(
+    string Code,
+    string Stage,
+    string Message,
+    long? RawNoticeId = null,
+    long? RawAttachmentId = null,
+    string? RecommendedAction = null);
 
 public sealed class BidOpsReverseCloseUrlRequest
 {
@@ -118,6 +197,21 @@ public sealed class BidOpsReverseCloseUrlRequest
     public bool ResetDerivedData { get; set; }
 
     public bool PersistEvidence { get; set; } = true;
+
+    public bool PersistLifecycleLinks { get; set; }
+}
+
+public sealed class BidOpsReverseCloseJobRequest
+{
+    public long? RawNoticeId { get; set; }
+
+    public string Url { get; set; } = string.Empty;
+
+    public bool PersistEvidence { get; set; } = true;
+
+    public bool PersistLifecycleLinks { get; set; }
+
+    public bool PersistLifecycleLinksOnCompletion { get; set; } = true;
 }
 
 public sealed class BidOpsReverseClosureDebugResult
@@ -139,6 +233,10 @@ public sealed class BidOpsReverseClosureDebugResult
     public List<TenderPackageEvidence> TenderPackageEvidence { get; set; } = [];
 
     public List<LifecyclePackageClosure> Closures { get; set; } = [];
+
+    public List<LifecyclePackageLinkDto> PersistedLifecycleLinks { get; set; } = [];
+
+    public List<BidOpsReverseClosureFailure> Failures { get; set; } = [];
 
     public List<string> Warnings { get; set; } = [];
 }
