@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Atlas.Modules.BidOps.Crawling;
 
@@ -197,7 +198,7 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var projectCode = BidOpsTextQuality.CleanExtractedValue(request.ProjectCode);
+        var projectCode = NormalizeProjectCodeForSearch(request.ProjectCode);
         if (string.IsNullOrWhiteSpace(projectCode))
             return Array.Empty<StateGridEcpPublicNoticeCandidate>();
 
@@ -220,30 +221,25 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
                 pageIndex: 1,
                 pageSize,
                 ct,
-                keyword: projectCode);
+                projectCode: projectCode);
 
-            foreach (var notice in page.Notices)
+            AddPublicNoticeCandidates(candidates, source, channels, menu, page);
+        }
+
+        if (candidates.Count < pageSize)
+        {
+            foreach (var menu in menus)
             {
-                var menuId = string.IsNullOrWhiteSpace(notice.MenuId) ? menu.MenuId : notice.MenuId;
-                var channel = FindChannelForMenu(channels, menuId) ??
-                              (menu.ChannelId.HasValue ? channels.FirstOrDefault(x => x.Id == menu.ChannelId.Value) : null);
-                var noticeType = string.IsNullOrWhiteSpace(channel?.NoticeType)
-                    ? ResolveNoticeType(menuId, notice.Doctype)
-                    : channel!.NoticeType;
+                ct.ThrowIfCancellationRequested();
+                var page = await FetchApiNoticeListAsync(
+                    source,
+                    menu.MenuId,
+                    pageIndex: 1,
+                    pageSize,
+                    ct,
+                    keyword: projectCode);
 
-                candidates.Add(new StateGridEcpPublicNoticeCandidate(
-                    source.Id,
-                    channel?.Id,
-                    noticeType,
-                    notice.Title,
-                    notice.DetailUrl,
-                    notice.Doctype,
-                    menuId,
-                    notice.NoticeId,
-                    notice.FirstPageDocId,
-                    notice.PublishTime,
-                    notice.PublishOrgName,
-                    notice.ProjectCode));
+                AddPublicNoticeCandidates(candidates, source, channels, menu, page);
             }
         }
 
@@ -259,6 +255,38 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
             .ThenByDescending(x => x.PublishTime ?? DateTime.MinValue)
             .Take(pageSize)
             .ToArray();
+    }
+
+    private static void AddPublicNoticeCandidates(
+        List<StateGridEcpPublicNoticeCandidate> candidates,
+        CrawlSource source,
+        IReadOnlyList<CrawlChannel> channels,
+        StateGridEcpSearchMenu menu,
+        StateGridEcpNoticeListPage page)
+    {
+        foreach (var notice in page.Notices)
+        {
+            var menuId = string.IsNullOrWhiteSpace(notice.MenuId) ? menu.MenuId : notice.MenuId;
+            var channel = FindChannelForMenu(channels, menuId) ??
+                          (menu.ChannelId.HasValue ? channels.FirstOrDefault(x => x.Id == menu.ChannelId.Value) : null);
+            var noticeType = string.IsNullOrWhiteSpace(channel?.NoticeType)
+                ? ResolveNoticeType(menuId, notice.Doctype)
+                : channel!.NoticeType;
+
+            candidates.Add(new StateGridEcpPublicNoticeCandidate(
+                source.Id,
+                channel?.Id,
+                noticeType,
+                notice.Title,
+                notice.DetailUrl,
+                notice.Doctype,
+                menuId,
+                notice.NoticeId,
+                notice.FirstPageDocId,
+                notice.PublishTime,
+                notice.PublishOrgName,
+                notice.ProjectCode));
+        }
     }
 
     private async Task<StateGridEcpCrawlResult> CrawlWcmApiChannelAsync(
@@ -727,9 +755,26 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         return !string.IsNullOrWhiteSpace(left) &&
                !string.IsNullOrWhiteSpace(right) &&
                string.Equals(
-                   BidOpsTextQuality.CleanExtractedValue(left),
-                   BidOpsTextQuality.CleanExtractedValue(right),
+                   NormalizeProjectCodeForSearch(left),
+                   NormalizeProjectCodeForSearch(right),
                    StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeProjectCodeForSearch(string? value)
+    {
+        var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+        if (string.IsNullOrWhiteSpace(cleaned))
+            return string.Empty;
+
+        cleaned = Regex.Replace(
+            cleaned,
+            @"^(?:code|项目编号|项目编码|采购编号|招标编号|批次编号|采购项目编号|招标项目编号)\s*[:：=]\s*",
+            string.Empty,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var match = Regex.Match(cleaned, @"[A-Za-z0-9][A-Za-z0-9_.\-/]*", RegexOptions.CultureInvariant);
+        return match.Success
+            ? match.Value.ToUpperInvariant()
+            : cleaned.Trim(' ', '\t', '。', '.', '；', ';', '，', ',', '、', '）', ')').ToUpperInvariant();
     }
 
     private async Task<string> FetchStringAsync(Uri uri, CrawlSource source, CancellationToken ct)
@@ -755,26 +800,41 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         int pageIndex,
         int pageSize,
         CancellationToken ct,
-        string? keyword = null)
+        string? keyword = null,
+        string? projectCode = null)
     {
         var searchKey = string.IsNullOrWhiteSpace(keyword)
             ? string.Empty
             : keyword.Trim();
-        var payload = JsonSerializer.Serialize(new
+        var payload = BuildApiNoticeListPayload(pageIndex, pageSize, menuId, searchKey, projectCode);
+        var json = await PostJsonAsync(BuildApiUri(source, "index/noteList"), source, payload, ct);
+        return StateGridEcpWcmParser.ParseNoticeListPage(json, source.BaseUrl, pageSize);
+    }
+
+    private static string BuildApiNoticeListPayload(
+        int pageIndex,
+        int pageSize,
+        string menuId,
+        string? keyword,
+        string? projectCode)
+    {
+        var searchKey = string.IsNullOrWhiteSpace(keyword)
+            ? string.Empty
+            : keyword.Trim();
+        var purOrgCode = NormalizeProjectCodeForSearch(projectCode);
+        return JsonSerializer.Serialize(new
         {
             index = pageIndex,
             size = pageSize,
             firstPageMenuId = menuId,
             purOrgStatus = string.Empty,
-            purOrgCode = string.Empty,
+            purOrgCode,
             purType = string.Empty,
             noticeType = string.Empty,
             orgId = string.Empty,
             key = searchKey,
             orgName = string.Empty
         });
-        var json = await PostJsonAsync(BuildApiUri(source, "index/noteList"), source, payload, ct);
-        return StateGridEcpWcmParser.ParseNoticeListPage(json, source.BaseUrl, pageSize);
     }
 
     private async Task<CrawlCheckpoint> ResolveCheckpointAsync(

@@ -97,9 +97,15 @@ public static class BidOpsTenderPackageEvidenceParser
             if (string.IsNullOrWhiteSpace(packageNo))
                 continue;
 
-            var budget = BidOpsMoneyNormalizer.TryNormalize(BidOpsEvidenceTableParser.GetCell(row, budgetIndex));
-            var maxPrice = BidOpsMoneyNormalizer.TryNormalize(BidOpsEvidenceTableParser.GetCell(row, maxPriceIndex));
-            var guidePrice = BidOpsMoneyNormalizer.TryNormalize(BidOpsEvidenceTableParser.GetCell(row, guidePriceIndex));
+            var budget = BidOpsMoneyNormalizer.TryNormalize(
+                BidOpsEvidenceTableParser.GetCell(row, budgetIndex),
+                AmountUnitContext(table, budgetIndex));
+            var maxPrice = BidOpsMoneyNormalizer.TryNormalize(
+                BidOpsEvidenceTableParser.GetCell(row, maxPriceIndex),
+                AmountUnitContext(table, maxPriceIndex));
+            var guidePrice = BidOpsMoneyNormalizer.TryNormalize(
+                BidOpsEvidenceTableParser.GetCell(row, guidePriceIndex),
+                AmountUnitContext(table, guidePriceIndex));
             results.Add(new TenderPackageEvidence(
                 ProjectCode: EmptyToNull(FirstNonEmpty(BidOpsEvidenceTableParser.GetCell(row, columns.ProjectIndex), projectCodeFallback)),
                 ProjectName: EmptyToNull(FirstNonEmpty(BidOpsEvidenceTableParser.GetCell(row, columns.ProjectNameIndex), projectNameFallback)),
@@ -241,6 +247,16 @@ public static class BidOpsTenderPackageEvidenceParser
         }
 
         return string.Empty;
+    }
+
+    private static string AmountUnitContext(BidOpsExtractedTable table, int columnIndex)
+    {
+        if (columnIndex < 0)
+            return table.ContextText;
+
+        return BidOpsMoneyNormalizer.BuildUnitContext(
+            table.Headers.ElementAtOrDefault(columnIndex),
+            table.ContextText);
     }
 
     private sealed record CommonColumns(

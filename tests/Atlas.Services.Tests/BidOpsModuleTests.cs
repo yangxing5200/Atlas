@@ -61,6 +61,31 @@ public sealed class BidOpsModuleTests
     }
 
     [Fact]
+    public void BidOpsQueryService_ResolvesNoticeLifecycleReviewStatus()
+    {
+        var method = typeof(BidOpsQueryService).GetMethod(
+            "ResolveLifecycleReviewStatus",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        Assert.Equal(
+            BidOpsLifecycleReviewStatuses.NotAnalyzed,
+            method!.Invoke(null, new object?[] { Array.Empty<string>() }));
+        Assert.Equal(
+            BidOpsLifecycleReviewStatuses.PendingReview,
+            method.Invoke(null, new object?[] { new[] { BidOpsLifecycleLinkStatuses.Suggested } }));
+        Assert.Equal(
+            BidOpsLifecycleReviewStatuses.Approved,
+            method.Invoke(null, new object?[] { new[] { BidOpsLifecycleLinkStatuses.Confirmed, BidOpsLifecycleLinkStatuses.Confirmed } }));
+        Assert.Equal(
+            BidOpsLifecycleReviewStatuses.PartiallyApproved,
+            method.Invoke(null, new object?[] { new[] { BidOpsLifecycleLinkStatuses.Confirmed, BidOpsLifecycleLinkStatuses.Suggested } }));
+        Assert.Equal(
+            BidOpsLifecycleReviewStatuses.Rejected,
+            method.Invoke(null, new object?[] { new[] { BidOpsLifecycleLinkStatuses.Rejected } }));
+    }
+
+    [Fact]
     public void RawNoticeConfiguration_UsesBusinessIdentityUniqueIndex()
     {
         var modelBuilder = new ModelBuilder();
@@ -1295,6 +1320,53 @@ public sealed class BidOpsModuleTests
     }
 
     [Fact]
+    public void BidOpsLifecycleFieldEnrichmentAiService_SourceBundleKeepsNeighborRowsAroundRelevantRows()
+    {
+        var lines = Enumerable.Range(0, 120)
+            .Select(i => $"普通说明行 {i:D2}，没有字段关键词。")
+            .Concat([
+                "上一行无字段关键词但属于同一采购范围表格上下文",
+                "包号：包7",
+                "下一行无字段关键词但包含同一行拆分后的数量上下文",
+                "普通说明行 121，仍然无字段关键词。"
+            ]);
+        var request = new BidOpsLifecycleFieldEnrichmentRequest(
+            1,
+            "282602",
+            "测试采购项目",
+            string.Empty,
+            string.Empty,
+            "包7",
+            string.Empty,
+            "四川测试科技有限公司",
+            null,
+            string.Empty,
+            "{}",
+            [
+                new BidOpsLifecycleFieldEvidenceInput(
+                    "ProcurementNotice",
+                    100,
+                    200,
+                    "测试采购公告",
+                    "ProcurementAnnouncement",
+                    "https://example.test/procurement",
+                    "采购范围.xlsx",
+                    string.Join(Environment.NewLine, lines))
+            ]);
+        var method = typeof(BidOpsLifecycleFieldEnrichmentAiService).GetMethod(
+            "BuildSourceBundle",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        var source = Assert.IsType<string>(method!.Invoke(null, new object?[] { request, 1200 }));
+
+        Assert.Contains("【文档开头】", source, StringComparison.Ordinal);
+        Assert.Contains("包号：包7", source, StringComparison.Ordinal);
+        Assert.Contains("上一行无字段关键词但属于同一采购范围表格上下文", source, StringComparison.Ordinal);
+        Assert.Contains("下一行无字段关键词但包含同一行拆分后的数量上下文", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BidOpsCodexCliClient_ResolvesWindowsCmdShimBeforeExtensionlessFile()
     {
         if (!OperatingSystem.IsWindows())
@@ -1901,7 +1973,7 @@ public sealed class BidOpsModuleTests
     }
 
     [Fact]
-    public void BidOpsOutcomeSupplierExtractionService_ReviewerPromptUsesAiRowsAsReplacement()
+    public void BidOpsOutcomeSupplierExtractionService_ReviewerPromptKeepsAiCorrectionForSamePackage()
     {
         var deterministic = new List<BidOpsOutcomeSupplierExtract>
         {
@@ -1935,6 +2007,72 @@ public sealed class BidOpsModuleTests
         var record = Assert.Single(selected);
         Assert.Equal("DeepSeek修正厂家有限公司", record.SupplierName);
         Assert.Equal(0, record.ExtractionOrder);
+    }
+
+    [Fact]
+    public void BidOpsOutcomeSupplierExtractionService_ReviewerPromptKeepsDeterministicRowsMissingFromAi()
+    {
+        var deterministic = new List<BidOpsOutcomeSupplierExtract>
+        {
+            new()
+            {
+                SupplierName = "第一行规则厂家有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                LotName = "电网工程施工-220kV施工",
+                PackageNo = "包1",
+                Confidence = 0.8m
+            },
+            new()
+            {
+                SupplierName = "第二行规则厂家有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                LotName = "电网工程施工-66kV施工",
+                PackageNo = "包1",
+                Confidence = 0.8m
+            },
+            new()
+            {
+                SupplierName = "第三行规则厂家有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                LotName = "技术服务-服务",
+                PackageNo = "包1",
+                Confidence = 0.8m
+            }
+        };
+        var ai = new List<BidOpsOutcomeSupplierExtract>
+        {
+            new()
+            {
+                SupplierName = "第一行AI修正厂家有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                LotName = "电网工程施工-220kV施工",
+                PackageNo = "包1",
+                Confidence = 0.96m
+            },
+            new()
+            {
+                SupplierName = "第三行AI修正厂家有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                LotName = "技术服务-服务",
+                PackageNo = "包1",
+                Confidence = 0.96m
+            }
+        };
+        var method = typeof(BidOpsOutcomeSupplierExtractionService).GetMethod(
+            "ChooseOutcomeExtractsForPersistence",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        var selected = (IReadOnlyList<BidOpsOutcomeSupplierExtract>)method!.Invoke(
+            null,
+            new object?[] { deterministic, ai, "公告有 3 条，AI 只返回 2 条时按规则结果兜底" })!;
+
+        Assert.Equal(3, selected.Count);
+        Assert.Contains(selected, x => x.SupplierName == "第一行AI修正厂家有限公司" && x.LotName == "电网工程施工-220kV施工");
+        Assert.Contains(selected, x => x.SupplierName == "第二行规则厂家有限公司" && x.LotName == "电网工程施工-66kV施工");
+        Assert.Contains(selected, x => x.SupplierName == "第三行AI修正厂家有限公司" && x.LotName == "技术服务-服务");
+        Assert.DoesNotContain(selected, x => x.SupplierName == "第一行规则厂家有限公司");
+        Assert.DoesNotContain(selected, x => x.SupplierName == "第三行规则厂家有限公司");
     }
 
     [Fact]
@@ -2091,6 +2229,110 @@ public sealed class BidOpsModuleTests
         Assert.Contains(selectedByReviewerPrompt, x => x.LotName == "运维服务" && x.PackageNo == "包1");
         Assert.Contains(selectedByAutomaticMerge, x => x.LotName == "综合服务" && x.PackageNo == "包1");
         Assert.Contains(selectedByAutomaticMerge, x => x.LotName == "运维服务" && x.PackageNo == "包1");
+    }
+
+    [Fact]
+    public void BidOpsOutcomeSupplierExtractionService_PrunesWrappedAwardTableFragmentsWhenFullPackageRowsExist()
+    {
+        var ai = new List<BidOpsOutcomeSupplierExtract>
+        {
+            new()
+            {
+                SupplierName = "中国电力科学研究院有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                LotNo = "22FK09-9012008-T035",
+                LotName = "科技项目-经研院科技科研",
+                PackageNo = "包 1",
+                EvidenceText = "22FK09-9012008-T035 科技项目-经研院科技科研 包 1 中国电力科学研究院有限公司",
+                Confidence = 0.96m
+            },
+            new()
+            {
+                SupplierName = "中国电力科学研究院有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                LotName = "科技项目-经研院科技科研",
+                PackageNo = "包 1",
+                EvidenceText = "科技项目-经研院科技科研 包 1 中国电力科学研究院有限公司",
+                Confidence = 0.9m
+            },
+            new()
+            {
+                SupplierName = "中国科学院沈阳计算技术研究所有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                LotName = "科技项目-经研院科技科研",
+                PackageNo = "包 9",
+                EvidenceText = "科技项目-经研院科技科研 包 9 中国科学院沈阳计算技术研究所有限公司",
+                Confidence = 0.95m
+            },
+            new()
+            {
+                SupplierName = "研究所有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                PackageNo = "包 9",
+                EvidenceText = "包 9 研究所有限公司",
+                Confidence = 0.8m
+            },
+            new()
+            {
+                SupplierName = "东北电力大学",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                LotName = "科技项目-经研院科技科研",
+                PackageNo = "包 21",
+                EvidenceText = "科技项目-经研院科技科研 包 21 东北电力大学",
+                Confidence = 0.95m
+            },
+            new()
+            {
+                SupplierName = "东北电力大学",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                PackageNo = "包 21",
+                EvidenceText = "包 21 东北电力大学",
+                Confidence = 0.82m
+            },
+            new()
+            {
+                SupplierName = "（国家电网有限公司",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                LotName = "科技项目-经研院科技科研",
+                PackageNo = "包 21",
+                EvidenceText = "包 21 （国家电网有限公司",
+                Confidence = 0.82m
+            }
+        };
+        const string sourceText = """
+分标编号 分标名称 包号 成交供应商名称
+22FK09-9012008-T035 科技项目-经研院科技科研 包 1 中国电力科学研究院有限公司
+22FK09-9012008-T035 科技项目-经研院科技科研 包 9 中国科学院沈阳计算技术研究所有限公司
+22FK09-9012008-T035 科技项目-经研院科技科研 包 21 东北电力大学
+""";
+        var sanitized = SanitizeOutcomeExtractsForPersistence(ai, sourceText);
+        var method = typeof(BidOpsOutcomeSupplierExtractionService).GetMethod(
+            "ChooseOutcomeExtractsForPersistence",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        var selected = (IReadOnlyList<BidOpsOutcomeSupplierExtract>)method!.Invoke(
+            null,
+            new object?[] { Array.Empty<BidOpsOutcomeSupplierExtract>(), sanitized, "按附件表格重新解析" })!;
+
+        Assert.Collection(
+            selected,
+            first =>
+            {
+                Assert.Equal("包 1", first.PackageNo);
+                Assert.Equal("22FK09-9012008-T035", first.LotNo);
+                Assert.Equal("中国电力科学研究院有限公司", first.SupplierName);
+            },
+            second =>
+            {
+                Assert.Equal("包 9", second.PackageNo);
+                Assert.Equal("中国科学院沈阳计算技术研究所有限公司", second.SupplierName);
+            },
+            third =>
+            {
+                Assert.Equal("包 21", third.PackageNo);
+                Assert.Equal("东北电力大学", third.SupplierName);
+            });
     }
 
     [Fact]
@@ -3083,10 +3325,12 @@ public sealed class BidOpsModuleTests
             "stop",
             "{\"choices\":[{\"message\":{\"content\":\"{\\\"records\\\":[]}\"}}]}",
             "{\"records\":[]}"));
+        var closure = new Mock<IBidOpsReverseLifecycleClosureService>(MockBehavior.Strict);
 
         var handler = new OutcomeSupplierExtractJobHandler(
             new ExecutionIdentityAccessor(),
             extraction.Object,
+            closure.Object,
             diagnostics,
             NullLogger<OutcomeSupplierExtractJobHandler>.Instance);
         var payload = new OutcomeSupplierExtractJobPayload(300001, null, 42, "bidops", 123, "提示词");
@@ -3113,6 +3357,67 @@ public sealed class BidOpsModuleTests
         Assert.Equal("{\"records\":[]}", deepSeekResponse.GetProperty("assistantContent").GetString());
         Assert.Contains("已保存", result.Result);
         Assert.DoesNotContain("\\u", result.Result);
+        closure.Verify(
+            x => x.ReverseCloseRawNoticeAndPersistAsync(It.IsAny<long>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task OutcomeSupplierExtractJobHandler_RefreshesLifecycleLinksWhenRequested()
+    {
+        var extraction = new Mock<IBidOpsOutcomeSupplierExtractionService>(MockBehavior.Strict);
+        extraction
+            .Setup(x => x.ExtractRawNoticeAsync(123, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OutcomeSupplierExtractionResultDto
+            {
+                RawNoticeId = 123,
+                IsOutcomeNotice = true,
+                ExtractedCount = 26,
+                SavedCount = 26,
+                Message = "已保存 26 条公开结果厂家线索。"
+            });
+        var closure = new Mock<IBidOpsReverseLifecycleClosureService>(MockBehavior.Strict);
+        closure
+            .Setup(x => x.ReverseCloseRawNoticeAndPersistAsync(123, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BidOpsReverseClosureDebugResult
+            {
+                PersistedLifecycleLinks =
+                [
+                    new LifecyclePackageLinkDto { Id = 1 },
+                    new LifecyclePackageLinkDto { Id = 2 }
+                ]
+            });
+
+        var handler = new OutcomeSupplierExtractJobHandler(
+            new ExecutionIdentityAccessor(),
+            extraction.Object,
+            closure.Object,
+            new BidOpsAiCallDiagnostics(),
+            NullLogger<OutcomeSupplierExtractJobHandler>.Instance);
+        var payload = new OutcomeSupplierExtractJobPayload(
+            300001,
+            null,
+            42,
+            "bidops",
+            123,
+            ProjectCode: "22FK09",
+            RefreshLifecycleLinks: true);
+        var context = new BackgroundJobExecutionContext(new BackgroundJob
+        {
+            Id = 1,
+            Payload = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+        });
+
+        var result = await handler.HandleAsync(context);
+
+        Assert.True(result.Succeeded);
+        using var document = JsonDocument.Parse(result.Result!);
+        Assert.True(document.RootElement.GetProperty("refreshLifecycleLinks").GetBoolean());
+        Assert.Equal(2, document.RootElement
+            .GetProperty("lifecycleRefresh")
+            .GetProperty("persistedLifecycleLinkCount")
+            .GetInt32());
+        closure.VerifyAll();
     }
 
     [Fact]
@@ -4214,6 +4519,31 @@ resultValue.notice.BID_AGT: 山东诚信工程建设监理有限公司
         Assert.Equal("国网北京市电力公司2026年服务类第三次公开招标采购变更公告1", document.Title);
         Assert.Contains("CHG_NOTICE_CONT", document.Text);
         Assert.Equal(new DateTime(2026, 6, 11), document.PublishTime);
+    }
+
+    [Fact]
+    public void StateGridEcpCrawler_BuildsNoticeListPayloadWithProjectCodeField()
+    {
+        var method = typeof(StateGridEcpCrawler).GetMethod(
+            "BuildApiNoticeListPayload",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+
+        var projectCodePayload = (string)method!.Invoke(
+            null,
+            [1, 20, "2018032900295987", null, "code:22FK09）"])!;
+        using var projectCodeDocument = JsonDocument.Parse(projectCodePayload);
+        Assert.Equal("2018032900295987", projectCodeDocument.RootElement.GetProperty("firstPageMenuId").GetString());
+        Assert.Equal("22FK09", projectCodeDocument.RootElement.GetProperty("purOrgCode").GetString());
+        Assert.Equal(string.Empty, projectCodeDocument.RootElement.GetProperty("key").GetString());
+
+        var keywordPayload = (string)method!.Invoke(
+            null,
+            [1, 20, "2018032900295987", "22FK09", null])!;
+        using var keywordDocument = JsonDocument.Parse(keywordPayload);
+        Assert.Equal(string.Empty, keywordDocument.RootElement.GetProperty("purOrgCode").GetString());
+        Assert.Equal("22FK09", keywordDocument.RootElement.GetProperty("key").GetString());
     }
 
     [Fact]

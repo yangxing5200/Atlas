@@ -1,5 +1,64 @@
 # Implementation Log
 
+## 2026-06-29 BidOps Review Page Top/Bottom Jump Controls
+
+Completed:
+
+- Added fixed top/bottom jump controls to the BidOps review task list so batch-review users can move between the selection table, toolbar, and pagination without long manual scrolling.
+- Added the same top/bottom jump controls to the lifecycle closure review center for long selected review result sets.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+
+## 2026-06-29 BidOps Reviewer-Prompt Outcome Reparse Fallback
+
+Completed:
+
+- Changed reviewer-prompted outcome supplier reparse selection to merge AI rows with deterministic fallback rows instead of persisting only AI rows.
+- Kept AI rows preferred for the same package/lot/outcome/rank so reviewer corrections still override rule-derived values.
+- Included lot identity in supplier-level outcome de-duplication so the same supplier and package number in different lots remains as separate result details.
+- Restored the pricing guard that leaves ambiguous percentage evidence as manual-review-only instead of defaulting to a procurement package amount.
+- Added regression tests for AI-missed rows being restored by deterministic parsing and for same-supplier/same-package rows across different lot names.
+- Restarted local BidOps WebApi/Worker and refreshed RawNotice `328161083921666048` for project code `232606` through the lifecycle outcome-supplier reparse action.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_ReviewerPromptKeepsAiCorrectionForSamePackage|BidOpsOutcomeSupplierExtractionService_ReviewerPromptKeepsDeterministicRowsMissingFromAi|BidOpsOutcomeSupplierExtractionService_ReviewerPromptPreservesAiAnnouncementOrder|BidOpsOutcomeSupplierExtractionService_KeepsSameSupplierRowsWithDifferentLotNames|BidOpsOutcomeSupplierExtractionService_PrunesWrappedAwardTableFragmentsWhenFullPackageRowsExist" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\ReviewerPromptFallbackTests3\"` succeeded: 5 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsReverseClosureTests|BidOpsOutcomeSupplierExtractionService_" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsOutcomeFallbackBroad2\"` succeeded: 71 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsOutcomeFallbackBuild\"` succeeded with 0 warnings and 0 errors.
+- Local reparse job `329821003494592512` completed with `extractedCount=35`, `savedCount=35`, and `lifecycleRefresh.persistedLifecycleLinkCount=35`.
+- Authenticated lifecycle-link API smoke for `rawNoticeId=328161083921666048` returned `total=35`; direct tenant database checks also showed 35 outcome supplier records and 35 lifecycle links.
+
+## 2026-06-28 BidOps Lifecycle Field Enrichment Source Completeness
+
+Completed:
+
+- Hardened lifecycle field-enrichment source construction so long RawNotice/attachment text keeps the document opening plus contextual lines around relevant rows instead of only isolated keyword-matching lines.
+- Added dynamic keywords from the current lifecycle link fields, including project code/name, lot, package, and supplier, when selecting relevant source snippets.
+- Kept source budgets bounded, but now allocates remaining source budget fairly across the remaining evidence documents during prompt construction.
+- Added regression coverage for a procurement table row where the relevant package row needs neighboring non-keyword lines to preserve context.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsLifecycleFieldEnrichmentAiService_SourceBundleKeepsNeighborRowsAroundRelevantRows|BidOpsModule_RegistersServicesAndBackgroundHandlers" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\LifecycleFieldSourceTests2\"` succeeded: 2 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsFieldSourceBuild\"` succeeded with 0 warnings and 0 errors.
+
+## 2026-06-27 BidOps Lifecycle Closure Notice Context Layout
+
+Completed:
+
+- Moved lifecycle closure award/procurement notice context to the top of `闭环任务与审核中心`.
+- Removed the repeated `采购公告` column from the lifecycle package-link detail table so rows focus on award details such as lot, package, supplier, amount, match score, status, and review actions.
+- Kept procurement-notice search available from the top context when the current closure has not linked a procurement notice.
+- Added current-filter notice de-duplication in the frontend so one award/procurement notice is shown once for the closure context, with a warning when the current filtered list spans multiple notices.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `git diff --check` succeeded.
+- Backend build/tests were not rerun because the change is frontend layout-only and does not alter API contracts or C# code.
+
 ## 2026-06-27 BidOps Lifecycle Field-Level AI Enrichment
 
 Completed:
@@ -2671,3 +2730,206 @@ Verification:
 - `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
 - `git diff --check` succeeded with the existing EF snapshot line-ending warning.
 - Restarted local WebApi and Worker. WebApi probe returned `HTTP 401` at `http://localhost:5260/api/auth/context`; frontend probe returned `HTTP 200` at `http://localhost:5173`; Worker restarted as process `34260`.
+
+## 2026-06-28 BidOps 22FK09 Lifecycle Lot Context Repair
+
+Completed:
+
+- Investigated project code `22FK09` in the local BidOps runtime database. The award notice text contains the expected table header `分标编号 分标名称 包号 包名称 成交供应商名称`, but the PDF text extraction splits values such as `22FK09-9012` + `008-T035` and supplier suffixes such as `有限` + `公司`.
+- Confirmed existing outcome supplier rows for award RawNotice `327333277306327040` had `ProjectCode=22FK09）`, empty `LotNo`, and generic `LotName=未分标段`, while the procurement RawNotice `327854700416339968` and its package staging rows already contained `LotNo=22FK09-9012008-T035`, `LotName=科技项目-经研院科技科研`, and package names for packages 1-26.
+- Checked background job diagnostics for the same RawNotice. The original structured parse job saved outcome rows with `deepSeekResponses=[]`; a later reviewer-prompt `bidops.outcome.supplier-extract` attempt used `CodexCli / gpt-5.5` and failed with status code 1. No local evidence showed Mimo as the source of the bad 22FK09 outcome rows.
+- Added a deterministic wrapped State Grid award-table parser for header-driven PDF text with no row sequence number. It reconstructs split lot numbers, lot names, package numbers, package names, and trailing supplier names before creating outcome supplier extracts.
+- Updated deterministic outcome extraction to drop less-specific duplicate rows when a more specific row for the same supplier/package/outcome has lot context.
+- Normalized project codes during outcome persistence and lifecycle procurement matching so values such as `code:22FK09`, `22FK09）`, and `22FK09` match as the same procurement code.
+- Updated lifecycle closure read models to infer procurement notice references before display enrichment, then use both award and procurement package staging rows for read-only lot/package display enrichment. Generic placeholders such as `未分标段` are treated as lower-priority than a unique procurement package match.
+- Added a lifecycle closure page `解析/AI任务` shortcut from the top award/procurement notice context to the existing BidOps background-job list filtered by RawNoticeId, so operators can inspect provider/model diagnostics in the background-job detail page.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOps22FK09Build3\"` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractBuilder_ExtractsStateGridWrappedAwardTableWithoutSequence|BidOpsReverseLifecycleClosureService_EnrichesGenericAwardLotFromProcurementPackage|BidOpsLifecycleFieldEnrichmentAiService_SourceBundleKeepsNeighborRowsAroundRelevantRows" --no-build --no-restore --nologo --verbosity minimal -p:OutDir="$env:TEMP\AtlasVerify\BidOpsReverseClosureTests2\"` succeeded: 3 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsReverseClosureTests" --no-build --no-restore --nologo --verbosity minimal -p:OutDir="$env:TEMP\AtlasVerify\BidOpsReverseClosureTests2\"` succeeded: 44 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+
+## 2026-06-28 BidOps Lifecycle Outcome Supplier Reparse Button
+
+Completed:
+
+- Added a lifecycle-closure endpoint to enqueue `bidops.outcome.supplier-extract` for an award/result RawNotice from the closure center without using the RawNotice full reparse workflow that rejects approved notices.
+- Kept the new action explicitly announcement-scoped: the outcome supplier extraction job re-extracts all supplier rows for the selected RawNotice and can refresh multiple lifecycle rows after the job completes.
+- Added a top-context `重抽中标明细` button next to the award notice in `闭环任务与审核中心`, with a confirmation warning that this is not a row-level operation.
+- Renamed the row action from `提示词` to `提示词补全` so row-level lifecycle field enrichment is visibly separate from announcement-level supplier re-extraction.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsOutcomeReparseBuild\"` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "LifecycleDebugController_DeclaresReverseClosureRoutes|BidOpsOutcomeSupplierExtractBuilder_ExtractsStateGridWrappedAwardTableWithoutSequence|BidOpsReverseLifecycleClosureService_EnrichesGenericAwardLotFromProcurementPackage" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsOutcomeReparseTests\"` succeeded: 3 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+
+## 2026-06-28 BidOps Lifecycle Package Amount Display
+
+Completed:
+
+- Split the lifecycle closure table's package display into explicit `包号` and `包名称` columns so operators can verify package identity without parsing combined text.
+- Added read-model fields for `ProcurementPackageAmount` and `ProcurementPackageAmountSource` without changing the persisted lifecycle-link table.
+- Enriched lifecycle list/detail responses from procurement `ProcurementDetailStaging` rows, prioritizing exact `分标名称 + 包号` matches before falling back to reviewed package staging or persisted tender evidence.
+- Kept procurement amount display conservative: when multiple procurement detail rows match a package, the UI shows an amount only when a supported amount field has one unique value across those rows.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsPackageAmountBuild\"` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReverseLifecycleClosureService_EnrichesProcurementPackageAmountByLotNameAndPackageNo|BidOpsReverseLifecycleClosureService_EnrichesGenericAwardLotFromProcurementPackage|LifecycleDebugController_DeclaresReverseClosureRoutes" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsPackageAmountTests\"` succeeded: 3 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+
+## 2026-06-28 BidOps Lifecycle Procurement Amount Default
+
+Completed:
+
+- Updated lifecycle pricing inference so when no direct award amount or candidate final quote is available, a unique procurement package amount defaults the final award amount for review display.
+- Added a dedicated amount kind `DefaultedFromProcurementPackageAmount` so defaulted procurement amounts are not confused with amounts directly disclosed by the award/result notice.
+- Kept defaulted procurement amounts marked for manual review before formal supplier analytics.
+- Updated lifecycle list/detail read enrichment so historical rows with missing final award amount also display the matched procurement package amount as the default final amount.
+- Translated lifecycle detail `匹配理由` and `缺失字段` tags to Chinese in the closure center while keeping the raw evidence JSON unchanged for audit/debugging.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsProcurementDefaultBuild\"` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReverseLifecycleClosureService_DefaultsAwardAmountFromProcurementAmountWhenAwardAmountMissing|BidOpsReverseLifecycleClosureService_EnrichesProcurementPackageAmountByLotNameAndPackageNo|BidOpsReverseLifecycleClosureService_ReportsAwardAmountMissing|BidOpsPricingInferenceService_DoesNotInferWhenBaseAmountIsAmbiguous" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsProcurementDefaultTests2\"` succeeded: 4 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+
+## 2026-06-28 BidOps Lifecycle Amount Source Chinese Display
+
+Completed:
+
+- Added lifecycle amount-source Chinese labels and options for internal values such as `DirectAwardAmount`, `CandidateFinalQuote`, and `DefaultedFromProcurementPackageAmount`.
+- Updated the lifecycle confirmation dialog to show a Chinese amount-source selector while still submitting the stable internal enum value.
+- Updated lifecycle detail and field-enrichment source display to format source enums in Chinese.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+
+## 2026-06-28 BidOps Lifecycle Batch Review
+
+Completed:
+
+- Added row selection to the lifecycle closure center table, with selectable rows limited to `Suggested` lifecycle links.
+- Added a compact batch review toolbar with `批量确认` and `批量驳回` actions for the current selected rows.
+- Kept batch review on the existing per-row confirmation/rejection endpoints so each lifecycle link is updated independently and already confirmed/rejected rows are not mutated by selection.
+- Batch confirmation submits each row's currently displayed final award amount and internal amount-source value, while the UI continues to show Chinese amount-source labels.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+
+## 2026-06-28 BidOps Lifecycle Reparse Refresh
+
+Completed:
+
+- Investigated 22FK09 after outcome supplier re-analysis. The local outcome supplier table had new extracted rows, but `bidops_lifecycle_package_link` still contained the old 10 links; the page default `Suggested` status filter hid the one confirmed row, so only 9 rows were visible.
+- Added a `RefreshLifecycleLinks` flag to `OutcomeSupplierExtractJobPayload`. Lifecycle-center outcome reparse jobs now run `ReverseCloseRawNoticeAndPersistAsync` after supplier extraction succeeds, so the closure link table is refreshed by the same background job.
+- Updated the lifecycle closure reparse button label to `重抽并刷新闭环` and clarified the confirmation text.
+- Changed the lifecycle closure center default status filter from `待确认` to `全部`, while keeping batch selection limited to `Suggested` rows.
+- Added final outcome-supplier save pruning for wrapped award-table fragments, so 22FK09-style parses keep the complete package row and drop weaker duplicate fragments for the same package.
+- Refresh persistence now removes stale non-confirmed lifecycle suggestions for the same award notice before writing new suggestions, while preserving equivalent manually confirmed package/supplier links.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_PrunesWrappedAwardTableFragmentsWhenFullPackageRowsExist|OutcomeSupplierExtractJobHandler_RefreshesLifecycleLinksWhenRequested|OutcomeSupplierExtractJobHandler_ReturnsJsonResultSummary|BidOpsReverseLifecycleClosureService_TreatsConfirmedSamePackageSupplierAsEquivalentAcrossHashChanges|LifecycleDebugController_DeclaresReverseClosureRoutes" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsLifecycleReparseRefreshTests2\"` succeeded: 5 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- Initial WebApi/Worker builds failed because the running local `Atlas.WebApi` and `Atlas.Worker` processes held DLL locks; after stopping those processes, WebApi built successfully, Worker briefly hit a parallel `obj` cache lock, and then a single Worker rebuild succeeded with 0 warnings and 0 errors.
+- Restarted local WebApi and Worker with the new build. WebApi probe returned `HTTP 401` at `http://localhost:5260/api/auth/context`; frontend probe returned `HTTP 200` at `http://localhost:5173`.
+
+## 2026-06-28 BidOps Lifecycle Amount Unit And Dialog Close
+
+Completed:
+
+- Extended `BidOpsMoneyNormalizer` to accept amount-unit context from column headers or nearby table text. Unitless cells now multiply by 10,000 when the column/header context says `万元`, while explicit `元` headers take precedence.
+- Updated award, candidate, and tender evidence table parsers to pass amount column headers and table context into money normalization.
+- Added regression coverage for award table cells like `65.88` under `成交金额（万元）`, preventing lifecycle rows from showing tens of yuan when the public notice uses ten-thousand-yuan units.
+- Updated the lifecycle confirmation dialog to use an explicit close handler, append the dialog to `body`, and allow cancel, close icon, ESC, and modal-click closing.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsMoneyNormalizer_UsesTenThousandYuanUnitContextForUnitlessCells|BidOpsAwardEvidenceParser_UsesAmountHeaderTenThousandYuanUnit|BidOpsOutcomeSupplierTextParser_ExtractsAwardAmountsFromOutcomeTableColumns|BidOpsOutcomeSupplierExtractBuilder_ExtractsWrappedPdfAwardRows" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsAmountUnitDialogTests\"` succeeded: 4 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- Worker built successfully. WebApi initially hit a transient Microsoft Defender lock on an `obj` file, then rebuilt successfully with 0 warnings and 0 errors.
+- Restarted local WebApi and Worker. WebApi probe returned `HTTP 401` at `http://localhost:5260/api/auth/context`; frontend probe returned `HTTP 200` at `http://localhost:5173`.
+
+## 2026-06-28 BidOps Manual Lifecycle Analysis Reruns
+
+Completed:
+
+- Investigated the "闭环分析任务已存在 but list is empty" case. The enqueue message comes from `BackgroundJobs` deduplication, while the closure center list reads `bidops_lifecycle_package_link`; those can diverge when a historical job failed, completed with no links, or used older extraction behavior.
+- Updated manual lifecycle reverse-closure enqueue keys to include a per-run suffix, so an old background job no longer permanently blocks rerunning closure analysis for the same RawNotice.
+- Kept global background task deduplication unchanged because the unique index is shared by many task types; the rerun behavior is scoped to BidOps manual lifecycle analysis.
+- Added a closure-center empty state for RawNotice-filtered pages with no link rows, with actions to open the filtered background-job list and refresh the closure list.
+- Adjusted lifecycle analysis enqueue messages to say the task was submitted or is in the queue rather than implying an old completed task is enough.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "LifecycleReverseClosureDeduplicationKey_IncludesRunIdForManualAnalysis|LifecycleDebugController_DeclaresReverseClosureRoutes" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsLifecycleManualRerunTests\"` succeeded: 2 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- Restarted local WebApi and Worker. WebApi now listens on `http://localhost:5260` and returned `HTTP 401` for `/api/auth/context`; frontend returned `HTTP 200` at `http://localhost:5173`.
+
+## 2026-06-28 BidOps Procurement Notice Code Search
+
+Completed:
+
+- Updated State Grid public procurement notice lookup to query `index/noteList` with `purOrgCode=<项目编号>` before using the generic `key` keyword field. This matches the official search behavior needed for notices such as `22FK09`.
+- Added project-code normalization before official search so values copied from lifecycle rows with prefixes or trailing punctuation still search as the clean procurement code.
+- Kept `key` keyword lookup as a fallback when project-code lookup returns fewer candidates.
+- Added regression coverage for the generated `noteList` request payload.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "StateGridEcpCrawler_BuildsNoticeListPayloadWithProjectCodeField|StateGridEcpWcmParser_ParsesNoticeListAndDetail|LifecycleDebugController_DeclaresReverseClosureRoutes" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsProcurementCodeSearchTests\"` succeeded: 3 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- Restarted local WebApi and Worker. WebApi now listens on `http://localhost:5260` and returned `HTTP 401` for `/api/auth/context`; frontend returned `HTTP 200` at `http://localhost:5173`.
+- `git diff --check` succeeded.
+
+## 2026-06-28 BidOps Formal Notice Default Filter
+
+Completed:
+
+- Updated `正式公告库` to default the notice-type filter to `中标/成交结果公告` (`AwardAnnouncement`) instead of showing all formal notices.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+
+## 2026-06-28 BidOps Formal Notice Lifecycle Review Status
+
+Completed:
+
+- Added a lifecycle-review status to formal notice list/detail DTOs, derived from lifecycle package links for the notice's award RawNotice.
+- Added formal notice search filtering by lifecycle review state, including a query-only `NotApproved` option for "未通过/未完成".
+- Updated `正式公告库` with a `闭环审核` filter and table column.
+- Added Chinese labels for the new lifecycle review statuses so product-facing UI does not show raw English enum values.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsQueryService_ResolvesNoticeLifecycleReviewStatus|BidOpsModule_RegistersServicesAndBackgroundHandlers" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsNoticeLifecycleStatusTests\"` succeeded: 2 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- Initial parallel Worker build hit a transient `obj` cache file lock; rerunning `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- Restarted local WebApi and Worker. WebApi now listens on `http://localhost:5260` and returned `HTTP 401` for `/api/auth/context`; frontend returned `HTTP 200` at `http://localhost:5173`.
+- `git diff --check` succeeded.
+
+## 2026-06-28 BidOps Lifecycle Prompt Parse Placement
+
+Completed:
+
+- Removed row-level `AI补全` and `提示词补全` actions from the lifecycle closure table and detail drawer so lifecycle rows stay focused on review decisions.
+- Added source-notice-level `AI提示词辅助解析` actions to the top `中标公告` and `采购公告` context areas.
+- Award prompt parsing now submits the existing award RawNotice outcome-supplier reparse task with the reviewer prompt and refreshes the lifecycle list when the background job succeeds.
+- Procurement prompt assistance now submits field-enrichment jobs for the procurement notice area's associated non-final lifecycle links and refreshes the lifecycle list after those jobs finish.
+- Added background-job polling in the closure page for prompt/reparse tasks so completed AI work updates the visible lifecycle list automatically.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.

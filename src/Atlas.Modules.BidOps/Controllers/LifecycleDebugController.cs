@@ -57,6 +57,19 @@ public sealed class LifecycleDebugController : ControllerBase
         return Accepted(await _closure.EnqueueLifecycleFieldEnrichmentAsync(linkId, request, ct));
     }
 
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpPost("award-notices/{rawNoticeId:long}/outcome-supplier-reparse/enqueue")]
+    public async Task<ActionResult<EnqueueJobDto>> EnqueueOutcomeSupplierReparseAsync(
+        long rawNoticeId,
+        [FromBody] LifecycleOutcomeSupplierReparseRequest? request,
+        CancellationToken ct)
+    {
+        return Accepted(await _closure.EnqueueOutcomeSupplierReparseAsync(
+            rawNoticeId,
+            request ?? new LifecycleOutcomeSupplierReparseRequest(),
+            ct));
+    }
+
     [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.CrawlImport)]
     [HttpPost("reverse-close-url")]
     public async Task<ActionResult<BidOpsReverseClosureDebugResult>> ReverseCloseUrlAsync(

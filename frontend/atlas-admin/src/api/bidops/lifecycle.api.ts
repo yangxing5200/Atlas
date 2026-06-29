@@ -7,6 +7,7 @@ import type {
   LifecyclePackageLinkDto,
   LifecyclePackageLinkSearchQuery,
   LifecycleFieldEnrichmentRequest,
+  LifecycleOutcomeSupplierReparseRequest,
   LifecycleProcurementNoticeCandidateDto,
   LifecycleProcurementNoticeImportRequest,
   LifecycleProcurementNoticeImportResultDto,
@@ -30,6 +31,10 @@ export const lifecycleApi = {
 
   enqueueFieldEnrichment(linkId: BidOpsId, request: LifecycleFieldEnrichmentRequest) {
     return http.post<EnqueueJobDto>(`${base}/links/${linkId}/field-enrichment/enqueue`, request)
+  },
+
+  enqueueOutcomeSupplierReparse(rawNoticeId: BidOpsId, request: LifecycleOutcomeSupplierReparseRequest = {}) {
+    return http.post<EnqueueJobDto>(`${base}/award-notices/${rawNoticeId}/outcome-supplier-reparse/enqueue`, request)
   },
 
   enqueueReverseClose(request: BidOpsReverseCloseJobRequest) {

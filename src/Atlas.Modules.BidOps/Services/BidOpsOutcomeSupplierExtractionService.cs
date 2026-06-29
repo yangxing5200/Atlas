@@ -171,7 +171,7 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
                 NoticeTitle = Truncate(raw.Title, 500),
                 NoticeType = Truncate(raw.NoticeType, 64),
                 ProjectName = Truncate(extract.ProjectName, 500),
-                ProjectCode = Truncate(FirstMeaningful(extract.ProjectCode, context.ProjectCode), 128),
+                ProjectCode = Truncate(NormalizeProjectCodeForPersistence(FirstMeaningful(extract.ProjectCode, context.ProjectCode)), 128),
                 BuyerName = Truncate(FirstMeaningful(extract.BuyerName, context.BuyerName), 300),
                 Region = Truncate(context.Region, 128),
                 PublishTime = context.PublishTime ?? raw.PublishTime,
@@ -312,10 +312,24 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         string? reviewerPrompt)
     {
         var selected = !string.IsNullOrWhiteSpace(reviewerPrompt)
-            ? DedupeOutcomeExtracts(aiExtracts)
+            ? MergeReviewerPromptOutcomeExtracts(deterministic, aiExtracts)
             : MergeOutcomeExtracts(deterministic, aiExtracts);
 
-        return AssignExtractionOrder(selected);
+        return AssignExtractionOrder(PruneLessSpecificPackageRows(selected));
+    }
+
+    private static IReadOnlyList<BidOpsOutcomeSupplierExtract> MergeReviewerPromptOutcomeExtracts(
+        IReadOnlyList<BidOpsOutcomeSupplierExtract> deterministic,
+        IReadOnlyList<BidOpsOutcomeSupplierExtract> aiExtracts)
+    {
+        var selected = DedupeOutcomeExtracts(aiExtracts).ToList();
+        foreach (var fallback in DedupeOutcomeExtracts(deterministic))
+        {
+            if (!selected.Any(ai => CoversReviewerPromptFallback(ai, fallback)))
+                selected.Add(fallback);
+        }
+
+        return selected;
     }
 
     private static IReadOnlyList<BidOpsOutcomeSupplierExtract> MergeOutcomeExtracts(
@@ -375,6 +389,134 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
                 .ThenByDescending(item => item.Confidence)
                 .First())
             .ToList();
+    }
+
+    private static IReadOnlyList<BidOpsOutcomeSupplierExtract> PruneLessSpecificPackageRows(
+        IReadOnlyList<BidOpsOutcomeSupplierExtract> extracts)
+    {
+        var preferredBySupplier = extracts
+            .GroupBy(PackageOutcomeRankSupplierKey)
+            .Select(group => group
+                .OrderByDescending(HasExplicitLotNo)
+                .ThenByDescending(HasMeaningfulLotContext)
+                .ThenByDescending(HasPackageIdentity)
+                .ThenByDescending(item => item.ProcurementAgencyServiceFeeAmount.HasValue)
+                .ThenByDescending(item => item.AwardAmount.HasValue)
+                .ThenByDescending(item => item.Confidence)
+                .First())
+            .ToList();
+
+        var weakRows = new HashSet<BidOpsOutcomeSupplierExtract>();
+        foreach (var group in preferredBySupplier.GroupBy(PackageOutcomeRankKey))
+        {
+            var first = group.First();
+            if (string.IsNullOrWhiteSpace(NormalizeCode(first.PackageNo)))
+                continue;
+
+            var explicitLotRows = group.Where(HasExplicitLotNo).ToList();
+            var strongRows = group.Where(HasMeaningfulLotContext).ToList();
+            if (strongRows.Count == 0)
+                continue;
+
+            foreach (var row in group)
+            {
+                var lessSpecificLotDuplicate = explicitLotRows.Any(strong => IsLessSpecificLotContextDuplicate(row, strong));
+                if (strongRows.Contains(row) && !lessSpecificLotDuplicate)
+                    continue;
+
+                if (!HasMeaningfulLotContext(row) ||
+                    lessSpecificLotDuplicate ||
+                    strongRows.Any(strong => IsSupplierNameFragmentOf(row.SupplierName, strong.SupplierName)))
+                {
+                    weakRows.Add(row);
+                }
+            }
+        }
+
+        return preferredBySupplier.Where(x => !weakRows.Contains(x)).ToList();
+    }
+
+    private static string PackageOutcomeRankSupplierKey(BidOpsOutcomeSupplierExtract extract)
+    {
+        return string.Join(
+            '\u001f',
+            NormalizeLotIdentity(extract),
+            PackageOutcomeRankKey(extract),
+            BidOpsOutcomeSupplierTextParser.NormalizeSupplierName(extract.SupplierName));
+    }
+
+    private static bool CoversReviewerPromptFallback(
+        BidOpsOutcomeSupplierExtract ai,
+        BidOpsOutcomeSupplierExtract fallback)
+    {
+        if (!string.Equals(NormalizeOutcomeType(ai.OutcomeType), NormalizeOutcomeType(fallback.OutcomeType), StringComparison.OrdinalIgnoreCase) ||
+            ai.Rank != fallback.Rank)
+        {
+            return false;
+        }
+
+        var aiPackageNo = NormalizeCode(ai.PackageNo);
+        var fallbackPackageNo = NormalizeCode(fallback.PackageNo);
+        var aiLotIdentity = NormalizeLotIdentity(ai);
+        var fallbackLotIdentity = NormalizeLotIdentity(fallback);
+
+        if (string.IsNullOrWhiteSpace(aiPackageNo) || string.IsNullOrWhiteSpace(fallbackPackageNo))
+        {
+            return SupplierNameCompatible(ai.SupplierName, fallback.SupplierName) &&
+                   (string.IsNullOrWhiteSpace(aiLotIdentity) ||
+                    string.IsNullOrWhiteSpace(fallbackLotIdentity) ||
+                    string.Equals(aiLotIdentity, fallbackLotIdentity, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!string.Equals(aiPackageNo, fallbackPackageNo, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(aiLotIdentity) && !string.IsNullOrWhiteSpace(fallbackLotIdentity))
+            return string.Equals(aiLotIdentity, fallbackLotIdentity, StringComparison.OrdinalIgnoreCase);
+
+        if (string.IsNullOrWhiteSpace(aiLotIdentity) && string.IsNullOrWhiteSpace(fallbackLotIdentity))
+            return true;
+
+        return SupplierNameCompatible(ai.SupplierName, fallback.SupplierName);
+    }
+
+    private static bool SupplierNameCompatible(string? left, string? right)
+    {
+        var normalizedLeft = BidOpsOutcomeSupplierTextParser.NormalizeSupplierName(left ?? string.Empty);
+        var normalizedRight = BidOpsOutcomeSupplierTextParser.NormalizeSupplierName(right ?? string.Empty);
+        return !string.IsNullOrWhiteSpace(normalizedLeft) &&
+               !string.IsNullOrWhiteSpace(normalizedRight) &&
+               (string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase) ||
+                IsSupplierNameFragmentOf(normalizedLeft, normalizedRight) ||
+                IsSupplierNameFragmentOf(normalizedRight, normalizedLeft));
+    }
+
+    private static bool IsLessSpecificLotContextDuplicate(
+        BidOpsOutcomeSupplierExtract row,
+        BidOpsOutcomeSupplierExtract strong)
+    {
+        if (ReferenceEquals(row, strong) ||
+            HasExplicitLotNo(row) ||
+            !HasExplicitLotNo(strong) ||
+            !SupplierNameCompatible(row.SupplierName, strong.SupplierName))
+        {
+            return false;
+        }
+
+        var rowLotName = NormalizeEvidenceText(row.LotName);
+        var strongLotName = NormalizeEvidenceText(strong.LotName);
+        return string.IsNullOrWhiteSpace(rowLotName) ||
+               string.IsNullOrWhiteSpace(strongLotName) ||
+               string.Equals(rowLotName, strongLotName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string PackageOutcomeRankKey(BidOpsOutcomeSupplierExtract extract)
+    {
+        return string.Join(
+            '\u001f',
+            NormalizeCode(extract.PackageNo),
+            NormalizeOutcomeType(extract.OutcomeType),
+            extract.Rank?.ToString() ?? string.Empty);
     }
 
     private static IReadOnlyList<BidOpsOutcomeSupplierExtract> SanitizeOutcomeExtractsForPersistence(
@@ -463,6 +605,23 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         }
 
         return string.Empty;
+    }
+
+    private static string NormalizeProjectCodeForPersistence(string? value)
+    {
+        var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+        if (string.IsNullOrWhiteSpace(cleaned))
+            return string.Empty;
+
+        cleaned = Regex.Replace(
+            cleaned,
+            @"^(?:code|项目编号|项目编码|采购编号|招标编号|批次编号|采购项目编号|招标项目编号)\s*[:：=]\s*",
+            string.Empty,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var match = Regex.Match(cleaned, @"[A-Za-z0-9][A-Za-z0-9_.\-/]*", RegexOptions.CultureInvariant);
+        return match.Success
+            ? match.Value
+            : cleaned.Trim(' ', '\t', '。', '.', '；', ';', '，', ',', '、', '）', ')');
     }
 
     private static bool IsExplicitLotNoSupported(string? lotNo, string? evidenceText, string? sourceText)
@@ -655,10 +814,25 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         if (string.IsNullOrWhiteSpace(supplierName))
             return false;
 
+        if (HasUnbalancedLeadingBracket(supplierName))
+            return false;
+
         if (LooksLikeNonAwardEvidence(extract.EvidenceText))
             return false;
 
         return LooksLikeSupplierOrganizationName(supplierName);
+    }
+
+    private static bool HasUnbalancedLeadingBracket(string value)
+    {
+        var trimmed = BidOpsTextQuality.CleanExtractedValue(value).Trim();
+        if (trimmed.Length == 0)
+            return false;
+
+        return (trimmed[0] == '（' && !trimmed.Contains('）')) ||
+               (trimmed[0] == '(' && !trimmed.Contains(')')) ||
+               (trimmed[0] == '【' && !trimmed.Contains('】')) ||
+               (trimmed[0] == '[' && !trimmed.Contains(']'));
     }
 
     private static bool LooksLikeSupplierOrganizationName(string supplierName)
@@ -746,6 +920,30 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
                !string.IsNullOrWhiteSpace(extract.LotNo) ||
                !string.IsNullOrWhiteSpace(extract.LotName) ||
                !string.IsNullOrWhiteSpace(extract.PackageName);
+    }
+
+    private static bool HasExplicitLotNo(BidOpsOutcomeSupplierExtract extract)
+    {
+        return !string.IsNullOrWhiteSpace(NormalizeCode(extract.LotNo));
+    }
+
+    private static bool HasMeaningfulLotContext(BidOpsOutcomeSupplierExtract extract)
+    {
+        if (HasExplicitLotNo(extract))
+            return true;
+
+        var lotName = NormalizeEvidenceText(extract.LotName);
+        return lotName.Length >= 4 &&
+               lotName is not "未分标段" and not "无分标" and not "不分标";
+    }
+
+    private static bool IsSupplierNameFragmentOf(string? fragment, string? fullName)
+    {
+        var normalizedFragment = NormalizeEvidenceText(fragment);
+        var normalizedFullName = NormalizeEvidenceText(fullName);
+        return normalizedFragment.Length >= 4 &&
+               normalizedFullName.Length >= normalizedFragment.Length + 3 &&
+               normalizedFullName.Contains(normalizedFragment, StringComparison.Ordinal);
     }
 
     private static string NormalizeLotIdentity(BidOpsOutcomeSupplierExtract extract)

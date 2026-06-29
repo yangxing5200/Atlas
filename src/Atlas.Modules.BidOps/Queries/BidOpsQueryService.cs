@@ -42,6 +42,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
     private readonly IRepository<ReviewCorrectionSample> _reviewCorrectionSamples;
     private readonly IRepository<Buyer> _buyers;
     private readonly IRepository<OutcomeSupplierRecord> _outcomeRecords;
+    private readonly IRepository<LifecyclePackageLink> _lifecycleLinks;
     private readonly IRepository<Notice> _notices;
     private readonly IRepository<TenderPackage> _packages;
     private readonly IRepository<ProcurementDetailStaging> _procurementDetailStaging;
@@ -64,6 +65,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         IRepository<ReviewCorrectionSample> reviewCorrectionSamples,
         IRepository<Buyer> buyers,
         IRepository<OutcomeSupplierRecord> outcomeRecords,
+        IRepository<LifecyclePackageLink> lifecycleLinks,
         IRepository<Notice> notices,
         IRepository<TenderPackage> packages,
         IRepository<ProcurementDetailStaging> procurementDetailStaging,
@@ -85,6 +87,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         _reviewCorrectionSamples = reviewCorrectionSamples ?? throw new ArgumentNullException(nameof(reviewCorrectionSamples));
         _buyers = buyers ?? throw new ArgumentNullException(nameof(buyers));
         _outcomeRecords = outcomeRecords ?? throw new ArgumentNullException(nameof(outcomeRecords));
+        _lifecycleLinks = lifecycleLinks ?? throw new ArgumentNullException(nameof(lifecycleLinks));
         _notices = notices ?? throw new ArgumentNullException(nameof(notices));
         _packages = packages ?? throw new ArgumentNullException(nameof(packages));
         _procurementDetailStaging = procurementDetailStaging ?? throw new ArgumentNullException(nameof(procurementDetailStaging));
@@ -1535,6 +1538,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
     {
         var (pageIndex, pageSize) = NormalizePaging(query);
         var builder = await _notices.QueryDataScopeAsync(BidOpsDataResources.Notice, AtlasDataScopeType.AllTenant, ct);
+        Dictionary<long, string>? lifecycleStatuses = null;
         if (!string.IsNullOrWhiteSpace(query.Keyword))
         {
             var keyword = query.Keyword.Trim();
@@ -1549,6 +1553,13 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         {
             var noticeType = query.NoticeType.Trim();
             builder = builder.Where(x => x.NoticeType == noticeType);
+        }
+
+        var lifecycleStatusFilter = NormalizeLifecycleReviewStatus(query.LifecycleReviewStatus);
+        if (!string.IsNullOrWhiteSpace(lifecycleStatusFilter))
+        {
+            lifecycleStatuses = await LoadLifecycleReviewStatusesByAwardRawNoticeAsync(ct);
+            builder = ApplyNoticeLifecycleReviewStatusFilter(builder, lifecycleStatuses, lifecycleStatusFilter);
         }
 
         var total = await builder.CountAsync(ct);
@@ -1573,6 +1584,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
                 CreatedAt = x.CreatedAt,
                 UpdatedAt = x.UpdatedAt
             }, ct);
+        await EnrichNoticeLifecycleReviewStatusesAsync(items, lifecycleStatuses, ct);
 
         return new PagedResult<NoticeDto>(total, items, pageIndex, pageSize);
     }
@@ -1581,7 +1593,136 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
     {
         var builder = await _notices.QueryDataScopeAsync(BidOpsDataResources.Notice, AtlasDataScopeType.AllTenant, ct);
         var notice = await builder.Where(x => x.Id == id).FirstOrDefaultAsync(ct);
-        return notice == null ? null : MapNotice(notice);
+        if (notice == null)
+            return null;
+
+        var dto = MapNotice(notice);
+        await EnrichNoticeLifecycleReviewStatusesAsync([dto], null, ct);
+        return dto;
+    }
+
+    private static IQueryBuilder<Notice> ApplyNoticeLifecycleReviewStatusFilter(
+        IQueryBuilder<Notice> builder,
+        IReadOnlyDictionary<long, string> lifecycleStatuses,
+        string lifecycleStatusFilter)
+    {
+        if (lifecycleStatusFilter == BidOpsLifecycleReviewStatuses.NotAnalyzed)
+        {
+            var linkedRawNoticeIds = lifecycleStatuses.Keys.ToList();
+            return linkedRawNoticeIds.Count == 0
+                ? builder
+                : builder.Where(x => !linkedRawNoticeIds.Contains(x.RawNoticeId));
+        }
+
+        if (lifecycleStatusFilter == BidOpsLifecycleReviewStatuses.NotApproved)
+        {
+            var approvedRawNoticeIds = lifecycleStatuses
+                .Where(x => x.Value == BidOpsLifecycleReviewStatuses.Approved)
+                .Select(x => x.Key)
+                .ToList();
+            return approvedRawNoticeIds.Count == 0
+                ? builder
+                : builder.Where(x => !approvedRawNoticeIds.Contains(x.RawNoticeId));
+        }
+
+        var rawNoticeIds = lifecycleStatuses
+            .Where(x => x.Value == lifecycleStatusFilter)
+            .Select(x => x.Key)
+            .ToList();
+        return rawNoticeIds.Count == 0
+            ? builder.Where(x => x.Id == 0)
+            : builder.Where(x => rawNoticeIds.Contains(x.RawNoticeId));
+    }
+
+    private async Task EnrichNoticeLifecycleReviewStatusesAsync(
+        IReadOnlyCollection<NoticeDto> notices,
+        Dictionary<long, string>? knownStatuses,
+        CancellationToken ct)
+    {
+        if (notices.Count == 0)
+            return;
+
+        var statuses = knownStatuses;
+        if (statuses == null)
+        {
+            var rawNoticeIds = notices
+                .Select(x => x.RawNoticeId)
+                .Distinct()
+                .ToList();
+            var builder = await _lifecycleLinks.QueryDataScopeAsync(
+                BidOpsDataResources.LifecyclePackageLink,
+                AtlasDataScopeType.AllTenant,
+                ct);
+            var links = await builder
+                .Where(x => x.AwardRawNoticeId.HasValue && rawNoticeIds.Contains(x.AwardRawNoticeId.Value))
+                .ToListAsync(ct);
+            statuses = BuildLifecycleReviewStatusesByAwardRawNotice(links);
+        }
+
+        foreach (var notice in notices)
+        {
+            notice.LifecycleReviewStatus = statuses.TryGetValue(notice.RawNoticeId, out var status)
+                ? status
+                : BidOpsLifecycleReviewStatuses.NotAnalyzed;
+        }
+    }
+
+    private async Task<Dictionary<long, string>> LoadLifecycleReviewStatusesByAwardRawNoticeAsync(CancellationToken ct)
+    {
+        var builder = await _lifecycleLinks.QueryDataScopeAsync(
+            BidOpsDataResources.LifecyclePackageLink,
+            AtlasDataScopeType.AllTenant,
+            ct);
+        var links = await builder
+            .Where(x => x.AwardRawNoticeId.HasValue)
+            .ToListAsync(ct);
+        return BuildLifecycleReviewStatusesByAwardRawNotice(links);
+    }
+
+    private static Dictionary<long, string> BuildLifecycleReviewStatusesByAwardRawNotice(
+        IEnumerable<LifecyclePackageLink> links)
+    {
+        return links
+            .Where(x => x.AwardRawNoticeId.HasValue)
+            .GroupBy(x => x.AwardRawNoticeId!.Value)
+            .ToDictionary(
+                x => x.Key,
+                x => ResolveLifecycleReviewStatus(x.Select(link => link.LinkStatus).ToArray()));
+    }
+
+    private static string ResolveLifecycleReviewStatus(IReadOnlyCollection<string> linkStatuses)
+    {
+        if (linkStatuses.Count == 0)
+            return BidOpsLifecycleReviewStatuses.NotAnalyzed;
+
+        var confirmedCount = linkStatuses.Count(x => string.Equals(x, BidOpsLifecycleLinkStatuses.Confirmed, StringComparison.OrdinalIgnoreCase));
+        var rejectedCount = linkStatuses.Count(x => string.Equals(x, BidOpsLifecycleLinkStatuses.Rejected, StringComparison.OrdinalIgnoreCase));
+        if (confirmedCount == linkStatuses.Count)
+            return BidOpsLifecycleReviewStatuses.Approved;
+        if (confirmedCount > 0)
+            return BidOpsLifecycleReviewStatuses.PartiallyApproved;
+        if (rejectedCount == linkStatuses.Count)
+            return BidOpsLifecycleReviewStatuses.Rejected;
+
+        return BidOpsLifecycleReviewStatuses.PendingReview;
+    }
+
+    private static string NormalizeLifecycleReviewStatus(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var normalized = value.Trim();
+        return normalized.ToUpperInvariant() switch
+        {
+            "NOTANALYZED" => BidOpsLifecycleReviewStatuses.NotAnalyzed,
+            "PENDINGREVIEW" => BidOpsLifecycleReviewStatuses.PendingReview,
+            "PARTIALLYAPPROVED" => BidOpsLifecycleReviewStatuses.PartiallyApproved,
+            "APPROVED" => BidOpsLifecycleReviewStatuses.Approved,
+            "REJECTED" => BidOpsLifecycleReviewStatuses.Rejected,
+            "NOTAPPROVED" => BidOpsLifecycleReviewStatuses.NotApproved,
+            _ => string.Empty
+        };
     }
 
     public async Task<PagedResult<TenderPackageDto>> SearchPackagesAsync(PackageSearchQuery query, CancellationToken ct = default)

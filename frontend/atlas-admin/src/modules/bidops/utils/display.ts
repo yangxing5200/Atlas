@@ -89,6 +89,28 @@ const correctionSourceKindLabels: Record<string, string> = {
   IssueResolved: '异常已处理',
 }
 
+const lifecycleAmountSourceLabels: Record<string, string> = {
+  DirectAwardAmount: '中标公告金额',
+  CandidateFinalQuote: '候选公示最终报价',
+  DefaultedFromProcurementPackageAmount: '默认采用采购包金额',
+  InferredFromDiscountRate: '按折扣率推算',
+  InferredFromReductionRate: '按下浮率推算',
+  InferredFromCoefficient: '按系数推算',
+  EstimatedFrameworkValue: '框架估算金额',
+  AwardNotice: '中标公告',
+  CandidateNotice: '候选公示',
+  TenderNotice: '采购公告',
+  TenderBudget: '采购公告预算金额',
+  TenderMaxPrice: '采购公告最高限价',
+  TenderGuidePrice: '采购公告概算金额',
+  PackageBudget: '采购包预算金额',
+  PackageMaxPrice: '采购包最高限价',
+  PackageGuidePrice: '采购包概算金额',
+  Manual: '人工确认',
+  Missing: '缺失',
+  Unknown: '未知',
+}
+
 const commonStatusLabels: Record<string, string> = {
   New: '新建',
   Preparing: '标书准备',
@@ -139,6 +161,10 @@ const commonStatusLabels: Record<string, string> = {
   BatchConfirmCandidate: '可批量确认候选',
   NeedsReview: '需人工复核',
   NeedsReparse: '建议重解析',
+  NotAnalyzed: '未闭环',
+  PendingReview: '待闭环审核',
+  PartiallyApproved: '部分通过',
+  NotApproved: '未通过/未完成',
   Candidate: '候选',
   Caution: '需确认',
   NotRecommended: '不建议',
@@ -160,6 +186,7 @@ const commonStatusLabels: Record<string, string> = {
   Meeting: '会议',
   StatusChange: '状态变更',
   Risk: '风险',
+  ...lifecycleAmountSourceLabels,
 }
 
 const explanationLabels: Record<string, string> = {
@@ -301,12 +328,26 @@ export const lifecycleLinkStatusOptions: DisplayOption[] = [
   { label: '已驳回', value: 'Rejected' },
 ]
 
+export const lifecycleReviewStatusOptions: DisplayOption[] = [
+  { label: '闭环审核通过', value: 'Approved' },
+  { label: '未通过/未完成', value: 'NotApproved' },
+  { label: '未闭环', value: 'NotAnalyzed' },
+  { label: '待闭环审核', value: 'PendingReview' },
+  { label: '部分通过', value: 'PartiallyApproved' },
+  { label: '已驳回', value: 'Rejected' },
+]
+
 export const lifecycleLinkMatchTypeOptions: DisplayOption[] = [
   { label: '强匹配', value: 'Strong' },
   { label: '建议匹配', value: 'Suggested' },
   { label: '弱匹配', value: 'Weak' },
   { label: '人工匹配', value: 'Manual' },
 ]
+
+export const lifecycleAmountSourceOptions: DisplayOption[] = Object.entries(lifecycleAmountSourceLabels).map(([value, label]) => ({
+  label,
+  value,
+}))
 
 export const pursuitTaskTypeOptions: DisplayOption[] = [
   { label: '资格材料', value: 'Qualification' },
@@ -454,6 +495,10 @@ export function formatReviewRecommendation(value?: string | null) {
 
 export function formatReviewCorrectionSourceKind(value?: string | null) {
   return formatByMap(value, correctionSourceKindLabels)
+}
+
+export function formatLifecycleAmountSource(value?: string | null) {
+  return formatByMap(value, lifecycleAmountSourceLabels)
 }
 
 export function formatCommonStatus(value: unknown) {

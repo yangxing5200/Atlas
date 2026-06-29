@@ -87,7 +87,21 @@ public static partial class BidOpsPackageNoNormalizer
 
 public static partial class BidOpsMoneyNormalizer
 {
+    public static string BuildUnitContext(string? columnHeader, string? surroundingContext)
+    {
+        var header = BidOpsTextQuality.CleanExtractedValue(columnHeader);
+        if (DeclaresYuanUnit(header))
+            return header;
+
+        return string.Join(' ', header, BidOpsTextQuality.CleanExtractedValue(surroundingContext));
+    }
+
     public static decimal? TryNormalize(string? value)
+    {
+        return TryNormalize(value, null);
+    }
+
+    public static decimal? TryNormalize(string? value, string? unitContext)
     {
         var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
         if (string.IsNullOrWhiteSpace(cleaned))
@@ -106,8 +120,37 @@ public static partial class BidOpsMoneyNormalizer
         var unit = match.Groups["unit"].Value;
         if (unit is "万元" or "万")
             amount *= 10_000m;
+        else if (string.IsNullOrWhiteSpace(unit) && HasTenThousandYuanUnit(unitContext))
+            amount *= 10_000m;
 
         return Math.Round(amount, 2);
+    }
+
+    private static bool HasTenThousandYuanUnit(string? unitContext)
+    {
+        var normalized = BidOpsTextQuality.CleanExtractedValue(unitContext)
+            .Replace(" ", string.Empty, StringComparison.Ordinal)
+            .Replace("　", string.Empty, StringComparison.Ordinal);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return false;
+
+        return normalized.Contains("万元", StringComparison.Ordinal) ||
+               normalized.Contains("万人民币", StringComparison.Ordinal) ||
+               normalized.Contains("人民币万", StringComparison.Ordinal) ||
+               normalized.Contains("单位：万", StringComparison.Ordinal) ||
+               normalized.Contains("单位:万", StringComparison.Ordinal) ||
+               normalized.Contains("/万", StringComparison.Ordinal) ||
+               normalized.Contains("／万", StringComparison.Ordinal);
+    }
+
+    private static bool DeclaresYuanUnit(string? unitContext)
+    {
+        var normalized = BidOpsTextQuality.CleanExtractedValue(unitContext)
+            .Replace(" ", string.Empty, StringComparison.Ordinal)
+            .Replace("　", string.Empty, StringComparison.Ordinal);
+        return !HasTenThousandYuanUnit(normalized) &&
+               (normalized.Contains("元", StringComparison.Ordinal) ||
+                normalized.Contains("人民币元", StringComparison.Ordinal));
     }
 
     private static bool LooksLikeRateOrScore(string value)

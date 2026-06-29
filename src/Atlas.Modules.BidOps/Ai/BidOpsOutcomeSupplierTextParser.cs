@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using Atlas.Modules.BidOps.Ai.Evidence;
 using Atlas.Modules.BidOps.Entities.Outcomes;
 
 namespace Atlas.Modules.BidOps.Ai;
@@ -168,7 +169,7 @@ public static class BidOpsOutcomeSupplierTextParser
         var results = new List<BidOpsOutcomeSupplierExtract>();
         var current = new PackageContext();
         var projectName = ExtractFirst(ProjectNameRegex, source);
-        var projectCode = ExtractFirst(ProjectCodeRegex, source);
+        var projectCode = FirstNonEmpty(BidOpsEvidenceText.ExtractProjectCode(source), NormalizeProjectCode(ExtractFirst(ProjectCodeRegex, source)));
         var defaultOutcome = DetermineOutcomeType($"{title}\n{noticeType}");
         var outcomeTableContext = OutcomeTableContext.None;
 
@@ -690,6 +691,28 @@ public static class BidOpsOutcomeSupplierTextParser
     {
         var match = regex.Match(source);
         return match.Success ? BidOpsTextQuality.CleanExtractedValue(match.Groups["value"].Value) : string.Empty;
+    }
+
+    private static string NormalizeProjectCode(string? value)
+    {
+        var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+        if (string.IsNullOrWhiteSpace(cleaned))
+            return string.Empty;
+
+        var match = Regex.Match(cleaned, @"[A-Za-z0-9][A-Za-z0-9_.\-/]*", RegexOptions.CultureInvariant);
+        return match.Success ? match.Value : cleaned.Trim(' ', '。', '.', '；', ';', '，', ',', '、', '）', ')');
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+            if (!string.IsNullOrWhiteSpace(cleaned))
+                return cleaned;
+        }
+
+        return string.Empty;
     }
 
     private static string DetermineOutcomeType(string value)

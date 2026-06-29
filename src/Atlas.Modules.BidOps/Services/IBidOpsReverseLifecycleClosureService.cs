@@ -28,6 +28,11 @@ public interface IBidOpsReverseLifecycleClosureService
         LifecycleFieldEnrichmentRequest request,
         CancellationToken ct = default);
 
+    Task<EnqueueJobDto> EnqueueOutcomeSupplierReparseAsync(
+        long rawNoticeId,
+        LifecycleOutcomeSupplierReparseRequest request,
+        CancellationToken ct = default);
+
     Task<LifecyclePackageLinkDto> EnrichLifecycleLinkFieldsAsync(
         long linkId,
         string? reviewerPrompt,

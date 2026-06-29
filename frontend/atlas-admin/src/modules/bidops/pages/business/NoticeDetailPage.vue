@@ -62,7 +62,7 @@ async function analyzeLifecycle() {
       persistLifecycleLinks: false,
       persistLifecycleLinksOnCompletion: true,
     })
-    ElMessage.success(job.alreadyExists ? `闭环分析任务已存在：${job.jobId}` : `闭环分析任务已入队：${job.jobId}`)
+    ElMessage.success(job.alreadyExists ? `闭环分析任务已在队列中：${job.jobId}` : `闭环分析任务已提交：${job.jobId}`)
     await router.push(`/bidops/outcomes?rawNoticeId=${rawNoticeId}`)
   } finally {
     analyzeLoading.value = false

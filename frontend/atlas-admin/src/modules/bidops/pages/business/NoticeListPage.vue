@@ -16,16 +16,21 @@ import BidOpsStatusTag from '../../components/BidOpsStatusTag.vue'
 import DeadlineCountdown from '../../components/DeadlineCountdown.vue'
 import { BIDOPS_PERMISSIONS } from '../../constants'
 import type { NoticeDto } from '../../types'
-import { formatNoticeType, isResultNoticeType, noticeTypeOptions } from '../../utils/display'
+import { formatNoticeType, isResultNoticeType, lifecycleReviewStatusOptions, noticeTypeOptions } from '../../utils/display'
 
 const router = useRouter()
 const analyzingRawNoticeId = ref('')
 const { visible: canAnalyzeLifecycle } = usePermission(BIDOPS_PERMISSIONS.CRAWL_IMPORT)
-const table = useTableQuery<NoticeDto, { keyword: string; noticeType?: string; pageIndex: number; pageSize: number }>(
-  (params) => noticesApi.search({ ...params, noticeType: params.noticeType || undefined }),
+const table = useTableQuery<NoticeDto, { keyword: string; noticeType?: string; lifecycleReviewStatus?: string; pageIndex: number; pageSize: number }>(
+  (params) => noticesApi.search({
+    ...params,
+    noticeType: params.noticeType || undefined,
+    lifecycleReviewStatus: params.lifecycleReviewStatus || undefined,
+  }),
   {
     keyword: '',
-    noticeType: '',
+    noticeType: 'AwardAnnouncement',
+    lifecycleReviewStatus: '',
     pageIndex: 1,
     pageSize: 20,
   },
@@ -46,7 +51,7 @@ async function analyzeLifecycle(row: NoticeDto) {
       persistLifecycleLinks: false,
       persistLifecycleLinksOnCompletion: true,
     })
-    ElMessage.success(job.alreadyExists ? `闭环分析任务已存在：${job.jobId}` : `闭环分析任务已入队：${job.jobId}`)
+    ElMessage.success(job.alreadyExists ? `闭环分析任务已在队列中：${job.jobId}` : `闭环分析任务已提交：${job.jobId}`)
     await router.push(`/bidops/outcomes?rawNoticeId=${row.rawNoticeId}`)
   } finally {
     analyzingRawNoticeId.value = ''
@@ -65,6 +70,11 @@ async function analyzeLifecycle(row: NoticeDto) {
           <el-option v-for="item in noticeTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
       </el-form-item>
+      <el-form-item label="闭环审核">
+        <el-select v-model="table.query.lifecycleReviewStatus" clearable placeholder="全部" style="width: 180px">
+          <el-option v-for="item in lifecycleReviewStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
+        </el-select>
+      </el-form-item>
     </SearchForm>
 
     <DataTable :data="table.result.items" :loading="table.loading">
@@ -81,6 +91,7 @@ async function analyzeLifecycle(row: NoticeDto) {
       <el-table-column label="投标截止" width="170"><template #default="{ row }">{{ formatDateTime(row.bidDeadline) }}</template></el-table-column>
       <el-table-column label="最后更新时间" width="170"><template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template></el-table-column>
       <el-table-column label="倒计时" width="110"><template #default="{ row }"><DeadlineCountdown :value="row.bidDeadline" /></template></el-table-column>
+      <el-table-column label="闭环审核" width="130"><template #default="{ row }"><BidOpsStatusTag :value="row.lifecycleReviewStatus" /></template></el-table-column>
       <el-table-column label="状态" width="130"><template #default="{ row }"><BidOpsStatusTag :value="row.status" /></template></el-table-column>
       <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">

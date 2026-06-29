@@ -82,6 +82,7 @@ public static class BidOpsAmountKinds
     public const string InferredFromDiscountRate = "InferredFromDiscountRate";
     public const string InferredFromReductionRate = "InferredFromReductionRate";
     public const string InferredFromCoefficient = "InferredFromCoefficient";
+    public const string DefaultedFromProcurementPackageAmount = "DefaultedFromProcurementPackageAmount";
     public const string EstimatedFrameworkValue = "EstimatedFrameworkValue";
     public const string Unknown = "Unknown";
 }

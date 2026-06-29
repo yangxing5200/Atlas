@@ -17,6 +17,8 @@ public sealed class RawNoticeSearchQuery : BidOpsPagedQuery
 public sealed class NoticeSearchQuery : BidOpsPagedQuery
 {
     public string? NoticeType { get; set; }
+
+    public string? LifecycleReviewStatus { get; set; }
 }
 
 public sealed class CrawlRunLogSearchQuery : BidOpsPagedQuery
@@ -348,6 +350,11 @@ public sealed class LifecyclePackageLinkDecisionRequest
 }
 
 public sealed class LifecycleFieldEnrichmentRequest
+{
+    public string? ReviewerPrompt { get; set; }
+}
+
+public sealed class LifecycleOutcomeSupplierReparseRequest
 {
     public string? ReviewerPrompt { get; set; }
 }
