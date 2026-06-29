@@ -13,6 +13,7 @@ public sealed class BidOpsLifecycleFieldEnrichmentAiService : IBidOpsLifecycleFi
 {
     private const int DefaultSourceMaxCharacters = 22_000;
     private const int ReviewerPromptSourceMaxCharacters = 32_000;
+    private const int RelevantContextLineRadius = 2;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -313,7 +314,7 @@ public sealed class BidOpsLifecycleFieldEnrichmentAiService : IBidOpsLifecycleFi
         var reviewerPrompt = string.IsNullOrWhiteSpace(request.ReviewerPrompt)
             ? "审核人员没有提供额外提示。"
             : request.ReviewerPrompt.Trim();
-        var sourceBundle = BuildSourceBundle(request.Evidence, sourceMaxCharacters);
+        var sourceBundle = BuildSourceBundle(request, sourceMaxCharacters);
 
         return $$"""
 输出要求：
@@ -369,12 +370,15 @@ finalAwardAmountSource: {{request.FinalAwardAmountSource}}
 """;
     }
 
-    private static string BuildSourceBundle(IReadOnlyList<BidOpsLifecycleFieldEvidenceInput> evidence, int maxCharacters)
+    private static string BuildSourceBundle(BidOpsLifecycleFieldEnrichmentRequest request, int maxCharacters)
     {
+        var evidence = request.Evidence;
+        var dynamicKeywords = BuildDynamicKeywords(request);
         var builder = new StringBuilder(maxCharacters);
         var remaining = maxCharacters;
-        foreach (var item in evidence)
+        for (var i = 0; i < evidence.Count; i++)
         {
+            var item = evidence[i];
             if (remaining <= 0)
                 break;
 
@@ -390,13 +394,15 @@ AttachmentName: {item.AttachmentName}
 Text:
 """;
             AppendBudgeted(builder, header, ref remaining);
-            AppendBudgeted(builder, ExtractRelevantText(item.Text, Math.Min(remaining, maxCharacters / Math.Max(1, evidence.Count))), ref remaining);
+            var documentsLeft = Math.Max(1, evidence.Count - i);
+            var documentBudget = Math.Min(remaining, Math.Max(1, remaining / documentsLeft));
+            AppendBudgeted(builder, ExtractRelevantText(item.Text, documentBudget, dynamicKeywords), ref remaining);
         }
 
         return builder.ToString();
     }
 
-    private static string ExtractRelevantText(string value, int maxCharacters)
+    private static string ExtractRelevantText(string value, int maxCharacters, IReadOnlyList<string> dynamicKeywords)
     {
         if (maxCharacters <= 0 || string.IsNullOrWhiteSpace(value))
             return string.Empty;
@@ -409,14 +415,57 @@ Text:
             .Replace("\r\n", "\n", StringComparison.Ordinal)
             .Replace('\r', '\n')
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(IsRelevantLine)
             .ToList();
-        var relevant = string.Join(Environment.NewLine, lines);
-        return Truncate(string.IsNullOrWhiteSpace(relevant) ? text : relevant, maxCharacters);
+        if (lines.Count == 0)
+            return Truncate(text, maxCharacters);
+
+        var relevantIndexes = new SortedSet<int>();
+        for (var i = 0; i < lines.Count; i++)
+        {
+            if (!IsRelevantLine(lines[i], dynamicKeywords))
+                continue;
+
+            var start = Math.Max(0, i - RelevantContextLineRadius);
+            var end = Math.Min(lines.Count - 1, i + RelevantContextLineRadius);
+            for (var index = start; index <= end; index++)
+                relevantIndexes.Add(index);
+        }
+
+        if (relevantIndexes.Count == 0)
+            return Truncate(text, maxCharacters);
+
+        var preambleBudget = Math.Min(1000, Math.Max(200, maxCharacters / 5));
+        var preamble = Truncate(string.Join(Environment.NewLine, lines.Take(12)), preambleBudget);
+        var relevant = string.Join(Environment.NewLine, relevantIndexes.Select(index => lines[index]));
+        var combined = string.IsNullOrWhiteSpace(preamble)
+            ? relevant
+            : $"【文档开头】{Environment.NewLine}{preamble}{Environment.NewLine}【相关片段】{Environment.NewLine}{relevant}";
+        return Truncate(combined, maxCharacters);
     }
 
-    private static bool IsRelevantLine(string line)
+    private static IReadOnlyList<string> BuildDynamicKeywords(BidOpsLifecycleFieldEnrichmentRequest request)
     {
+        return new[]
+            {
+                request.ProjectCode,
+                request.ProjectName,
+                request.LotNo,
+                request.LotName,
+                request.PackageNo,
+                request.PackageName,
+                request.SupplierName
+            }
+            .Select(BidOpsTextQuality.CleanExtractedValue)
+            .Where(x => x.Length >= 2)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static bool IsRelevantLine(string line, IReadOnlyList<string> dynamicKeywords)
+    {
+        if (dynamicKeywords.Any(keyword => line.Contains(keyword, StringComparison.OrdinalIgnoreCase)))
+            return true;
+
         return ContainsAny(
                 line,
                 "采购编号",

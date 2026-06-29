@@ -60,11 +60,14 @@ public static class BidOpsOutcomeSupplierExtractBuilder
             })
             : Enumerable.Empty<BidOpsOutcomeSupplierExtract>();
 
-        return textExtracts
+        var extracts = textExtracts
             .Concat(wrappedExtracts)
             .Concat(candidateExtracts)
             .Concat(awardExtracts)
             .Where(x => !string.IsNullOrWhiteSpace(x.SupplierName))
+            .ToList();
+
+        return RemoveLessSpecificPackageContextDuplicates(extracts)
             .GroupBy(x => string.Join(
                 '\u001f',
                 BidOpsOutcomeSupplierTextParser.NormalizeSupplierName(x.SupplierName),
@@ -77,6 +80,41 @@ public static class BidOpsOutcomeSupplierExtractBuilder
                 .ThenByDescending(item => item.AwardAmount.HasValue)
                 .First())
             .ToList();
+    }
+
+    private static IReadOnlyList<BidOpsOutcomeSupplierExtract> RemoveLessSpecificPackageContextDuplicates(
+        IReadOnlyList<BidOpsOutcomeSupplierExtract> extracts)
+    {
+        return extracts
+            .Where(x => !IsLessSpecificPackageContextDuplicate(x, extracts))
+            .ToList();
+    }
+
+    private static bool IsLessSpecificPackageContextDuplicate(
+        BidOpsOutcomeSupplierExtract current,
+        IReadOnlyList<BidOpsOutcomeSupplierExtract> extracts)
+    {
+        if (HasLotContext(current))
+            return false;
+
+        var supplier = BidOpsOutcomeSupplierTextParser.NormalizeSupplierName(current.SupplierName);
+        var packageNo = NormalizeCode(current.PackageNo);
+        if (string.IsNullOrWhiteSpace(supplier) || string.IsNullOrWhiteSpace(packageNo))
+            return false;
+
+        return extracts.Any(other =>
+            !ReferenceEquals(current, other) &&
+            HasLotContext(other) &&
+            string.Equals(BidOpsOutcomeSupplierTextParser.NormalizeSupplierName(other.SupplierName), supplier, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(NormalizeCode(other.PackageNo), packageNo, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(NormalizeOutcomeType(other.OutcomeType), NormalizeOutcomeType(current.OutcomeType), StringComparison.OrdinalIgnoreCase) &&
+            other.Rank == current.Rank);
+    }
+
+    private static bool HasLotContext(BidOpsOutcomeSupplierExtract extract)
+    {
+        return !string.IsNullOrWhiteSpace(NormalizeCode(extract.LotNo)) ||
+               !string.IsNullOrWhiteSpace(NormalizeCode(extract.LotName));
     }
 
     private static NoticeOutcomeKind DetermineNoticeKind(

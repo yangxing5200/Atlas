@@ -41,7 +41,7 @@ public static class BidOpsWrappedOutcomeTableParser
             return [];
 
         var projectCode = BidOpsEvidenceText.ExtractProjectCode(source);
-        var projectName = BidOpsEvidenceText.ExtractProjectName(source);
+        var projectName = FirstNonEmpty(BidOpsEvidenceText.ExtractProjectName(source), title);
         var amountUnit = InferAmountUnit(lines);
         var results = new List<BidOpsOutcomeSupplierExtract>();
         var inOutcomeSection = false;
@@ -78,6 +78,8 @@ public static class BidOpsWrappedOutcomeTableParser
             i = Math.Max(i, nextIndex - 1);
         }
 
+        results.AddRange(ExtractHeaderDrivenWrappedRows(lines, outcomeType, projectCode, projectName));
+
         return results
             .Where(x => !string.IsNullOrWhiteSpace(x.SupplierName))
             .GroupBy(x => new
@@ -90,6 +92,140 @@ public static class BidOpsWrappedOutcomeTableParser
             })
             .Select(x => x.OrderByDescending(item => item.Confidence).First())
             .ToList();
+    }
+
+    private static IReadOnlyList<BidOpsOutcomeSupplierExtract> ExtractHeaderDrivenWrappedRows(
+        IReadOnlyList<string> lines,
+        string outcomeType,
+        string projectCode,
+        string projectName)
+    {
+        var results = new List<BidOpsOutcomeSupplierExtract>();
+        var inTable = false;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var line = lines[i];
+            if (LooksLikeHeaderDrivenWrappedAwardHeader(line))
+            {
+                inTable = true;
+                continue;
+            }
+
+            if (!inTable)
+                continue;
+
+            if (results.Count > 0 && LooksLikeHeaderDrivenWrappedAwardBoundary(line))
+                break;
+
+            if (!LooksLikeWrappedLotCodeStart(line, projectCode))
+                continue;
+
+            if (!TryParseHeaderDrivenWrappedRow(
+                    lines,
+                    i,
+                    outcomeType,
+                    projectCode,
+                    projectName,
+                    out var record,
+                    out var nextIndex))
+            {
+                continue;
+            }
+
+            results.Add(record);
+            i = Math.Max(i, nextIndex - 1);
+        }
+
+        return results;
+    }
+
+    private static bool TryParseHeaderDrivenWrappedRow(
+        IReadOnlyList<string> lines,
+        int startIndex,
+        string outcomeType,
+        string projectCode,
+        string projectName,
+        out BidOpsOutcomeSupplierExtract record,
+        out int nextIndex)
+    {
+        record = new BidOpsOutcomeSupplierExtract();
+        nextIndex = startIndex + 1;
+
+        var buffer = new List<string> { lines[startIndex] };
+        var endIndex = startIndex + 1;
+        for (; endIndex < lines.Count && buffer.Count < 90; endIndex++)
+        {
+            var line = lines[endIndex];
+            if (buffer.Count > 4 &&
+                LooksLikeWrappedLotCodeStart(line, projectCode) &&
+                HeaderDrivenBufferLooksComplete(buffer))
+            {
+                break;
+            }
+
+            if (HeaderDrivenBufferLooksComplete(buffer) && LooksLikeHeaderDrivenWrappedAwardBoundary(line))
+                break;
+
+            buffer.Add(line);
+        }
+
+        nextIndex = endIndex;
+
+        var codeSegments = buffer
+            .TakeWhile(IsCodeFragment)
+            .ToList();
+        if (codeSegments.Count == 0)
+            return false;
+
+        if (!TryLocatePackage(buffer, out var packageLineIndex, out var packageMatch) ||
+            packageLineIndex < codeSegments.Count)
+        {
+            return false;
+        }
+
+        var lotNameFragments = buffer
+            .Skip(codeSegments.Count)
+            .Take(packageLineIndex - codeSegments.Count)
+            .ToList();
+        var packageLine = buffer[packageLineIndex];
+        var packagePrefix = packageLine[..packageMatch.Index];
+        if (!string.IsNullOrWhiteSpace(packagePrefix))
+            lotNameFragments.Add(packagePrefix);
+
+        var packageNo = BidOpsTextQuality.CleanExtractedValue(packageMatch.Groups["package"].Value);
+        var tailFragments = new List<string>();
+        var packageTail = packageLine[(packageMatch.Index + packageMatch.Length)..];
+        if (!string.IsNullOrWhiteSpace(packageTail))
+            tailFragments.Add(packageTail);
+        tailFragments.AddRange(buffer.Skip(packageLineIndex + 1));
+
+        if (!TrySplitTrailingSupplier(tailFragments, out var supplierStartIndex, out var supplierName))
+            return false;
+
+        var packageName = JoinFragments(tailFragments.Take(supplierStartIndex));
+        record = new BidOpsOutcomeSupplierExtract
+        {
+            SupplierName = supplierName,
+            OutcomeType = outcomeType,
+            ProjectCode = projectCode,
+            ProjectName = projectName,
+            LotNo = Truncate(JoinFragments(codeSegments), 128),
+            LotName = Truncate(JoinFragments(lotNameFragments), 300),
+            PackageNo = packageNo,
+            PackageName = Truncate(packageName, 500),
+            EvidenceText = Truncate(string.Join(" ", buffer.Take(32)), 1000),
+            Confidence = 0.91m
+        };
+        return true;
+    }
+
+    private static bool HeaderDrivenBufferLooksComplete(IReadOnlyList<string> buffer)
+    {
+        if (!TryLocatePackage(buffer, out var packageLineIndex, out _))
+            return false;
+
+        var tail = buffer.Skip(packageLineIndex + 1).ToList();
+        return TrySplitTrailingSupplier(tail, out _, out _);
     }
 
     private static bool TryParseRow(
@@ -417,6 +553,132 @@ public static class BidOpsWrappedOutcomeTableParser
             return AmountUnitHint.Yuan;
 
         return AmountUnitHint.Unknown;
+    }
+
+    private static bool LooksLikeHeaderDrivenWrappedAwardHeader(string line)
+    {
+        var normalized = NormalizeHeaderText(line);
+        return ContainsAny(normalized, "分标编号") &&
+               ContainsAny(normalized, "分标名称") &&
+               ContainsAny(normalized, "包号", "包件号", "分包号") &&
+               ContainsAny(normalized, "成交供应商", "中标供应商", "成交人", "中标人");
+    }
+
+    private static bool LooksLikeHeaderDrivenWrappedAwardBoundary(string line)
+    {
+        var normalized = NormalizeHeaderText(line);
+        return ContainsAny(
+            normalized,
+            "成交通知书",
+            "中标通知书",
+            "成交供应商须知",
+            "中标供应商须知",
+            "代理机构",
+            "采购代理",
+            "招标代理",
+            "电子商务平台",
+            "联系电话",
+            "联系邮箱") ||
+            Regex.IsMatch(normalized, @"^20\d{2}年\d{1,2}月\d{1,2}日$", RegexOptions.CultureInvariant);
+    }
+
+    private static bool LooksLikeWrappedLotCodeStart(string line, string projectCode)
+    {
+        var cleaned = CleanSegment(line);
+        if (!IsCodeFragment(cleaned) || !cleaned.Contains('-', StringComparison.Ordinal) || !cleaned.Any(char.IsDigit))
+            return false;
+
+        var normalizedProjectCode = NormalizeCode(projectCode);
+        if (string.IsNullOrWhiteSpace(normalizedProjectCode))
+            return true;
+
+        return NormalizeCode(cleaned).StartsWith(normalizedProjectCode, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCodeFragment(string value)
+    {
+        var cleaned = CleanSegment(value);
+        return !string.IsNullOrWhiteSpace(cleaned) &&
+               CodeFragmentRegex.IsMatch(cleaned) &&
+               cleaned.Any(char.IsDigit);
+    }
+
+    private static bool TrySplitTrailingSupplier(
+        IReadOnlyList<string> fragments,
+        out int supplierStartIndex,
+        out string supplierName)
+    {
+        supplierStartIndex = -1;
+        supplierName = string.Empty;
+        if (fragments.Count == 0)
+            return false;
+
+        var lowerBound = Math.Max(0, fragments.Count - 8);
+        for (var i = fragments.Count - 1; i >= lowerBound; i--)
+        {
+            var candidate = JoinFragments(fragments.Skip(i));
+            if (!HasBalancedParentheses(candidate))
+                continue;
+
+            var supplier = BidOpsSupplierNameNormalizer.Clean(candidate);
+            if (!LooksLikeCompleteSupplierName(supplier))
+                continue;
+
+            supplierStartIndex = i;
+            supplierName = supplier;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool LooksLikeCompleteSupplierName(string value)
+    {
+        var cleaned = CleanSegment(value);
+        if (cleaned.Length < 5 && !(cleaned.Length >= 4 && ContainsAny(cleaned, "大学", "学院")))
+            return false;
+
+        if (cleaned is "有限公司" or "有限责任公司" or "股份有限公司" or "集团有限公司" or "研究院" or "设计院" or "大学" or "学院")
+            return false;
+
+        if (ContainsAny(cleaned, "科技项目", "采购项目", "成交结果公告", "中标结果公告"))
+            return false;
+
+        var genericPrefixes = new[]
+        {
+            "科技",
+            "技术",
+            "工程",
+            "设计",
+            "咨询",
+            "研究所",
+            "研究院"
+        };
+        if (genericPrefixes.Any(x => cleaned.StartsWith(x, StringComparison.Ordinal)) &&
+            ContainsAny(cleaned, "有限公司", "有限责任公司", "研究院", "设计院"))
+        {
+            return false;
+        }
+
+        return ContainsAny(
+            cleaned,
+            "有限责任公司",
+            "股份有限公司",
+            "集团有限公司",
+            "有限公司",
+            "分公司",
+            "研究院",
+            "设计院",
+            "研究所",
+            "大学",
+            "学院",
+            "中心");
+    }
+
+    private static bool HasBalancedParentheses(string value)
+    {
+        return value.Count(x => x == '(') == value.Count(x => x == ')') &&
+               value.Count(x => x == '（') == value.Count(x => x == '）');
     }
 
     private static IEnumerable<string> SplitLines(string source)

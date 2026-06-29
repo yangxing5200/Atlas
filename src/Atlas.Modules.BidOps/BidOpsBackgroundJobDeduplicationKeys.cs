@@ -4,6 +4,8 @@ namespace Atlas.Modules.BidOps;
 
 internal static class BidOpsBackgroundJobDeduplicationKeys
 {
+    private const int MaxDeduplicationKeyLength = 300;
+
     public static string AttachmentProcess(long tenantId, long rawNoticeId, string? contentHash)
     {
         return $"bidops:attachment-process:{BidOpsSystemValues.StructuredParserVersion}:{tenantId}:{rawNoticeId}:{NormalizePart(contentHash, "no-content-hash")}";
@@ -55,9 +57,18 @@ internal static class BidOpsBackgroundJobDeduplicationKeys
         long tenantId,
         long? rawNoticeId,
         string? awardUrl,
-        bool persistLinks)
+        bool persistLinks,
+        string? runId = null)
     {
-        return $"bidops:lifecycle:reverse-closure:{tenantId}:raw:{rawNoticeId?.ToString() ?? "none"}:url:{NormalizePart(awardUrl, "none")}:persist:{persistLinks}";
+        var baseKey = $"bidops:lifecycle:reverse-closure:{tenantId}:raw:{rawNoticeId?.ToString() ?? "none"}:url:{NormalizePart(awardUrl, "none")}:persist:{persistLinks}";
+        if (string.IsNullOrWhiteSpace(runId))
+            return baseKey;
+
+        var suffix = $":run:{NormalizePart(runId, "manual")}";
+        var maxBaseLength = Math.Max(0, MaxDeduplicationKeyLength - suffix.Length);
+        return baseKey.Length <= maxBaseLength
+            ? baseKey + suffix
+            : baseKey[..maxBaseLength] + suffix;
     }
 
     public static string LifecycleFieldEnrichment(

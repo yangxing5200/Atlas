@@ -1,5 +1,25 @@
 # Decisions
 
+## 2026-06-29 BidOps Reviewer-Prompt Outcome Reparse Fallback
+
+- Reviewer-prompted outcome supplier reparse remains a replacement of the current stored `OutcomeSupplierRecord` rows for that RawNotice, but persistence no longer trusts only the AI-returned rows.
+- The reparse selection now starts with AI rows so reviewer corrections still win for the same package/lot/outcome/rank, then appends deterministic rows that AI did not cover. This prevents a reviewer prompt reparse from reducing a public result notice from 35 rows to 29 rows when deterministic parsing can still identify the missing lines.
+- Outcome row de-duplication must keep lot context in the supplier-level key. The same supplier and package number can legitimately appear in multiple lots or service categories, so cross-lot rows are not duplicates.
+
+## 2026-06-28 BidOps Lifecycle Field Enrichment Source Completeness
+
+- Lifecycle field enrichment should remain bounded by prompt budgets, but long source compression must preserve local context around relevant rows. A package row, amount cell, or supplier value can be split across neighboring lines in extracted Word/Excel/PDF text.
+- Source snippet selection now uses both fixed procurement/outcome keywords and dynamic lifecycle-link values such as project code, package number, lot name, and supplier name.
+- When source text is too long, the prompt includes the document opening plus relevant lines with nearby context lines. This is preferred over sending only isolated keyword lines because reviewers often need table headers and adjacent cells to understand package identity.
+- Full unbounded source replay is still avoided to keep AI calls reliable and cost/prompt-size controlled. If evidence remains ambiguous, the AI must return conflicts and require manual review.
+
+## 2026-06-27 BidOps Lifecycle Closure Notice Context Layout
+
+- Lifecycle closure notice context is display-level information for the review center. Award/result notices and procurement/tender notices should be shown once at the top of the current closure, not repeated inside each award-detail row.
+- The first implementation is frontend-only and derives the notice context from the current filtered lifecycle-link result. This avoids a backend contract, schema, or migration change while correcting the operator-facing layout.
+- If the current filtered result spans multiple award/procurement notices, the UI keeps them out of the detail rows and shows a warning in the top context so operators can filter by `RawNoticeId` for a single closure.
+- Procurement-notice search remains available from the top context for missing procurement links. It still uses the existing per-link search/import API because linking is persisted on lifecycle-link records in the current MVP model.
+
 ## 2026-06-27 BidOps Lifecycle Field-Level AI Enrichment
 
 - Lifecycle closure now treats missing lot/package/amount context as field-level enrichment rather than one-off parser special cases. The same mechanism can apply to `LotNo`, `LotName`, `PackageNo`, `PackageName`, `SupplierName`, `FinalAwardAmount`, `ProjectCode`, and similar review fields.
@@ -764,3 +784,78 @@
 - The lifecycle closure center should function as a review workbench, not just a raw link list. Each row should expose the winning supplier, lot/package identity, final award amount, matched procurement notice evidence, and original public attachments when available.
 - If the corresponding procurement notice has not been collected into RawNotice, the UI should show an explicit missing-procurement reason instead of silently leaving the procurement notice blank. Operators can then import/crawl the procurement announcement and rerun or refresh closure review.
 - Attachment evidence is shown from the underlying RawNotice rows. Procurement attachments are primary for package-scope review; award/result attachments remain visible because they are the public source for supplier and amount evidence.
+
+## 2026-06-28 BidOps 22FK09 Wrapped Award Table Repair
+
+- Do not treat missing 22FK09 lifecycle lot fields as an AI reparse problem first. The public award attachment already contains `分标编号/分标名称`, and the local procurement staging rows already contain the package context. The durable fix is deterministic parsing plus read-time enrichment from existing reviewed evidence.
+- State Grid award PDFs can extract as header-driven wrapped text without row sequence numbers. The outcome parser should reconstruct these rows by table header, lot-code fragments, package token, package-name fragments, and trailing supplier-name fragments instead of relying on an AI provider to infer row boundaries.
+- Generic lot labels such as `未分标段` are placeholders in lifecycle display. When a unique procurement package staging row matches by normalized package number, its lot number/name may override the generic display value without mutating the stored lifecycle link row or original outcome record.
+- Project-code matching must normalize business-code wrappers and punctuation. `code:22FK09`, `22FK09）`, and `22FK09` should match for procurement lookup and lifecycle display; the original stored audit text is not rewritten by this normalization.
+- AI provider provenance remains owned by background-job diagnostics. The lifecycle closure page links to the existing BidOps job list filtered by RawNoticeId, where job detail already displays `aiResponses` / `deepSeekResponses` provider, model, endpoint, status, and raw response. BidOps lifecycle business services should not query the global job store directly just for display diagnostics.
+
+## 2026-06-28 BidOps Lifecycle Reparse Scope
+
+- Row-level `AI补全` / `提示词补全` in the lifecycle closure center is field enrichment for one `bidops_lifecycle_package_link` row. It updates only that lifecycle link's missing/empty fields and enrichment evidence; it does not rewrite RawNotice text, NoticeStaging, PackageStaging, or outcome supplier records.
+- Outcome supplier re-extraction is announcement-scoped, not row-scoped. Running it for an award/result RawNotice may replace all `bidops_outcome_supplier_record` rows for that RawNotice, so the button belongs in the top award-notice context rather than in each supplier detail row.
+- Approved RawNotice full reparse remains blocked by the review workflow. The lifecycle closure button intentionally enqueues only `bidops.outcome.supplier-extract` against already-collected public source material, allowing historical result-detail extraction fixes without changing the approved RawNotice/review status.
+- Operators should inspect the generated background job for provider/model diagnostics and refresh or rerun lifecycle closure after completion when newly extracted supplier/package rows should create additional lifecycle links.
+
+## 2026-06-28 BidOps Lifecycle Procurement Package Amounts
+
+- Lifecycle closure package identity should display `包号` as its own column. Package names are useful context, but they should not hide the normalized package number operators use to locate procurement rows.
+- Procurement package amount is a read-model enrichment for the closure center. It is derived from reviewed procurement staging evidence and is not persisted back to `bidops_lifecycle_package_link`, preserving the historical audit row.
+- Amount matching prioritizes `分标名称 + 包号`, then other explicit package context. If multiple procurement detail rows match and the relevant amount field is not unique, the service leaves the display amount blank instead of summing or inventing a package amount.
+
+## 2026-06-28 BidOps Lifecycle Amount Defaults And Chinese Review Text
+
+- When a lifecycle row lacks a direct award amount and lacks a usable candidate final quote, a unique matched procurement package amount may be used as the default final award amount for review. This is marked as `DefaultedFromProcurementPackageAmount`, not as a direct award-notice amount.
+- Defaulted procurement amounts still require manual review. They are a practical review default for comparing procurement and result rows, not a guarantee that the supplier's final payable amount equals the procurement estimate.
+- Lifecycle detail labels for match reasons and missing fields are translated in the UI. Stored `MatchReasonsJson`, `MissingFieldsJson`, and evidence JSON remain unchanged to preserve deterministic audit/debug values.
+
+## 2026-06-28 BidOps Product-Facing Enum Display
+
+- Product-facing UI must not display raw English enum/code values directly. Backend payloads and stored JSON may keep stable English identifiers, but Vue pages/components must format them through Chinese labels before rendering.
+- Editable enum fields should submit the internal value while showing the Chinese label, for example the lifecycle confirmation dialog's amount source selector.
+
+## 2026-06-28 BidOps Lifecycle Batch Review Scope
+
+- Lifecycle closure batch review operates on explicit table selection for the current result set/page, not on hidden cross-page rows.
+- Batch review only allows `Suggested` lifecycle links to be selected. Confirmed, rejected, failed, or other non-reviewable rows must remain visible but not batch-mutable.
+- The MVP batch action reuses the existing single-row confirm/reject API calls. This preserves per-link audit updates and avoids introducing a backend bulk mutation contract before approval semantics need it.
+
+## 2026-06-28 BidOps Lifecycle Reparse Refresh Semantics
+
+- Lifecycle-center outcome reparse is an operator action to repair closure review data, so it must refresh lifecycle links after replacing outcome supplier rows. Leaving reparse and reverse closure as two hidden steps causes correct supplier extraction to remain invisible in the closure center.
+- General post-approval outcome supplier extraction remains supplier-record scoped. Only lifecycle-center reparse jobs set `RefreshLifecycleLinks=true`.
+- The closure center should default to showing all link statuses. Bulk review controls can still restrict selectable rows to `Suggested`, but status filtering should not hide confirmed rows by default when operators are reconciling counts.
+- Re-running closure for the same award notice should replace stale non-confirmed suggestions for that award notice. Manually confirmed links are preserved and treated as equivalent by award notice, project code, package number, and supplier, even when improved extraction changes the persistence hash.
+
+## 2026-06-28 BidOps Amount Unit Context
+
+- Public tender/result tables often place amount units in the column header or a nearby `金额单位：万元` line while cells contain only numbers. Amount normalization must consider this unit context before persisting or displaying review amounts.
+- A cell-level explicit unit wins first. If the cell has no unit, an explicit `元` column header wins over nearby context; otherwise `万元` context means the stored amount is RMB yuan after multiplying by 10,000.
+
+## 2026-06-28 BidOps Manual Lifecycle Analysis Reruns
+
+- The "分析闭环" action is an operator rerun, not a forever-idempotent create operation. A historical background job may have succeeded with zero links, failed before persistence, or used an older parser, so it must not permanently block a fresh lifecycle analysis for the same RawNotice.
+- The global background job table keeps the existing `TenantId + DeduplicationKey` unique index. BidOps avoids changing global queue semantics by adding a per-run suffix only to manual lifecycle reverse-closure enqueue keys.
+- Lifecycle closure pages with a RawNotice filter and no link rows should point operators to the filtered background-job list, because task state and persisted lifecycle rows are separate audit surfaces.
+
+## 2026-06-28 BidOps Procurement Notice Official Search
+
+- State Grid ECP procurement notice lookup should use the official project/procurement-code field before title/full-text keyword search. The public `noteList` API exposes this as `purOrgCode`, and it is more precise for codes such as `22FK09` than the generic `key` field.
+- The crawler normalizes common wrappers and trailing punctuation before sending the code to `purOrgCode`, so values like `code:22FK09` and `22FK09）` are searched as `22FK09`.
+- Generic `key` search remains a fallback when project-code search returns fewer candidates, preserving recall for historical notices whose list metadata lacks the code field.
+
+## 2026-06-28 BidOps Formal Notice Lifecycle Review Status
+
+- The formal notice library displays lifecycle review state as a read model derived from `bidops_lifecycle_package_link` rows where `AwardRawNoticeId` equals the notice's `RawNoticeId`.
+- Exact row display statuses are `NotAnalyzed`, `PendingReview`, `PartiallyApproved`, `Approved`, and `Rejected`. The query-only status `NotApproved` means anything except fully approved, including not analyzed notices.
+- This status does not mutate formal `Notice.Status` and does not require a schema change. It is meant to help operators distinguish outcome notices that have passed closure review from notices that still need closure work.
+
+## 2026-06-28 BidOps Lifecycle Prompt Parse Placement
+
+- Lifecycle prompt-assisted parsing belongs to the source notice context, not to each lifecycle detail row. The closure center keeps row operations focused on detail review, confirmation, and rejection.
+- Award notice prompt parsing uses the announcement-scoped outcome supplier re-extraction flow, which replaces outcome supplier records for the award RawNotice and refreshes lifecycle links on job completion.
+- Procurement notice prompt assistance is triggered from the procurement notice context and enqueues field-enrichment jobs for the currently associated non-final lifecycle links. This avoids using the general RawNotice reparse path that can reset review state or reject already-approved formal notices.
+- Prompt tasks started from the closure context must refresh the lifecycle list after their background jobs reach a terminal success state, so operators do not have to manually reload after AI work completes.

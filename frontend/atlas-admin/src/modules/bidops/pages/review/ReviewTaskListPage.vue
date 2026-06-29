@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Check, DataAnalysis, MagicStick, RefreshRight, View } from '@element-plus/icons-vue'
+import { Bottom, Check, DataAnalysis, MagicStick, RefreshRight, Top, View } from '@element-plus/icons-vue'
 import { reviewTasksApi } from '@/api/bidops/reviewTasks.api'
 import DataTable from '@/shared/components/DataTable.vue'
 import PageContainer from '@/shared/components/PageContainer.vue'
@@ -42,6 +42,8 @@ const selectedRows = ref<ReviewTaskDto[]>([])
 const batchPromptVisible = ref(false)
 const batchPrompt = ref('')
 const batchActionLoading = ref(false)
+const pageTopRef = ref<HTMLElement | null>(null)
+const pageBottomRef = ref<HTMLElement | null>(null)
 const table = useTableQuery<ReviewTaskDto, ReviewTaskListQuery>(
   (params) =>
     reviewTasksApi.search({
@@ -100,6 +102,14 @@ function selectableReviewTask(row: ReviewTaskDto) {
 
 function handleSelectionChange(rows: ReviewTaskDto[]) {
   selectedRows.value = rows
+}
+
+function scrollToPageTop() {
+  pageTopRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function scrollToPageBottom() {
+  pageBottomRef.value?.scrollIntoView({ behavior: 'smooth', block: 'end' })
 }
 
 async function bulkApproveSelected() {
@@ -183,6 +193,8 @@ async function enqueueQualityBackfill() {
 
 <template>
   <PageContainer title="待审核池" description="人工审核 Raw -> Staging 的解析结果，确认后才写入正式业务表。">
+    <div ref="pageTopRef" class="page-scroll-anchor" aria-hidden="true" />
+
     <SearchForm @search="table.search" @reset="table.reset()">
       <el-form-item label="关键词">
         <el-input v-model="table.query.keyword" clearable placeholder="项目 / 标题 / 采购人" />
@@ -305,6 +317,16 @@ async function enqueueQualityBackfill() {
       @current-change="table.loadData"
       @size-change="table.loadData"
     />
+    <div ref="pageBottomRef" class="page-scroll-anchor" aria-hidden="true" />
+
+    <div v-if="table.result.items.length" class="page-jump-rail">
+      <el-tooltip content="回到顶部" placement="left">
+        <el-button circle :icon="Top" aria-label="回到顶部" @click="scrollToPageTop" />
+      </el-tooltip>
+      <el-tooltip content="回到底部" placement="left">
+        <el-button circle :icon="Bottom" aria-label="回到底部" @click="scrollToPageBottom" />
+      </el-tooltip>
+    </div>
 
     <el-dialog v-model="batchPromptVisible" title="批量 AI 提示词重解析" width="640px">
       <el-input
@@ -327,6 +349,24 @@ async function enqueueQualityBackfill() {
 .table-pagination {
   justify-content: flex-end;
   margin-top: 14px;
+}
+
+.page-scroll-anchor {
+  width: 1px;
+  height: 1px;
+}
+
+.page-jump-rail {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 20;
+  display: grid;
+  gap: 8px;
+}
+
+.page-jump-rail :deep(.el-button) {
+  box-shadow: 0 8px 18px rgb(15 23 42 / 14%);
 }
 
 .review-actions {
@@ -397,5 +437,12 @@ async function enqueueQualityBackfill() {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .page-jump-rail {
+    right: 16px;
+    bottom: 16px;
+  }
 }
 </style>

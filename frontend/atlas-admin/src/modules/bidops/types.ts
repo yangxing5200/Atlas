@@ -12,6 +12,7 @@ export interface RawNoticeSearchQuery extends BidOpsPagedQuery {
 
 export interface NoticeSearchQuery extends BidOpsPagedQuery {
   noticeType?: string
+  lifecycleReviewStatus?: string
 }
 
 export interface CrawlRunLogSearchQuery extends BidOpsPagedQuery {
@@ -461,6 +462,7 @@ export interface NoticeDto {
   publishTime?: string | null
   bidDeadline?: string | null
   status: string
+  lifecycleReviewStatus: string
   createdAt: string
   updatedAt?: string | null
 }
@@ -720,6 +722,8 @@ export interface LifecyclePackageLinkDto {
   supplierName: string
   finalAwardAmount?: number | null
   finalAwardAmountSource: string
+  procurementPackageAmount?: number | null
+  procurementPackageAmountSource: string
   currency: string
   matchScore: number
   matchType: string
@@ -779,6 +783,10 @@ export interface LifecycleProcurementNoticeImportResultDto {
 }
 
 export interface LifecycleFieldEnrichmentRequest {
+  reviewerPrompt?: string | null
+}
+
+export interface LifecycleOutcomeSupplierReparseRequest {
   reviewerPrompt?: string | null
 }
 

@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Atlas.BackgroundTasks;
 using Atlas.Core.Authorization;
 using Atlas.Core.Exceptions;
@@ -42,6 +43,7 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
     private readonly IRepository<OutcomeSupplierRecord> _outcomeRecords;
     private readonly IRepository<ReviewTask> _reviewTasks;
     private readonly IRepository<PackageStaging> _packageStaging;
+    private readonly IRepository<ProcurementDetailStaging> _procurementDetailStaging;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IBackgroundJobClient _jobs;
     private readonly ICurrentIdentity _current;
@@ -61,6 +63,7 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
         IRepository<OutcomeSupplierRecord> outcomeRecords,
         IRepository<ReviewTask> reviewTasks,
         IRepository<PackageStaging> packageStaging,
+        IRepository<ProcurementDetailStaging> procurementDetailStaging,
         IUnitOfWork unitOfWork,
         IBackgroundJobClient jobs,
         ICurrentIdentity current,
@@ -79,6 +82,7 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
         _outcomeRecords = outcomeRecords ?? throw new ArgumentNullException(nameof(outcomeRecords));
         _reviewTasks = reviewTasks ?? throw new ArgumentNullException(nameof(reviewTasks));
         _packageStaging = packageStaging ?? throw new ArgumentNullException(nameof(packageStaging));
+        _procurementDetailStaging = procurementDetailStaging ?? throw new ArgumentNullException(nameof(procurementDetailStaging));
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
         _jobs = jobs ?? throw new ArgumentNullException(nameof(jobs));
         _current = current ?? throw new ArgumentNullException(nameof(current));
@@ -180,12 +184,12 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
         {
             var allLinks = await builder.ToListAsync(ct);
             var allItems = allLinks.Select(MapLifecycleLink).ToList();
+            await EnrichLifecycleNoticeRefsAsync(allItems, ct);
             await EnrichLifecycleLinkDtosFromOutcomeContextAsync(allItems, ct);
             var pageItems = SortLifecycleLinkDtosByDisplayContext(allItems, query.SortBy)
                 .Skip((pageIndex - 1) * pageSize)
                 .Take(pageSize)
                 .ToList();
-            await EnrichLifecycleNoticeRefsAsync(pageItems, ct);
 
             return new PagedResult<LifecyclePackageLinkDto>(
                 total,
@@ -201,8 +205,8 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
             .Take(pageSize)
             .ToListAsync(ct);
         var items = links.Select(MapLifecycleLink).ToList();
-        await EnrichLifecycleLinkDtosFromOutcomeContextAsync(items, ct);
         await EnrichLifecycleNoticeRefsAsync(items, ct);
+        await EnrichLifecycleLinkDtosFromOutcomeContextAsync(items, ct);
 
         return new PagedResult<LifecyclePackageLinkDto>(
             total,
@@ -309,6 +313,7 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
         }
 
         var persistLinks = request.PersistLifecycleLinksOnCompletion || request.PersistLifecycleLinks;
+        var runId = _idGenerator.NextId().ToString(CultureInfo.InvariantCulture);
         var result = await _jobs.EnqueueAsync(
             new EnqueueBackgroundJobRequest<LifecycleReverseClosureJobPayload>
             {
@@ -321,7 +326,8 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
                     tenantId,
                     rawNoticeId,
                     awardUrl,
-                    persistLinks),
+                    persistLinks,
+                    runId),
                 Priority = BidOpsBackgroundJobPriorities.Manual,
                 MaxAttempts = 2,
                 Payload = new LifecycleReverseClosureJobPayload(
@@ -370,6 +376,60 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
                     _current.UserName,
                     linkId,
                     request.ReviewerPrompt)
+            },
+            ct);
+
+        return new EnqueueJobDto(result.JobId, result.JobType, result.Queue, result.AlreadyExists);
+    }
+
+    public async Task<EnqueueJobDto> EnqueueOutcomeSupplierReparseAsync(
+        long rawNoticeId,
+        LifecycleOutcomeSupplierReparseRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        await _runtimeControl.EnsureTasksNotPausedAsync(ct);
+        var tenantId = RequireTenantId();
+        var userId = RequireUserId();
+
+        var rawQuery = await _rawNotices.QueryDataScopeAsync(
+            BidOpsDataResources.RawNotice,
+            AtlasDataScopeType.AllTenant,
+            ct);
+        var raw = await rawQuery
+            .Where(x => x.Id == rawNoticeId)
+            .FirstOrDefaultAsync(ct)
+            ?? throw new AtlasException($"BidOps raw notice does not exist: {rawNoticeId}");
+
+        if (!BidOpsOutcomeSupplierTextParser.LooksLikeOutcomeNotice(raw.Title, raw.NoticeType, raw.TextPreview))
+            throw new AtlasException("Only award/result/candidate notices can re-extract outcome supplier records from the lifecycle closure center.");
+
+        var reviewerPrompt = string.IsNullOrWhiteSpace(request.ReviewerPrompt)
+            ? null
+            : request.ReviewerPrompt.Trim();
+        var reparseRunId = Guid.NewGuid().ToString("N");
+        var result = await _jobs.EnqueueAsync(
+            new EnqueueBackgroundJobRequest<OutcomeSupplierExtractJobPayload>
+            {
+                JobType = BidOpsBackgroundJobTypes.OutcomeSupplierExtract,
+                Queue = BidOpsBackgroundJobQueues.BidOps,
+                JobName = string.IsNullOrWhiteSpace(reviewerPrompt)
+                    ? "BidOps lifecycle outcome supplier reparse"
+                    : "BidOps lifecycle outcome supplier reparse with reviewer prompt",
+                TenantId = tenantId,
+                StoreId = _current.StoreId,
+                DeduplicationKey = $"bidops:lifecycle-outcome-supplier-reparse:{tenantId}:{raw.Id}:{reparseRunId}",
+                Priority = BidOpsBackgroundJobPriorities.Manual,
+                MaxAttempts = 3,
+                Payload = new OutcomeSupplierExtractJobPayload(
+                    tenantId,
+                    _current.StoreId,
+                    userId,
+                    _current.UserName,
+                    raw.Id,
+                    reviewerPrompt,
+                    BidOpsJobProjectCode.FromRawNotice(raw),
+                    RefreshLifecycleLinks: true)
             },
             ct);
 
@@ -476,8 +536,8 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
         link.UpdatedAt = link.ConfirmedAt;
         await _unitOfWork.SaveChangesAsync(ct);
         var dto = MapLifecycleLink(link);
-        await EnrichLifecycleLinkDtosFromOutcomeContextAsync([dto], ct);
         await EnrichLifecycleNoticeRefsAsync([dto], ct);
+        await EnrichLifecycleLinkDtosFromOutcomeContextAsync([dto], ct);
         return dto;
     }
 
@@ -494,8 +554,8 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
         link.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.SaveChangesAsync(ct);
         var dto = MapLifecycleLink(link);
-        await EnrichLifecycleLinkDtosFromOutcomeContextAsync([dto], ct);
         await EnrichLifecycleNoticeRefsAsync([dto], ct);
+        await EnrichLifecycleLinkDtosFromOutcomeContextAsync([dto], ct);
         return dto;
     }
 
@@ -527,9 +587,10 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
     public static void EnrichLifecycleLinkFromOutcomeContextForDebug(
         LifecyclePackageLinkDto link,
         IEnumerable<OutcomeSupplierRecord> records,
-        IReadOnlyList<PackageStaging> packages)
+        IReadOnlyList<PackageStaging> packages,
+        IReadOnlyList<ProcurementDetailStaging>? procurementDetails = null)
     {
-        EnrichLifecycleLinkFromOutcomeContext(link, records, packages);
+        EnrichLifecycleLinkFromOutcomeContext(link, records, packages, procurementDetails ?? []);
     }
 
     public async Task<LifecyclePackageLinkDto> EnrichLifecycleLinkFieldsAsync(
@@ -542,6 +603,7 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
             throw new AtlasException("Rejected lifecycle links cannot be AI-enriched.");
 
         var dtoBefore = MapLifecycleLink(link);
+        await EnrichLifecycleNoticeRefsAsync([dtoBefore], ct);
         await EnrichLifecycleLinkDtosFromOutcomeContextAsync([dtoBefore], ct);
         var evidence = await BuildLifecycleFieldEvidenceInputsAsync(link, ct);
         var result = await _fieldEnrichmentAi.EnrichAsync(
@@ -565,8 +627,8 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
         await _unitOfWork.SaveChangesAsync(ct);
 
         var dto = MapLifecycleLink(link);
-        await EnrichLifecycleLinkDtosFromOutcomeContextAsync([dto], ct);
         await EnrichLifecycleNoticeRefsAsync([dto], ct);
+        await EnrichLifecycleLinkDtosFromOutcomeContextAsync([dto], ct);
         return dto;
     }
 
@@ -588,19 +650,56 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
         }
 
         var hashes = drafts.Select(x => x.SourceHash).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var hashSet = hashes.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var awardRawNoticeIds = drafts
+            .Select(x => x.Closure.Award.Evidence.RawNoticeId)
+            .Where(x => x.HasValue)
+            .Select(x => x!.Value)
+            .Distinct()
+            .ToArray();
         var query = await _lifecycleLinks.QueryDataScopeTrackingAsync(
             BidOpsDataResources.LifecyclePackageLink,
             AtlasDataScopeType.AllTenant,
             ct);
-        var existingLinks = await query
-            .Where(x => hashes.Contains(x.SourceHash))
-            .ToListAsync(ct);
+        var existingLinks = awardRawNoticeIds.Length > 0
+            ? await query
+                .Where(x =>
+                    hashes.Contains(x.SourceHash) ||
+                    (x.AwardRawNoticeId.HasValue && awardRawNoticeIds.Contains(x.AwardRawNoticeId.Value)))
+                .ToListAsync(ct)
+            : await query
+                .Where(x => hashes.Contains(x.SourceHash))
+                .ToListAsync(ct);
+        var staleLinks = existingLinks
+            .Where(x =>
+                x.AwardRawNoticeId.HasValue &&
+                awardRawNoticeIds.Contains(x.AwardRawNoticeId.Value) &&
+                !hashSet.Contains(x.SourceHash) &&
+                x.LinkStatus != BidOpsLifecycleLinkStatuses.Confirmed)
+            .ToList();
+        if (staleLinks.Count > 0)
+        {
+            await _lifecycleLinks.RemoveRangeAsync(staleLinks, ct);
+            existingLinks = existingLinks.Except(staleLinks).ToList();
+            _logger.LogInformation(
+                "BidOps lifecycle reverse closure removed {StaleCount} stale non-confirmed lifecycle links before refreshing award raw notices {AwardRawNoticeIds}.",
+                staleLinks.Count,
+                string.Join(",", awardRawNoticeIds));
+        }
+
         var existingByHash = existingLinks.ToDictionary(x => x.SourceHash, StringComparer.OrdinalIgnoreCase);
         var savedLinks = new List<LifecyclePackageLink>();
         foreach (var draft in drafts)
         {
             if (!existingByHash.TryGetValue(draft.SourceHash, out var link))
             {
+                var confirmedEquivalent = existingLinks.FirstOrDefault(x => IsConfirmedEquivalentLifecycleLink(x, draft.Closure));
+                if (confirmedEquivalent != null)
+                {
+                    savedLinks.Add(confirmedEquivalent);
+                    continue;
+                }
+
                 link = new LifecyclePackageLink
                 {
                     Id = _idGenerator.NextId(),
@@ -626,6 +725,41 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
             .OrderByDescending(x => x.MatchScore)
             .Select(MapLifecycleLink)
             .ToList();
+    }
+
+    private static bool IsConfirmedEquivalentLifecycleLink(
+        LifecyclePackageLink link,
+        LifecyclePackageClosure closure)
+    {
+        if (link.LinkStatus != BidOpsLifecycleLinkStatuses.Confirmed)
+            return false;
+
+        if (link.AwardRawNoticeId != closure.Award.Evidence.RawNoticeId)
+            return false;
+
+        var linkPackageNo = NormalizePackageNoForMatch(link.PackageNo);
+        var closurePackageNo = NormalizePackageNoForMatch(closure.NormalizedPackageNo ?? closure.PackageNo);
+        if (string.IsNullOrWhiteSpace(linkPackageNo) ||
+            string.IsNullOrWhiteSpace(closurePackageNo) ||
+            !string.Equals(linkPackageNo, closurePackageNo, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var linkSupplier = BidOpsSupplierNameNormalizer.NormalizeForMatch(link.SupplierName);
+        var closureSupplier = BidOpsSupplierNameNormalizer.NormalizeForMatch(closure.Award.AwardedSupplierName);
+        if (string.IsNullOrWhiteSpace(linkSupplier) ||
+            string.IsNullOrWhiteSpace(closureSupplier) ||
+            !string.Equals(linkSupplier, closureSupplier, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var linkProjectCode = NormalizeProjectCodeForMatch(link.ProjectCode);
+        var closureProjectCode = NormalizeProjectCodeForMatch(closure.ProjectCode);
+        return string.IsNullOrWhiteSpace(linkProjectCode) ||
+               string.IsNullOrWhiteSpace(closureProjectCode) ||
+               string.Equals(linkProjectCode, closureProjectCode, StringComparison.Ordinal);
     }
 
     private static IReadOnlyList<LifecycleLinkDraft> BuildLifecycleLinkDrafts(
@@ -1025,6 +1159,8 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
             SupplierName = link.SupplierName,
             FinalAwardAmount = link.FinalAwardAmount,
             FinalAwardAmountSource = link.FinalAwardAmountSource,
+            ProcurementPackageAmount = null,
+            ProcurementPackageAmountSource = string.Empty,
             Currency = link.Currency,
             MatchScore = link.MatchScore,
             MatchType = link.MatchType,
@@ -1045,38 +1181,60 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
         IReadOnlyList<LifecyclePackageLinkDto> links,
         CancellationToken ct)
     {
-        var rawIds = links
+        var outcomeRawIds = links
             .Select(x => x.AwardRawNoticeId)
             .Where(x => x.HasValue)
             .Select(x => x!.Value)
             .Distinct()
             .ToArray();
-        if (rawIds.Length == 0)
+        List<OutcomeSupplierRecord> outcomeRecords = [];
+        if (outcomeRawIds.Length > 0)
+        {
+            var outcomeQuery = await _outcomeRecords.QueryDataScopeAsync(
+                BidOpsDataResources.OutcomeSupplierRecord,
+                AtlasDataScopeType.AllTenant,
+                ct);
+            outcomeRecords = await outcomeQuery
+                .Where(x => outcomeRawIds.Contains(x.RawNoticeId))
+                .ToListAsync(ct);
+        }
+
+        var packageRawIds = links
+            .SelectMany(x => new[] { x.AwardRawNoticeId, x.ProcurementRawNoticeId })
+            .Where(x => x.HasValue)
+            .Select(x => x!.Value)
+            .Distinct()
+            .ToArray();
+        if (packageRawIds.Length == 0 && outcomeRecords.Count == 0)
             return;
 
-        var outcomeQuery = await _outcomeRecords.QueryDataScopeAsync(
-            BidOpsDataResources.OutcomeSupplierRecord,
-            AtlasDataScopeType.AllTenant,
-            ct);
-        var outcomeRecords = await outcomeQuery
-            .Where(x => rawIds.Contains(x.RawNoticeId))
-            .ToListAsync(ct);
-        if (outcomeRecords.Count == 0)
-            return;
-
-        var packagesByRawNotice = await LoadReviewPackagesByRawNoticeAsync(rawIds, ct);
+        var packagesByRawNotice = await LoadReviewPackagesByRawNoticeAsync(packageRawIds, ct);
+        var procurementDetailsByRawNotice = await LoadReviewProcurementDetailsByRawNoticeAsync(packageRawIds, ct);
         foreach (var link in links)
         {
-            if (!link.AwardRawNoticeId.HasValue)
-                continue;
+            var packages = new List<PackageStaging>();
+            if (link.AwardRawNoticeId.HasValue &&
+                packagesByRawNotice.TryGetValue(link.AwardRawNoticeId.Value, out var awardPackages))
+            {
+                packages.AddRange(awardPackages);
+            }
 
-            var packages = packagesByRawNotice.TryGetValue(link.AwardRawNoticeId.Value, out var rawPackages)
-                ? rawPackages
-                : [];
+            if (link.ProcurementRawNoticeId.HasValue &&
+                packagesByRawNotice.TryGetValue(link.ProcurementRawNoticeId.Value, out var procurementPackages))
+            {
+                packages.AddRange(procurementPackages);
+            }
+
             EnrichLifecycleLinkFromOutcomeContext(
                 link,
-                outcomeRecords.Where(x => x.RawNoticeId == link.AwardRawNoticeId.Value),
-                packages);
+                link.AwardRawNoticeId.HasValue
+                    ? outcomeRecords.Where(x => x.RawNoticeId == link.AwardRawNoticeId.Value)
+                    : [],
+                packages,
+                link.ProcurementRawNoticeId.HasValue &&
+                procurementDetailsByRawNotice.TryGetValue(link.ProcurementRawNoticeId.Value, out var procurementDetails)
+                    ? procurementDetails
+                    : []);
         }
     }
 
@@ -1119,6 +1277,32 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
                         .OrderBy(package => package.Id)
                         .ToList();
                 });
+    }
+
+    private async Task<Dictionary<long, IReadOnlyList<ProcurementDetailStaging>>> LoadReviewProcurementDetailsByRawNoticeAsync(
+        IReadOnlyCollection<long> rawNoticeIds,
+        CancellationToken ct)
+    {
+        if (rawNoticeIds.Count == 0)
+            return [];
+
+        var detailQuery = await _procurementDetailStaging.QueryDataScopeAsync(
+            BidOpsDataResources.ReviewTask,
+            AtlasDataScopeType.AllTenant,
+            ct);
+        var details = await detailQuery
+            .Where(x => rawNoticeIds.Contains(x.RawNoticeId))
+            .ToListAsync(ct);
+
+        return details
+            .GroupBy(x => x.RawNoticeId)
+            .ToDictionary(
+                x => x.Key,
+                x => (IReadOnlyList<ProcurementDetailStaging>)x
+                    .OrderBy(detail => detail.TableIndex ?? int.MaxValue)
+                    .ThenBy(detail => detail.RowIndex ?? int.MaxValue)
+                    .ThenBy(detail => detail.Id)
+                    .ToList());
     }
 
     private async Task EnrichLifecycleNoticeRefsAsync(
@@ -1202,7 +1386,7 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
         long? awardRawNoticeId,
         CancellationToken ct)
     {
-        var code = BidOpsTextQuality.CleanExtractedValue(projectCode);
+        var code = NormalizeProjectCodeForMatch(projectCode);
         if (string.IsNullOrWhiteSpace(code))
             return null;
 
@@ -1218,7 +1402,9 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
             .ToListAsync(ct);
         return candidates
             .Where(LooksLikeTenderNotice)
-            .OrderByDescending(x => x.PublishTime ?? x.FetchTime)
+            .OrderByDescending(x => ProjectCodeTextMatches(x.SourceNoticeId, code) ||
+                                    ProjectCodeTextMatches(BidOpsEvidenceText.ExtractProjectCode(x.TextPreview), code))
+            .ThenByDescending(x => x.PublishTime ?? x.FetchTime)
             .FirstOrDefault();
     }
 
@@ -1596,7 +1782,7 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
             .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
         if (!string.IsNullOrWhiteSpace(projectCode))
         {
-            var code = projectCode.Trim();
+            var code = NormalizeProjectCodeForMatch(projectCode);
             var codeMatches = await builder
                 .Where(x => x.SourceNoticeId.Contains(code) ||
                             x.Title.Contains(code) ||
@@ -1770,13 +1956,17 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
         var text = string.Join('\n', documents.Select(x => x.Text));
         var reasons = new List<string>();
         var confidence = 0d;
-        var projectCodes = awards.Select(x => x.ProjectCode).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var projectCodes = awards
+            .Select(x => NormalizeProjectCodeForMatch(x.ProjectCode))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         var projectNames = awards.Select(x => x.ProjectName).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var packageNos = awards.Select(x => x.NormalizedPackageNo).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
         var noticeProjectCode = BidOpsEvidenceText.ExtractProjectCode(text);
         if (!string.IsNullOrWhiteSpace(noticeProjectCode) &&
-            projectCodes.Any(x => string.Equals(x, noticeProjectCode, StringComparison.OrdinalIgnoreCase)))
+            projectCodes.Any(x => ProjectCodeTextMatches(x, noticeProjectCode)))
         {
             confidence += 0.45;
             reasons.Add("ProjectCode exact match");
@@ -2042,7 +2232,7 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
         if (!string.IsNullOrWhiteSpace(awardProjectCode) &&
             !string.IsNullOrWhiteSpace(otherProjectCode))
         {
-            return string.Equals(awardProjectCode, otherProjectCode, StringComparison.OrdinalIgnoreCase);
+            return ProjectCodeTextMatches(awardProjectCode, otherProjectCode);
         }
 
         if (!string.IsNullOrWhiteSpace(awardProjectName) &&
@@ -2130,11 +2320,28 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
 
     private static bool ProjectCodeTextMatches(string? left, string? right)
     {
-        var normalizedLeft = BidOpsTextQuality.CleanExtractedValue(left);
-        var normalizedRight = BidOpsTextQuality.CleanExtractedValue(right);
+        var normalizedLeft = NormalizeProjectCodeForMatch(left);
+        var normalizedRight = NormalizeProjectCodeForMatch(right);
         return !string.IsNullOrWhiteSpace(normalizedLeft) &&
                !string.IsNullOrWhiteSpace(normalizedRight) &&
                string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeProjectCodeForMatch(string? value)
+    {
+        var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+        if (string.IsNullOrWhiteSpace(cleaned))
+            return string.Empty;
+
+        cleaned = Regex.Replace(
+            cleaned,
+            @"^(?:code|项目编号|项目编码|采购编号|招标编号|批次编号|采购项目编号|招标项目编号)\s*[:：=]\s*",
+            string.Empty,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var match = Regex.Match(cleaned, @"[A-Za-z0-9][A-Za-z0-9_.\-/]*", RegexOptions.CultureInvariant);
+        return match.Success
+            ? match.Value.ToUpperInvariant()
+            : cleaned.Trim(' ', '\t', '。', '.', '；', ';', '，', ',', '、', '）', ')').ToUpperInvariant();
     }
 
     private static string NormalizeAwardNoticeType(string noticeType, string title, string detailUrl)
@@ -2246,7 +2453,7 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
                 var packageName = FirstNonEmpty(record.PackageName, matchedPackage?.PackageName);
                 var evidenceText = FirstNonEmpty(record.EvidenceText, matchedPackage?.PackageName, raw.Title);
                 return new AwardEvidence(
-                    FirstNonEmpty(record.ProjectCode, raw.SourceNoticeId),
+                    NormalizeProjectCodeForMatch(FirstNonEmpty(record.ProjectCode, raw.SourceNoticeId)),
                     FirstNonEmpty(record.ProjectName, raw.Title),
                     null,
                     lotNo,
@@ -2438,18 +2645,367 @@ public sealed class BidOpsReverseLifecycleClosureService : IBidOpsReverseLifecyc
     private static void EnrichLifecycleLinkFromOutcomeContext(
         LifecyclePackageLinkDto link,
         IEnumerable<OutcomeSupplierRecord> records,
-        IReadOnlyList<PackageStaging> packages)
+        IReadOnlyList<PackageStaging> packages,
+        IReadOnlyList<ProcurementDetailStaging> procurementDetails)
     {
         var record = MatchOutcomeRecordForLifecycleLink(link, records, packages);
-        if (record == null)
-            return;
+        var package = record == null
+            ? MatchReviewPackageForLifecycleLink(link, packages)
+            : MatchReviewPackage(record, packages);
+        var projectCode = NormalizeProjectCodeForMatch(FirstNonEmpty(link.ProjectCode, record?.ProjectCode));
+        if (!string.IsNullOrWhiteSpace(projectCode))
+            link.ProjectCode = Truncate(projectCode, 128);
 
-        var package = MatchReviewPackage(record, packages);
-        link.SupplierName = Truncate(FirstNonEmpty(record.SupplierName, link.SupplierName), 300);
-        link.LotNo = Truncate(FirstNonEmpty(link.LotNo, record.LotNo, package?.LotNo), 128);
-        link.LotName = Truncate(FirstNonEmpty(link.LotName, record.LotName, package?.LotName), 300);
-        link.PackageNo = Truncate(FirstNonEmpty(link.PackageNo, record.PackageNo, package?.PackageNo), 128);
-        link.PackageName = Truncate(FirstNonEmpty(link.PackageName, record.PackageName, package?.PackageName), 500);
+        link.SupplierName = Truncate(FirstNonEmpty(record?.SupplierName, link.SupplierName), 300);
+        link.LotNo = Truncate(FirstNonEmpty(link.LotNo, record?.LotNo, package?.LotNo), 128);
+        link.LotName = Truncate(FirstSpecificLotName(link.LotName, record?.LotName, package?.LotName), 300);
+        link.PackageNo = Truncate(FirstNonEmpty(link.PackageNo, record?.PackageNo, package?.PackageNo), 128);
+        link.PackageName = Truncate(FirstNonEmpty(link.PackageName, record?.PackageName, package?.PackageName), 500);
+
+        var amount = ResolveProcurementPackageAmount(link, record, package, procurementDetails, packages);
+        if (amount.HasValue)
+        {
+            link.ProcurementDetailStagingId ??= amount.Value.ProcurementDetailStagingId;
+            link.ProcurementPackageAmount = amount.Value.Amount;
+            link.ProcurementPackageAmountSource = amount.Value.Source;
+            if (!link.FinalAwardAmount.HasValue)
+            {
+                link.FinalAwardAmount = amount.Value.Amount;
+                link.FinalAwardAmountSource = BidOpsAmountKinds.DefaultedFromProcurementPackageAmount;
+            }
+        }
+    }
+
+    private static PackageStaging? MatchReviewPackageForLifecycleLink(
+        LifecyclePackageLinkDto link,
+        IReadOnlyList<PackageStaging> packages)
+    {
+        if (packages.Count == 0)
+            return null;
+
+        var packageNo = NormalizePackageNoForMatch(link.PackageNo);
+        var lotNo = NormalizeMatchText(link.LotNo);
+        var lotName = NormalizeMatchText(link.LotName);
+        var packageName = NormalizeMatchText(link.PackageName);
+
+        if (!string.IsNullOrWhiteSpace(packageNo))
+        {
+            var byPackageNo = packages
+                .Where(x => NormalizePackageNoForMatch(x.PackageNo) == packageNo)
+                .ToList();
+
+            if (!string.IsNullOrWhiteSpace(lotName) && !IsGenericLotName(lotName))
+            {
+                var byLotName = byPackageNo
+                    .Where(x => NormalizeMatchText(x.LotName) == lotName)
+                    .ToList();
+                if (byLotName.Count == 1)
+                    return byLotName[0];
+            }
+
+            if (!string.IsNullOrWhiteSpace(lotNo))
+            {
+                var byLotNo = byPackageNo
+                    .Where(x => NormalizeMatchText(x.LotNo) == lotNo)
+                    .ToList();
+                if (byLotNo.Count == 1)
+                    return byLotNo[0];
+            }
+
+            if (!string.IsNullOrWhiteSpace(packageName))
+            {
+                var byPackageName = byPackageNo
+                    .Where(x => NormalizeMatchText(x.PackageName) == packageName)
+                    .ToList();
+                if (byPackageName.Count == 1)
+                    return byPackageName[0];
+            }
+
+            if (byPackageNo.Count == 1)
+                return byPackageNo[0];
+        }
+
+        if (!string.IsNullOrWhiteSpace(packageName))
+        {
+            var byPackageName = packages
+                .Where(x => NormalizeMatchText(x.PackageName) == packageName)
+                .ToList();
+            if (byPackageName.Count == 1)
+                return byPackageName[0];
+        }
+
+        return null;
+    }
+
+    private static ProcurementPackageAmountMatch? ResolveProcurementPackageAmount(
+        LifecyclePackageLinkDto link,
+        OutcomeSupplierRecord? record,
+        PackageStaging? package,
+        IReadOnlyList<ProcurementDetailStaging> procurementDetails,
+        IReadOnlyList<PackageStaging> packages)
+    {
+        var detailMatches = MatchProcurementDetailsForLifecycleLink(link, record, package, procurementDetails);
+        if (TryResolveAmountFromProcurementDetails(detailMatches, out var detailAmount))
+            return detailAmount;
+
+        package ??= MatchReviewPackageForLifecycleLink(link, packages);
+        if (package != null && TryResolveAmountFromPackage(package, out var packageAmount))
+            return packageAmount;
+
+        return ExtractProcurementPackageAmountFromEvidence(link.EvidenceJson);
+    }
+
+    private static IReadOnlyList<ProcurementDetailStaging> MatchProcurementDetailsForLifecycleLink(
+        LifecyclePackageLinkDto link,
+        OutcomeSupplierRecord? record,
+        PackageStaging? package,
+        IReadOnlyList<ProcurementDetailStaging> procurementDetails)
+    {
+        if (procurementDetails.Count == 0)
+            return [];
+
+        var packageNo = NormalizePackageNoForMatch(FirstNonEmpty(package?.PackageNo, record?.PackageNo, link.PackageNo));
+        var lotNames = new[]
+            {
+                link.LotName,
+                record?.LotName,
+                package?.LotName
+            }
+            .Select(NormalizeMatchText)
+            .Where(x => !string.IsNullOrWhiteSpace(x) && !IsGenericLotName(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var lotNos = new[]
+            {
+                link.LotNo,
+                record?.LotNo,
+                package?.LotNo
+            }
+            .Select(NormalizeMatchText)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var packageNames = new[]
+            {
+                link.PackageName,
+                record?.PackageName,
+                package?.PackageName
+            }
+            .Select(NormalizeMatchText)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        var baseMatches = procurementDetails
+            .Where(detail =>
+                (package != null && detail.PackageStagingId == package.Id) ||
+                (!string.IsNullOrWhiteSpace(packageNo) &&
+                 NormalizePackageNoForMatch(detail.PackageNo) == packageNo))
+            .ToList();
+        if (baseMatches.Count == 0)
+            return [];
+
+        if (lotNames.Length > 0)
+        {
+            var byLotName = baseMatches
+                .Where(detail => lotNames.Contains(NormalizeMatchText(detail.LotName)) ||
+                                 lotNames.Contains(NormalizeMatchText(detail.EcpLotName)))
+                .ToList();
+            if (byLotName.Count > 0)
+                return byLotName;
+        }
+
+        if (lotNos.Length > 0)
+        {
+            var byLotNo = baseMatches
+                .Where(detail => lotNos.Contains(NormalizeMatchText(detail.LotNo)))
+                .ToList();
+            if (byLotNo.Count > 0)
+                return byLotNo;
+        }
+
+        if (packageNames.Length > 0)
+        {
+            var byPackageName = baseMatches
+                .Where(detail => packageNames.Contains(NormalizeMatchText(detail.PackageName)))
+                .ToList();
+            if (byPackageName.Count > 0)
+                return byPackageName;
+        }
+
+        return baseMatches.Count == 1 ? baseMatches : [];
+    }
+
+    private static bool TryResolveAmountFromProcurementDetails(
+        IReadOnlyList<ProcurementDetailStaging> details,
+        out ProcurementPackageAmountMatch amount)
+    {
+        amount = default;
+        if (details.Count == 0)
+            return false;
+
+        return TryResolveUniqueAmount(
+                   details,
+                   detail => detail.PackageEstimatedAmount,
+                   "ProcurementDetailStaging.PackageEstimatedAmount",
+                   detail => detail.Id,
+                   out amount) ||
+               TryResolveUniqueAmount(
+                   details,
+                   detail => detail.BudgetAmount,
+                   "ProcurementDetailStaging.BudgetAmount",
+                   detail => detail.Id,
+                   out amount) ||
+               TryResolveUniqueAmount(
+                   details,
+                   detail => detail.MaxPrice,
+                   "ProcurementDetailStaging.MaxPrice",
+                   detail => detail.Id,
+                   out amount) ||
+               TryResolveUniqueAmount(
+                   details,
+                   detail => detail.ProcurementAmount,
+                   "ProcurementDetailStaging.ProcurementAmount",
+                   detail => detail.Id,
+                   out amount) ||
+               TryResolveUniqueAmount(
+                   details,
+                   detail => detail.ItemEstimatedAmount,
+                   "ProcurementDetailStaging.ItemEstimatedAmount",
+                   detail => detail.Id,
+                   out amount);
+    }
+
+    private static bool TryResolveAmountFromPackage(
+        PackageStaging package,
+        out ProcurementPackageAmountMatch amount)
+    {
+        amount = default;
+        if (package.BudgetAmount is > 0)
+        {
+            amount = new ProcurementPackageAmountMatch(package.BudgetAmount.Value, "PackageStaging.BudgetAmount", null);
+            return true;
+        }
+
+        if (package.MaxPrice is > 0)
+        {
+            amount = new ProcurementPackageAmountMatch(package.MaxPrice.Value, "PackageStaging.MaxPrice", null);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryResolveUniqueAmount<T>(
+        IReadOnlyList<T> items,
+        Func<T, decimal?> selector,
+        string source,
+        Func<T, long?> idSelector,
+        out ProcurementPackageAmountMatch amount)
+    {
+        amount = default;
+        var amounts = items
+            .Select(item => new { Item = item, Amount = selector(item) })
+            .Where(x => x.Amount is > 0)
+            .ToList();
+        var distinctAmounts = amounts
+            .Select(x => Math.Round(x.Amount!.Value, 2))
+            .Distinct()
+            .ToList();
+        if (distinctAmounts.Count != 1)
+            return false;
+
+        amount = new ProcurementPackageAmountMatch(
+            distinctAmounts[0],
+            source,
+            amounts.Select(x => idSelector(x.Item)).FirstOrDefault(x => x.HasValue));
+        return true;
+    }
+
+    private static ProcurementPackageAmountMatch? ExtractProcurementPackageAmountFromEvidence(string? evidenceJson)
+    {
+        if (string.IsNullOrWhiteSpace(evidenceJson))
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(evidenceJson);
+            if (!TryGetProperty(document.RootElement, "tender", out var tender) ||
+                tender.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            if (TryReadPositiveDecimal(tender, "guidePrice", out var guidePrice))
+                return new ProcurementPackageAmountMatch(guidePrice, "TenderEvidence.GuidePrice", null);
+            if (TryReadPositiveDecimal(tender, "budgetAmount", out var budgetAmount))
+                return new ProcurementPackageAmountMatch(budgetAmount, "TenderEvidence.BudgetAmount", null);
+            if (TryReadPositiveDecimal(tender, "maxPrice", out var maxPrice))
+                return new ProcurementPackageAmountMatch(maxPrice, "TenderEvidence.MaxPrice", null);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    private static bool TryReadPositiveDecimal(JsonElement element, string propertyName, out decimal value)
+    {
+        value = default;
+        if (!TryGetProperty(element, propertyName, out var property))
+            return false;
+
+        if (property.ValueKind == JsonValueKind.Number &&
+            property.TryGetDecimal(out value) &&
+            value > 0)
+        {
+            value = Math.Round(value, 2);
+            return true;
+        }
+
+        if (property.ValueKind == JsonValueKind.String &&
+            decimal.TryParse(property.GetString(), NumberStyles.Number, CultureInfo.InvariantCulture, out value) &&
+            value > 0)
+        {
+            value = Math.Round(value, 2);
+            return true;
+        }
+
+        return false;
+    }
+
+    private readonly record struct ProcurementPackageAmountMatch(
+        decimal Amount,
+        string Source,
+        long? ProcurementDetailStagingId);
+
+    private static string? FirstSpecificLotName(params string?[] values)
+    {
+        string? genericFallback = null;
+        foreach (var value in values)
+        {
+            var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+            if (string.IsNullOrWhiteSpace(cleaned))
+                continue;
+
+            if (IsGenericLotName(cleaned))
+            {
+                genericFallback ??= cleaned;
+                continue;
+            }
+
+            return cleaned;
+        }
+
+        return genericFallback;
+    }
+
+    private static bool IsGenericLotName(string value)
+    {
+        var normalized = NormalizeMatchText(value);
+        return normalized is "未分标段" or "不分标段" or "未分标" or "不分标" or "无分标";
     }
 
     private static string ExtractLifecycleAwardEvidenceText(string? evidenceJson)

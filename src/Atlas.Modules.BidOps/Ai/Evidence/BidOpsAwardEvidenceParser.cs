@@ -92,7 +92,9 @@ public static partial class BidOpsAwardEvidenceParser
                 var amountText = amountIndex >= 0
                     ? BidOpsEvidenceTableParser.GetCell(row, amountIndex)
                     : row.RawText;
-                var amount = amountIndex >= 0 ? BidOpsMoneyNormalizer.TryNormalize(amountText) : null;
+                var amount = amountIndex >= 0
+                    ? BidOpsMoneyNormalizer.TryNormalize(amountText, AmountUnitContext(table, amountIndex))
+                    : null;
                 var evidence = document.Source with
                 {
                     TableIndex = table.TableIndex,
@@ -191,6 +193,13 @@ public static partial class BidOpsAwardEvidenceParser
         }
 
         return string.Empty;
+    }
+
+    private static string AmountUnitContext(BidOpsExtractedTable table, int columnIndex)
+    {
+        return BidOpsMoneyNormalizer.BuildUnitContext(
+            table.Headers.ElementAtOrDefault(columnIndex),
+            table.ContextText);
     }
 
     private static bool IsNonAwardStatus(string? value)

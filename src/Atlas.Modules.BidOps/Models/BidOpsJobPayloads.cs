@@ -120,7 +120,8 @@ public sealed record OutcomeSupplierExtractJobPayload(
     string UserName,
     long RawNoticeId,
     string? ReviewerPrompt = null,
-    string? ProjectCode = null)
+    string? ProjectCode = null,
+    bool RefreshLifecycleLinks = false)
     : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
 
 public sealed record ReviewQualityBackfillJobPayload(

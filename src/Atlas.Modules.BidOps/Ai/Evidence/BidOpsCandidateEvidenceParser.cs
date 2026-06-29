@@ -73,7 +73,9 @@ public static class BidOpsCandidateEvidenceParser
                     continue;
 
                 var quote = candidate.AmountIndex >= 0
-                    ? BidOpsMoneyNormalizer.TryNormalize(BidOpsEvidenceTableParser.GetCell(row, candidate.AmountIndex))
+                    ? BidOpsMoneyNormalizer.TryNormalize(
+                        BidOpsEvidenceTableParser.GetCell(row, candidate.AmountIndex),
+                        AmountUnitContext(table, candidate.AmountIndex))
                     : null;
 
                 results.Add(new CandidateEvidence(
@@ -156,7 +158,9 @@ public static class BidOpsCandidateEvidenceParser
 
             var rank = BidOpsEvidenceText.ParseRank(BidOpsEvidenceTableParser.GetCell(row, rankIndex));
             var quote = quoteIndex >= 0
-                ? BidOpsMoneyNormalizer.TryNormalize(BidOpsEvidenceTableParser.GetCell(row, quoteIndex))
+                ? BidOpsMoneyNormalizer.TryNormalize(
+                    BidOpsEvidenceTableParser.GetCell(row, quoteIndex),
+                    AmountUnitContext(table, quoteIndex))
                 : BidOpsMoneyNormalizer.TryNormalize(row.RawText);
 
             results.Add(new CandidateEvidence(
@@ -206,6 +210,13 @@ public static class BidOpsCandidateEvidenceParser
         }
 
         return string.Empty;
+    }
+
+    private static string AmountUnitContext(BidOpsExtractedTable table, int columnIndex)
+    {
+        return BidOpsMoneyNormalizer.BuildUnitContext(
+            table.Headers.ElementAtOrDefault(columnIndex),
+            table.ContextText);
     }
 
     private sealed record CandidateColumn(int Rank, int SupplierIndex, int AmountIndex);

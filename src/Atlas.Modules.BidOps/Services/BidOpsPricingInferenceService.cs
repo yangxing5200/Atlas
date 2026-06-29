@@ -61,10 +61,42 @@ public sealed class BidOpsPricingInferenceService : IBidOpsPricingInferenceServi
                 missing: []);
         }
 
+        BidOpsPricingDecision? rateDecision = null;
         if (award.RateEvidence != null)
         {
-            return InferFromRate(award.RateEvidence, tender);
+            rateDecision = InferFromRate(award.RateEvidence, tender);
+            if (rateDecision.AmountValue.HasValue)
+                return rateDecision;
+
+            if (award.RateEvidence.RateType == BidOpsRateTypes.Unknown)
+                return rateDecision;
         }
+
+        var procurementAmount = ResolveDefaultProcurementAmount(tender);
+        if (procurementAmount.HasValue)
+        {
+            return Decision(
+                amount: procurementAmount.Value.Amount,
+                amountKind: BidOpsAmountKinds.DefaultedFromProcurementPackageAmount,
+                amountSourceStage: BidOpsAmountSourceStages.TenderNotice,
+                amountEvidence: tender?.Evidence,
+                baseAmount: procurementAmount.Value.Amount,
+                baseAmountType: procurementAmount.Value.BaseAmountType,
+                rate: null,
+                formula: null,
+                confidence: procurementAmount.Value.BaseAmountType == BidOpsBaseAmountTypes.PackageGuidePrice ? 0.76 : 0.72,
+                requiresManualReview: true,
+                reasons:
+                [
+                    "Award amount missing; defaulted final award amount to procurement package amount.",
+                    $"Tender evidence provided {procurementAmount.Value.BaseAmountType}.",
+                    "Defaulted procurement amounts require manual review before formal supplier analytics."
+                ],
+                missing: ["ManualReviewRequired"]);
+        }
+
+        if (rateDecision != null)
+            return rateDecision;
 
         return Unknown(
             BidOpsAmountSourceStages.Unknown,
@@ -206,6 +238,35 @@ public sealed class BidOpsPricingInferenceService : IBidOpsPricingInferenceServi
             candidates.Add(new BaseAmountCandidate(tender.MaxPrice.Value, BidOpsBaseAmountTypes.PackageMaxPrice));
         if (tender.BudgetAmount.HasValue)
             candidates.Add(new BaseAmountCandidate(tender.BudgetAmount.Value, BidOpsBaseAmountTypes.PackageBudget));
+
+        if (candidates.Count == 1)
+            return candidates[0];
+
+        if (candidates.Count > 1 &&
+            candidates.Select(x => x.Amount).Distinct().Count() == 1)
+        {
+            return candidates[0];
+        }
+
+        return null;
+    }
+
+    private static BaseAmountCandidate? ResolveDefaultProcurementAmount(TenderPackageEvidence? tender)
+    {
+        if (tender == null)
+            return null;
+
+        if (string.IsNullOrWhiteSpace(tender.NormalizedPackageNo))
+            return null;
+
+        if (tender.GuidePrice.HasValue)
+            return new BaseAmountCandidate(tender.GuidePrice.Value, BidOpsBaseAmountTypes.PackageGuidePrice);
+
+        var candidates = new List<BaseAmountCandidate>();
+        if (tender.BudgetAmount.HasValue)
+            candidates.Add(new BaseAmountCandidate(tender.BudgetAmount.Value, BidOpsBaseAmountTypes.PackageBudget));
+        if (tender.MaxPrice.HasValue)
+            candidates.Add(new BaseAmountCandidate(tender.MaxPrice.Value, BidOpsBaseAmountTypes.PackageMaxPrice));
 
         if (candidates.Count == 1)
             return candidates[0];

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Atlas.BackgroundTasks;
 using Atlas.Core.Services;
 using Atlas.Modules.BidOps.Ai;
+using Atlas.Modules.BidOps.Ai.Evidence;
 using Atlas.Modules.BidOps.Models;
 using Atlas.Modules.BidOps.Services;
 using Microsoft.Extensions.Logging;
@@ -18,6 +19,7 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
 
     private readonly IExecutionIdentityAccessor _identityAccessor;
     private readonly IBidOpsOutcomeSupplierExtractionService _extraction;
+    private readonly IBidOpsReverseLifecycleClosureService _closure;
     private readonly IBidOpsAiCallDiagnostics _diagnostics;
     private readonly ILogger<OutcomeSupplierExtractJobHandler> _logger;
     private readonly IBackgroundJobProgressReporter? _progress;
@@ -25,12 +27,14 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
     public OutcomeSupplierExtractJobHandler(
         IExecutionIdentityAccessor identityAccessor,
         IBidOpsOutcomeSupplierExtractionService extraction,
+        IBidOpsReverseLifecycleClosureService closure,
         IBidOpsAiCallDiagnostics diagnostics,
         ILogger<OutcomeSupplierExtractJobHandler> logger,
         IBackgroundJobProgressReporter? progress = null)
     {
         _identityAccessor = identityAccessor ?? throw new ArgumentNullException(nameof(identityAccessor));
         _extraction = extraction ?? throw new ArgumentNullException(nameof(extraction));
+        _closure = closure ?? throw new ArgumentNullException(nameof(closure));
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _progress = progress;
@@ -52,11 +56,19 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
             token => _extraction.ExtractRawNoticeAsync(payload.RawNoticeId, payload.ReviewerPrompt, token),
             payload,
             ct);
+
+        BidOpsReverseClosureDebugResult? lifecycleRefresh = null;
+        if (payload.RefreshLifecycleLinks && result.IsOutcomeNotice)
+        {
+            lifecycleRefresh = await _closure.ReverseCloseRawNoticeAndPersistAsync(payload.RawNoticeId, ct);
+        }
+
         _logger.LogInformation(
-            "BidOps outcome supplier extract job saved {SavedCount} records for raw notice {RawNoticeId}; reviewerPrompt={HasReviewerPrompt}.",
+            "BidOps outcome supplier extract job saved {SavedCount} records for raw notice {RawNoticeId}; reviewerPrompt={HasReviewerPrompt}; lifecycleRefresh={RefreshLifecycleLinks}.",
             result.SavedCount,
             payload.RawNoticeId,
-            !string.IsNullOrWhiteSpace(payload.ReviewerPrompt));
+            !string.IsNullOrWhiteSpace(payload.ReviewerPrompt),
+            payload.RefreshLifecycleLinks);
 
         return BackgroundJobExecutionResult.Success(JsonSerializer.Serialize(new
         {
@@ -71,6 +83,16 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
             result.SupplierUpdatedCount,
             result.Message,
             reviewerPrompt = !string.IsNullOrWhiteSpace(payload.ReviewerPrompt),
+            refreshLifecycleLinks = payload.RefreshLifecycleLinks,
+            lifecycleRefresh = lifecycleRefresh == null
+                ? null
+                : new
+                {
+                    closureCount = lifecycleRefresh.Closures.Count,
+                    persistedLifecycleLinkCount = lifecycleRefresh.PersistedLifecycleLinks.Count,
+                    failureCount = lifecycleRefresh.Failures.Count,
+                    warningCount = lifecycleRefresh.Warnings.Count
+                },
             aiResponses = _diagnostics.Entries,
             deepSeekResponses = _diagnostics.Entries
         }, JsonOptions), BackgroundJobResultStorageLimits.AiDiagnosticsMaxCharacters);
@@ -96,7 +118,8 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
             {
                 ["rawNoticeId"] = payload.RawNoticeId,
                 ["projectCode"] = payload.ProjectCode,
-                ["reviewerPrompt"] = !string.IsNullOrWhiteSpace(payload.ReviewerPrompt)
+                ["reviewerPrompt"] = !string.IsNullOrWhiteSpace(payload.ReviewerPrompt),
+                ["refreshLifecycleLinks"] = payload.RefreshLifecycleLinks
             },
             ct);
     }

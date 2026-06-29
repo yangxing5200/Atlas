@@ -457,8 +457,19 @@ public sealed class NoticeDto
     public DateTime? PublishTime { get; set; }
     public DateTime? BidDeadline { get; set; }
     public string Status { get; set; } = string.Empty;
+    public string LifecycleReviewStatus { get; set; } = BidOpsLifecycleReviewStatuses.NotAnalyzed;
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
+}
+
+public static class BidOpsLifecycleReviewStatuses
+{
+    public const string NotAnalyzed = "NotAnalyzed";
+    public const string PendingReview = "PendingReview";
+    public const string PartiallyApproved = "PartiallyApproved";
+    public const string Approved = "Approved";
+    public const string Rejected = "Rejected";
+    public const string NotApproved = "NotApproved";
 }
 
 public sealed class TenderPackageDto
@@ -766,6 +777,8 @@ public sealed class LifecyclePackageLinkDto
     public string SupplierName { get; set; } = string.Empty;
     public decimal? FinalAwardAmount { get; set; }
     public string FinalAwardAmountSource { get; set; } = string.Empty;
+    public decimal? ProcurementPackageAmount { get; set; }
+    public string ProcurementPackageAmountSource { get; set; } = string.Empty;
     public string Currency { get; set; } = string.Empty;
     public decimal MatchScore { get; set; }
     public string MatchType { get; set; } = string.Empty;
