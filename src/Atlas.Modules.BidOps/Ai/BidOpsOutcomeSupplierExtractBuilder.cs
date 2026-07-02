@@ -157,12 +157,23 @@ public static class BidOpsOutcomeSupplierExtractBuilder
         string sourceUrl,
         string text)
     {
-        var explicitSignal = $"{title}\n{noticeType}\n{sourceUrl}";
-        if (ContainsAny(explicitSignal, "AwardAnnouncement", "ResultAnnouncement", "doci-win", "中标结果", "成交结果", "中标公告", "成交公告", "中标人名单"))
+        var typeSignal = noticeType ?? string.Empty;
+        if (ContainsAny(typeSignal, "CandidateAnnouncement"))
+            return NoticeOutcomeKind.Candidate;
+
+        if (ContainsAny(typeSignal, "AwardAnnouncement", "ResultAnnouncement"))
             return NoticeOutcomeKind.Award;
 
-        if (ContainsAny(explicitSignal, "CandidateAnnouncement", "中标候选人", "成交候选人", "候选人公示", "推荐的中标", "推荐的成交"))
+        var titleSignal = title ?? string.Empty;
+        if (ContainsAny(titleSignal, "中标候选人", "成交候选人", "候选人公示", "推荐的中标", "推荐的成交"))
             return NoticeOutcomeKind.Candidate;
+
+        if (ContainsAny(titleSignal, "中标结果", "成交结果", "中标公告", "成交公告", "中标人名单"))
+            return NoticeOutcomeKind.Award;
+
+        // doci-win 是国网页面类型，候选人公示也会使用；只有在标题和 noticeType 都无法判断时才作为结果公告兜底。
+        if (ContainsAny(sourceUrl ?? string.Empty, "doci-win"))
+            return NoticeOutcomeKind.Award;
 
         var bodySignal = text[..Math.Min(text.Length, 2000)];
         // 中标公告正文常写“中标候选人公示活动已经结束”，不能因此降级成候选人公示。

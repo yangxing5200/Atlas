@@ -3312,3 +3312,15 @@ Verification:
 - `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
 - `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
 - Restarted local WebApi and Worker. WebApi returned `HTTP 401` at `http://localhost:5260/api/auth/context`, frontend returned `HTTP 200` at `http://localhost:5173`, and Worker process is running.
+
+## 2026-07-02 BidOps CI Wrapped Outcome Parser Fix
+
+Completed:
+
+- Fixed outcome notice kind detection so an explicit `CandidateAnnouncement` notice type or candidate-publicity title is not overridden by the State Grid `doci-win` detail URL.
+- Prevented wrapped outcome table parsing from using the announcement title as `ProjectName` when the body has no explicit `项目名称/采购项目名称` label.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractBuilder_ExtractsWrappedPdfCandidateRows|BidOpsWrappedOutcomeTableParser_DoesNotUseTitleAsProjectNameWithoutExplicitProjectName" --no-restore --logger "console;verbosity=minimal"` succeeded: 2 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOps" --no-restore --logger "console;verbosity=minimal"` succeeded: 233 passed.

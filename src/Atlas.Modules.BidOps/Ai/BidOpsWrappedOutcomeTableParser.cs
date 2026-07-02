@@ -41,7 +41,8 @@ public static class BidOpsWrappedOutcomeTableParser
             return [];
 
         var projectCode = BidOpsEvidenceText.ExtractProjectCode(source);
-        var projectName = FirstNonEmpty(BidOpsEvidenceText.ExtractProjectName(source), title);
+        // 公告标题经常只是“成交结果公告/候选人公示”，不能在没有“项目名称”标签时当成项目名落库。
+        var projectName = BidOpsEvidenceText.ExtractProjectName(source);
         var amountUnit = InferAmountUnit(lines);
         var results = new List<BidOpsOutcomeSupplierExtract>();
         var inOutcomeSection = false;
@@ -722,18 +723,6 @@ public static class BidOpsWrappedOutcomeTableParser
     {
         var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
         return string.Concat(cleaned.Where(x => !char.IsWhiteSpace(x) && !":：,，;；".Contains(x))).ToUpperInvariant();
-    }
-
-    private static string FirstNonEmpty(params string?[] values)
-    {
-        foreach (var value in values)
-        {
-            var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
-            if (!string.IsNullOrWhiteSpace(cleaned))
-                return cleaned;
-        }
-
-        return string.Empty;
     }
 
     private static string Truncate(string? value, int maxLength)
