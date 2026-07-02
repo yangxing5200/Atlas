@@ -61,6 +61,7 @@ public sealed class BidOpsModule : AtlasModule
         context.Services.AddScoped<IBidOpsMatchingService, BidOpsMatchingService>();
         context.Services.AddScoped<IBidOpsPursuitService, BidOpsPursuitService>();
         context.Services.AddScoped<IBidOpsPricingInferenceService, BidOpsPricingInferenceService>();
+        context.Services.AddScoped<IBidOpsAmountCandidateService, BidOpsAmountCandidateService>();
         context.Services.AddScoped<IBidOpsReverseLifecycleClosureService, BidOpsReverseLifecycleClosureService>();
         context.Services.AddScoped<IBidOpsQueryService, BidOpsQueryService>();
         context.Services.AddScoped<IBidOpsOperationsQueryService, BidOpsOperationsQueryService>();
@@ -119,6 +120,8 @@ public sealed class BidOpsModule : AtlasModule
             ServiceDescriptor.Scoped<IBackgroundJobHandler, SupplierMatchRunJobHandler>());
         context.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IBackgroundJobHandler, OutcomeSupplierExtractJobHandler>());
+        context.Services.TryAddEnumerable(
+            ServiceDescriptor.Scoped<IBackgroundJobHandler, ReviewBulkApproveJobHandler>());
         context.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IBackgroundJobHandler, ReviewQualityBackfillJobHandler>());
         context.Services.TryAddEnumerable(
@@ -535,6 +538,11 @@ public sealed class BidOpsModule : AtlasModule
                 BidOpsDataResources.OutcomeSupplierRecord,
                 "BidOps outcome supplier record",
                 entityType: typeof(OutcomeSupplierRecord).FullName,
+                supportedScopes: new[] { AtlasDataScopeType.AllTenant })
+            .AddDataResource(
+                BidOpsDataResources.AmountCandidate,
+                "BidOps amount candidate",
+                entityType: typeof(AmountCandidate).FullName,
                 supportedScopes: new[] { AtlasDataScopeType.AllTenant })
             .AddDataResource(
                 BidOpsDataResources.LifecyclePackageLink,

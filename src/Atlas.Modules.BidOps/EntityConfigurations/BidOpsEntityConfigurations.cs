@@ -750,6 +750,46 @@ public sealed class OutcomeSupplierRecordConfiguration : IEntityTypeConfiguratio
     }
 }
 
+public sealed class AmountCandidateConfiguration : IEntityTypeConfiguration<AmountCandidate>
+{
+    public void Configure(EntityTypeBuilder<AmountCandidate> builder)
+    {
+        builder.ToTable("bidops_amount_candidate");
+        builder.ConfigureTenantEntity();
+        builder.Property(x => x.SourceKind).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.SourceNoticeType).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.SourceTitle).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.Property(x => x.SourceFileName).HasColumnType("varchar(300)").HasMaxLength(300);
+        builder.Property(x => x.SourceLocation).HasColumnType("varchar(256)").HasMaxLength(256);
+        builder.Property(x => x.ProjectCode).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.ProjectName).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.Property(x => x.LotNo).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.LotName).HasColumnType("varchar(300)").HasMaxLength(300);
+        builder.Property(x => x.PackageNo).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.PackageName).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.Property(x => x.SupplierName).HasColumnType("varchar(300)").HasMaxLength(300);
+        builder.Property(x => x.AmountType).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.AmountRaw).HasColumnType("varchar(128)").HasMaxLength(128);
+        builder.Property(x => x.AmountValue).HasColumnType("decimal(18,6)");
+        builder.Property(x => x.AmountUnit).HasColumnType("varchar(32)").HasMaxLength(32);
+        builder.Property(x => x.Currency).HasColumnType("varchar(16)").HasMaxLength(16);
+        builder.Property(x => x.Confidence).HasColumnType("decimal(5,4)");
+        builder.Property(x => x.Status).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.Property(x => x.RejectReason).HasColumnType("varchar(500)").HasMaxLength(500);
+        builder.Property(x => x.EvidenceText).HasColumnType("varchar(2000)").HasMaxLength(2000);
+        builder.Property(x => x.ContextText).HasColumnType("varchar(1000)").HasMaxLength(1000);
+        builder.Property(x => x.ManualRemark).HasColumnType("varchar(1000)").HasMaxLength(1000);
+        builder.Property(x => x.SourceHash).HasColumnType("varchar(64)").HasMaxLength(64).IsRequired();
+        builder.HasIndex(x => new { x.TenantId, x.SourceHash }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.RawNoticeId, x.Status });
+        builder.HasIndex(x => new { x.TenantId, x.LifecyclePackageLinkId, x.Status });
+        builder.HasIndex(x => new { x.TenantId, x.ResultRawNoticeId, x.PackageNo });
+        builder.HasIndex(x => new { x.TenantId, x.OutcomeSupplierRecordId });
+        builder.HasIndex(x => new { x.TenantId, x.ProcurementDetailStagingId });
+        builder.HasIndex(x => new { x.TenantId, x.RawAttachmentId });
+    }
+}
+
 public sealed class LifecyclePackageLinkConfiguration : IEntityTypeConfiguration<LifecyclePackageLink>
 {
     public void Configure(EntityTypeBuilder<LifecyclePackageLink> builder)

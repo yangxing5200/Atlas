@@ -5,7 +5,7 @@ export interface DisplayOption {
 
 const noticeTypeLabels: Record<string, string> = {
   TenderAnnouncement: '招标公告',
-  ProcurementAnnouncement: '采购公告',
+  ProcurementAnnouncement: '前置公告',
   CandidateAnnouncement: '中标候选人公示',
   AwardAnnouncement: '中标/成交结果公告',
   ResultAnnouncement: '中标结果公告',
@@ -99,16 +99,37 @@ const lifecycleAmountSourceLabels: Record<string, string> = {
   EstimatedFrameworkValue: '框架估算金额',
   AwardNotice: '中标公告',
   CandidateNotice: '候选公示',
-  TenderNotice: '采购公告',
-  TenderBudget: '采购公告预算金额',
-  TenderMaxPrice: '采购公告最高限价',
-  TenderGuidePrice: '采购公告概算金额',
+  TenderNotice: '前置公告',
+  TenderBudget: '前置公告预算金额',
+  TenderMaxPrice: '前置公告最高限价',
+  TenderGuidePrice: '前置公告概算金额',
   PackageBudget: '采购包预算金额',
   PackageMaxPrice: '采购包最高限价',
   PackageGuidePrice: '采购包概算金额',
   Manual: '人工确认',
   Missing: '缺失',
   Unknown: '未知',
+}
+
+const amountCandidateTypeLabels: Record<string, string> = {
+  winning_amount: '中标金额',
+  deal_amount: '成交金额',
+  winning_price: '中标价',
+  deal_price: '成交价',
+  quote_amount: '报价金额',
+  bid_quote: '投标报价',
+  response_quote: '响应报价',
+  final_quote: '最终报价',
+  total_quote: '总报价',
+  budget_amount: '预算金额',
+  ceiling_price: '最高限价',
+  agency_fee: '代理服务费',
+  deposit: '保证金',
+  unit_price: '单价',
+  rate: '费率',
+  discount_rate: '折扣率',
+  reduction_rate: '下浮率',
+  unknown: '未知金额',
 }
 
 const commonStatusLabels: Record<string, string> = {
@@ -166,11 +187,15 @@ const commonStatusLabels: Record<string, string> = {
   PartiallyApproved: '部分通过',
   NotApproved: '未通过/未完成',
   Candidate: '候选',
+  Recommended: '推荐',
+  Selected: '已采用',
+  Unresolved: '待判定',
   Caution: '需确认',
   NotRecommended: '不建议',
   Suggested: '待确认',
   Confirmed: '已确认',
   Rejected: '已驳回',
+  StatusOnly: '仅展示',
   Strong: '强匹配',
   Weak: '弱匹配',
   Manual: '人工匹配',
@@ -197,7 +222,7 @@ const explanationLabels: Record<string, string> = {
 
 export const noticeTypeOptions: DisplayOption[] = [
   { label: '招标公告', value: 'TenderAnnouncement' },
-  { label: '采购公告', value: 'ProcurementAnnouncement' },
+  { label: '前置公告', value: 'ProcurementAnnouncement' },
   { label: '中标候选人公示', value: 'CandidateAnnouncement' },
   { label: '中标/成交结果公告', value: 'AwardAnnouncement' },
   { label: '更正公告', value: 'CorrectionAnnouncement' },
@@ -326,6 +351,7 @@ export const lifecycleLinkStatusOptions: DisplayOption[] = [
   { label: '待确认', value: 'Suggested' },
   { label: '已确认', value: 'Confirmed' },
   { label: '已驳回', value: 'Rejected' },
+  { label: '仅展示', value: 'StatusOnly' },
 ]
 
 export const lifecycleReviewStatusOptions: DisplayOption[] = [
@@ -342,6 +368,7 @@ export const lifecycleLinkMatchTypeOptions: DisplayOption[] = [
   { label: '建议匹配', value: 'Suggested' },
   { label: '弱匹配', value: 'Weak' },
   { label: '人工匹配', value: 'Manual' },
+  { label: '状态行', value: 'StatusOnly' },
 ]
 
 export const lifecycleAmountSourceOptions: DisplayOption[] = Object.entries(lifecycleAmountSourceLabels).map(([value, label]) => ({
@@ -498,7 +525,17 @@ export function formatReviewCorrectionSourceKind(value?: string | null) {
 }
 
 export function formatLifecycleAmountSource(value?: string | null) {
+  const key = String(value || '')
+  if (key.startsWith('AmountCandidate:')) {
+    const amountType = key.slice('AmountCandidate:'.length)
+    return `金额候选：${formatAmountCandidateType(amountType)}`
+  }
+
   return formatByMap(value, lifecycleAmountSourceLabels)
+}
+
+export function formatAmountCandidateType(value?: string | null) {
+  return formatByMap(value, amountCandidateTypeLabels)
 }
 
 export function formatCommonStatus(value: unknown) {

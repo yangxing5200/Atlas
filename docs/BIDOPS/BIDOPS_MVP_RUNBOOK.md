@@ -650,6 +650,15 @@ dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -
   --tenant "Server=localhost;Port=3306;Database=atlas_bidops_runtime;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;"
 ```
 
+For a local BidOps tenant created before the P1 amount candidate pool migration,
+prepare the amount candidate table idempotently:
+
+```powershell
+dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -- ensure-bidops-amount-candidates `
+  --global "Server=localhost;Port=3306;Database=atlas_global_bidops;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;" `
+  --tenant "Server=localhost;Port=3306;Database=atlas_bidops_runtime;User=root;Password=root;CharSet=utf8mb4;AllowPublicKeyRetrieval=true;"
+```
+
 `v0.2.12-bidops-outcome-extraction-order` adds
 `OutcomeSupplierRecord.ExtractionOrder` so result/candidate supplier rows can be
 displayed in the same order as the public announcement. Existing outcome lead

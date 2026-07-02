@@ -330,7 +330,28 @@ internal static partial class BidOpsEvidenceText
     {
         return TrimProjectCode(ExtractFirst(
             text,
-            @"(?:项目编号|项目编码|项目代码|采购编号|招标编号|批次编号|采购项目编号|招标项目编号|项目采购编号|招标采购编号|PURPRJ_CODE|PROJECT_CODE|ProjectCode|BID_BATCH_CODE)[^\S\r\n]*(?:[（(][^）)]{1,40}[）)])?[^\S\r\n]*[:：=][^\S\r\n]*(?<value>[A-Za-z0-9_.\-/（）()]{3,100})"));
+            @"(?:采购项目编号|采购项目编码|招标项目编号|招标项目编码|项目采购编号|招标采购编号|项目编号|项目编码|项目代码|采购编号|招标编号|批次编号|PURPRJ_CODE|PROJECT_CODE|ProjectCode|BID_BATCH_CODE)[^\S\r\n]*(?:[（(][^）)]{1,40}[）)])?[^\S\r\n]*[:：=][^\S\r\n]*(?<value>[A-Za-z0-9_.\-/－—–／（）()]{3,100})"));
+    }
+
+    public static string ExtractProjectCodeFromLotNo(string? value)
+    {
+        var cleaned = TrimCode(value ?? string.Empty)
+            .Replace('－', '-')
+            .Replace('—', '-')
+            .Replace('–', '-')
+            .Replace('／', '/');
+        if (string.IsNullOrWhiteSpace(cleaned))
+            return string.Empty;
+
+        var segmented = Regex.Match(
+            cleaned,
+            @"(?<![A-Za-z0-9])(?<value>[A-Za-z0-9]{6})(?=[\-_/.][A-Za-z0-9])",
+            RegexOptions.CultureInvariant);
+        if (segmented.Success)
+            return segmented.Groups["value"].Value.ToUpperInvariant();
+
+        var exact = Regex.Match(cleaned, @"^[A-Za-z0-9]{6}$", RegexOptions.CultureInvariant);
+        return exact.Success ? exact.Value.ToUpperInvariant() : string.Empty;
     }
 
     public static string ExtractLotNo(string? text)
@@ -415,13 +436,38 @@ internal static partial class BidOpsEvidenceText
 
     private static string TrimProjectCode(string value)
     {
-        return TrimCode(value);
+        var cleaned = TrimCode(value);
+        if (string.IsNullOrWhiteSpace(cleaned) || IsInvalidProjectCode(cleaned))
+            return string.Empty;
+
+        var fromLotNo = ExtractProjectCodeFromLotNo(cleaned);
+        return string.IsNullOrWhiteSpace(fromLotNo)
+            ? cleaned.ToUpperInvariant()
+            : fromLotNo;
     }
 
     private static string TrimCode(string value)
     {
         return BidOpsTextQuality.CleanExtractedValue(value)
-            .Trim(' ', '\t', '。', '.', '；', ';', '，', ',', '、', '）', ')');
+            .Replace('－', '-')
+            .Replace('—', '-')
+            .Replace('–', '-')
+            .Replace('／', '/')
+            .Trim(' ', '\t', '。', '.', '；', ';', '，', ',', '、', '（', '(', '）', ')');
+    }
+
+    private static bool IsInvalidProjectCode(string value)
+    {
+        var normalized = value.Trim().Trim(':', '：', '=');
+        return normalized.Equals("URL", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("SourceUrl", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("ProjectCode", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("ListPublishTime", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("PublishTime", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("NoticeId", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("FirstPageDocId", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("Doctype", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("MenuId", StringComparison.OrdinalIgnoreCase);
     }
 
     public static string ToPlainText(string? value)
@@ -453,6 +499,10 @@ internal sealed record BidOpsExtractedRow(
     int RowIndex,
     IReadOnlyList<string> Cells,
     string RawText);
+
+internal sealed record HtmlTableFragment(
+    int StartIndex,
+    string Body);
 
 internal static class BidOpsEvidenceTableParser
 {
@@ -535,10 +585,10 @@ internal static class BidOpsEvidenceTableParser
         List<BidOpsExtractedTable> tables,
         ref int tableIndex)
     {
-        foreach (Match tableMatch in Regex.Matches(text, @"<table\b[^>]*>(?<body>.*?)</table>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant))
+        foreach (var tableFragment in EnumerateHtmlTableFragments(text))
         {
             var htmlRows = new List<(IReadOnlyList<string> Cells, bool IsHeader, string RawText)>();
-            foreach (Match rowMatch in Regex.Matches(tableMatch.Groups["body"].Value, @"<tr\b[^>]*>(?<row>.*?)</tr>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant))
+            foreach (Match rowMatch in Regex.Matches(tableFragment.Body, @"<tr\b[^>]*>(?<row>.*?)</tr>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant))
             {
                 var cells = new List<string>();
                 var hasHeaderCell = false;
@@ -577,9 +627,34 @@ internal static class BidOpsEvidenceTableParser
             {
                 tables.Add(new BidOpsExtractedTable(tableIndex++, header, rows)
                 {
-                    ContextText = BuildTextContext(text, tableMatch.Index)
+                    ContextText = BuildTextContext(text, tableFragment.StartIndex)
                 });
             }
+        }
+    }
+
+    private static IEnumerable<HtmlTableFragment> EnumerateHtmlTableFragments(string text)
+    {
+        var starts = Regex.Matches(text, @"<table\b[^>]*>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        for (var i = 0; i < starts.Count; i++)
+        {
+            var start = starts[i];
+            var bodyStart = start.Index + start.Length;
+            var close = Regex.Match(
+                text[bodyStart..],
+                @"</table\s*>",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            var nextStartIndex = i + 1 < starts.Count ? starts[i + 1].Index : text.Length;
+            var closeIndex = close.Success ? bodyStart + close.Index : -1;
+            var bodyEnd = closeIndex >= 0 && closeIndex <= nextStartIndex
+                ? closeIndex
+                : nextStartIndex;
+
+            if (bodyEnd <= bodyStart)
+                continue;
+
+            // 国网 WCM 正文有时被长度上限截断，导致只有 <table> 起始而没有 </table>。
+            yield return new HtmlTableFragment(start.Index, text[bodyStart..bodyEnd]);
         }
     }
 

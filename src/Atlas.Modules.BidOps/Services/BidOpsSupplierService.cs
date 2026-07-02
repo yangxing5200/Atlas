@@ -511,7 +511,8 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
                         userId,
                         _current.UserName,
                         raw.Id,
-                        ProjectCode: BidOpsJobProjectCode.FromRawNotice(raw))
+                        ProjectCode: BidOpsJobProjectCode.FromRawNotice(raw),
+                        RefreshLifecycleLinks: true)
                 },
                 ct);
 
@@ -874,7 +875,7 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
             SupplierName = record.SupplierName,
             OutcomeType = record.OutcomeType,
             Rank = record.Rank,
-            AwardAmount = record.AwardAmount,
+            AwardAmount = BidOpsOutcomeRecordPolicy.DisplayAwardAmount(record),
             ProcurementAgencyServiceFeeAmount = record.ProcurementAgencyServiceFeeAmount,
             ExtractionOrder = record.ExtractionOrder,
             Currency = record.Currency,
@@ -899,7 +900,10 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
 
     private static SupplierOutcomeSummaryDto BuildOutcomeSummary(IReadOnlyCollection<OutcomeSupplierRecord> records)
     {
-        var topSuppliers = records
+        var actionableRecords = records
+            .Where(record => !BidOpsOutcomeRecordPolicy.IsNonAwardOutcome(record))
+            .ToList();
+        var topSuppliers = actionableRecords
             .GroupBy(x => string.IsNullOrWhiteSpace(x.SupplierNameNormalized) ? x.SupplierName : x.SupplierNameNormalized)
             .Select(x =>
             {
@@ -930,7 +934,7 @@ public sealed class BidOpsSupplierService : IBidOpsSupplierService
         {
             GeneratedAtUtc = DateTime.UtcNow,
             RecordCount = records.Count,
-            SupplierCount = records
+            SupplierCount = actionableRecords
                 .Select(x => string.IsNullOrWhiteSpace(x.SupplierNameNormalized) ? x.SupplierName : x.SupplierNameNormalized)
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Distinct(StringComparer.OrdinalIgnoreCase)

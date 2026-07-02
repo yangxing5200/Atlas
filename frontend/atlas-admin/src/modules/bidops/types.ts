@@ -423,13 +423,82 @@ export interface PackageStagingDto {
   requirements: RequirementStagingDto[]
 }
 
+export interface ProcurementDetailStagingDto {
+  id: BidOpsId
+  noticeStagingId: BidOpsId
+  packageStagingId?: BidOpsId | null
+  rawNoticeId: BidOpsId
+  rawAttachmentId?: BidOpsId | null
+  tableIndex?: number | null
+  rowIndex?: number | null
+  sourceSheetName: string
+  projectCode: string
+  projectName: string
+  procurementApplicationNo: string
+  lineItemNo: string
+  materialCode: string
+  lotSequence: string
+  lotNo: string
+  lotName: string
+  ecpLotName: string
+  packageNo: string
+  packageName: string
+  packageType: string
+  category: string
+  procurementMethod: string
+  buyerName: string
+  projectUnit: string
+  constructionUnit: string
+  procurementContent: string
+  scopeText: string
+  projectOverview: string
+  location: string
+  voltageLevel: string
+  procurementAmount?: number | null
+  budgetAmount?: number | null
+  itemEstimatedAmount?: number | null
+  packageEstimatedAmount?: number | null
+  maxPrice?: number | null
+  maxPriceRatePercent?: number | null
+  taxRatePercent?: number | null
+  responseGuaranteeAmount?: number | null
+  quoteMode: string
+  settlementMode: string
+  plannedStartDate?: string | null
+  plannedCompletionDate?: string | null
+  servicePeriodDays?: number | null
+  servicePeriodText: string
+  qualificationRequirement: string
+  performanceRequirement: string
+  personnelRequirement: string
+  otherRequirement: string
+  jointVentureAllowed: string
+  subcontractAllowed: string
+  awardLimit: string
+  technicalSpecId: string
+  contractTemplate: string
+  businessWeight?: number | null
+  technicalWeight?: number | null
+  priceWeight?: number | null
+  priceCalculationMethod: string
+  priceParameter: string
+  remarks: string
+  originalHeaderJson: string
+  originalRowJson: string
+  normalizedFieldsJson: string
+  aiConfidence: number
+  reviewStatus: ReviewStatus
+}
+
 export interface ReviewTaskDetailDto {
   task: ReviewTaskDto
   rawNotice?: RawNoticeDto | null
   notice?: NoticeStagingDto | null
   buyer?: ReviewBuyerInfoDto | null
   outcomeSuppliers: OutcomeSupplierRecordDto[]
+  amountCandidates: AmountCandidateDto[]
   packages: PackageStagingDto[]
+  procurementDetails: ProcurementDetailStagingDto[]
   attachments: RawAttachmentDto[]
   qualityIssues: ReviewQualityIssueDto[]
 }
@@ -696,6 +765,102 @@ export interface OutcomeSupplierRecordDto {
   createdAt: string
 }
 
+export interface AmountCandidateDto {
+  id: BidOpsId
+  lifecyclePackageLinkId?: BidOpsId | null
+  rawNoticeId: BidOpsId
+  resultRawNoticeId?: BidOpsId | null
+  rawAttachmentId?: BidOpsId | null
+  outcomeSupplierRecordId?: BidOpsId | null
+  procurementDetailStagingId?: BidOpsId | null
+  tenderPackageId?: BidOpsId | null
+  sourceKind: string
+  sourceNoticeType: string
+  sourceTitle: string
+  sourceFileName: string
+  sourceLocation: string
+  projectCode: string
+  projectName: string
+  lotNo: string
+  lotName: string
+  packageNo: string
+  packageName: string
+  supplierName: string
+  amountType: string
+  amountRaw: string
+  amountValue?: number | null
+  amountUnit: string
+  currency: string
+  isPotentialFinalAmount: boolean
+  confidence: number
+  status: string
+  rejectReason: string
+  evidenceText: string
+  contextText: string
+  evidenceSource: string
+  evidenceRowText: string
+  evidenceHeaderText: string
+  evidenceUnitText: string
+  evidenceUnitScale?: number | null
+  evidenceHasTenThousandYuanUnit: boolean
+  manualRemark: string
+  selectedBy?: BidOpsId | null
+  selectedAt?: string | null
+  rejectedBy?: BidOpsId | null
+  rejectedAt?: string | null
+  createdAt: string
+  updatedAt?: string | null
+}
+
+export interface AmountCandidateOperationResultDto {
+  candidate: AmountCandidateDto
+  candidates: AmountCandidateDto[]
+  finalAwardAmount?: number | null
+  finalAwardAmountSource: string
+  linkUpdatedAt?: string | null
+}
+
+export interface LifecycleFinalAwardAmountClearRequest {
+  linkIds: BidOpsId[]
+  reason?: string | null
+}
+
+export interface LifecycleFinalAwardAmountClearItemDto {
+  linkId: BidOpsId
+  succeeded: boolean
+  skipped: boolean
+  message: string
+  finalAwardAmount?: number | null
+  finalAwardAmountSource: string
+  linkUpdatedAt?: string | null
+}
+
+export interface LifecycleFinalAwardAmountClearResultDto {
+  requestedCount: number
+  succeededCount: number
+  failedCount: number
+  skippedCount: number
+  items: LifecycleFinalAwardAmountClearItemDto[]
+}
+
+export interface LifecycleAmountCandidateStatusCountDto {
+  status: string
+  count: number
+}
+
+export interface LifecycleAmountCandidateDebugDto {
+  linkId: BidOpsId
+  awardRawNoticeId?: BidOpsId | null
+  candidateRawNoticeId?: BidOpsId | null
+  procurementRawNoticeId?: BidOpsId | null
+  publicReviewVisibleCandidateCount: number
+  closureVisibleCandidateCount: number
+  statusCounts: LifecycleAmountCandidateStatusCountDto[]
+  differenceReasons: string[]
+  filterReasons: string[]
+  candidates: AmountCandidateDto[]
+}
+
 export interface LifecyclePackageLinkDto {
   id: BidOpsId
   procurementDetailId?: BidOpsId | null
@@ -712,7 +877,17 @@ export interface LifecyclePackageLinkDto {
   procurementAttachments: RawAttachmentDto[]
   candidateAttachments: RawAttachmentDto[]
   awardAttachments: RawAttachmentDto[]
+  awardOutcomeSuppliers: OutcomeSupplierRecordDto[]
+  candidateOutcomeSuppliers: OutcomeSupplierRecordDto[]
+  procurementDetails: ProcurementDetailStagingDto[]
+  amountCandidates: AmountCandidateDto[]
   procurementNoticeMissingReason: string
+  sourceNoticeType: string
+  sourceNoticeColumn: string
+  projectProcessType: string
+  procurementMethod: string
+  preferredSourceNoticeTypes: string[]
+  sourceNoticeSearchColumns: LifecycleSourceNoticeSearchColumnDto[]
   projectCode: string
   projectName: string
   lotNo: string
@@ -748,10 +923,21 @@ export interface LifecycleNoticeRefDto {
   matchSource: string
 }
 
+export interface LifecycleSourceNoticeSearchColumnDto {
+  sourceNoticeType: string
+  columnName: string
+  candidateCount: number
+  matched: boolean
+}
+
 export interface LifecycleProcurementNoticeCandidateDto {
   sourceId: BidOpsId
   channelId?: BidOpsId | null
   noticeType: string
+  sourceNoticeType: string
+  sourceNoticeColumn: string
+  projectProcessType: string
+  procurementMethod: string
   title: string
   detailUrl: string
   doctype: string
@@ -774,11 +960,27 @@ export interface LifecycleProcurementNoticeImportRequest {
   sourceId?: BidOpsId | number | null
   channelId?: BidOpsId | number | null
   forceRefresh?: boolean
+  applyToRelatedLinks?: boolean
 }
 
 export interface LifecycleProcurementNoticeImportResultDto {
   rawNoticeId?: BidOpsId | null
   importJob?: EnqueueJobDto | null
+  updatedLinkCount?: number
+  message: string
+}
+
+export interface LifecycleProjectCodeUpdateRequest {
+  projectCode: string
+  remark?: string | null
+  applyToRelatedLinks?: boolean
+  clearProcurementNotice?: boolean
+}
+
+export interface LifecycleProjectCodeUpdateResultDto {
+  link: LifecyclePackageLinkDto
+  updatedLinkCount: number
+  projectCode: string
   message: string
 }
 
@@ -1131,6 +1333,59 @@ export interface LifecyclePackageLinkDecisionRequest {
   finalAwardAmount?: number | null
   finalAwardAmountSource?: string | null
   requiresManualReview?: boolean | null
+}
+
+export interface LifecyclePackageLinkBatchReviewRequest {
+  linkIds: Array<BidOpsId | number>
+  decision: 'Confirm' | 'Reject' | string
+  remark?: string | null
+  requiresManualReview?: boolean | null
+}
+
+export interface LifecyclePackageLinkBatchReviewItemDto {
+  linkId: BidOpsId
+  succeeded: boolean
+  skipped: boolean
+  message: string
+  link?: LifecyclePackageLinkDto | null
+}
+
+export interface LifecyclePackageLinkBatchReviewResultDto {
+  requestedCount: number
+  succeededCount: number
+  failedCount: number
+  skippedCount: number
+  items: LifecyclePackageLinkBatchReviewItemDto[]
+}
+
+export interface LifecycleProcurementAutoCollectRequest {
+  forceRefresh?: boolean
+  autoReview?: boolean
+}
+
+export interface LifecycleProcurementAutoCollectItemDto {
+  linkId: BidOpsId
+  projectCode: string
+  status: string
+  message: string
+  candidateCount: number
+  updatedLinkCount: number
+  rawNoticeId?: BidOpsId | null
+  detailUrl: string
+}
+
+export interface LifecycleProcurementAutoCollectResultDto {
+  awardRawNoticeId: BidOpsId
+  eligibleLinkCount: number
+  candidateCount: number
+  collectedCount: number
+  existingLinkedCount: number
+  updatedLinkCount: number
+  skippedCount: number
+  failedCount: number
+  message: string
+  items: LifecycleProcurementAutoCollectItemDto[]
+  autoReview?: LifecyclePackageLinkBatchReviewResultDto | null
 }
 
 export interface CreateCrawlSourceRequest {

@@ -47,7 +47,7 @@ const form = reactive<ManualImportForm>({
 
 const rules: FormRules<ManualImportForm> = {
   detailUrl: [
-    { required: true, message: '请输入采购公告地址', trigger: 'blur' },
+    { required: true, message: '请输入前置公告地址', trigger: 'blur' },
     {
       validator: (_rule, value, callback) => {
         try {
@@ -212,7 +212,7 @@ onBeforeUnmount(stopPolling)
 </script>
 
 <template>
-  <PageContainer title="手动导入采购公告" description="输入公开采购公告地址，Worker 自动抓取公告详情、附件并进入审核队列。">
+  <PageContainer title="手动导入前置公告" description="输入公开前置公告地址，Worker 自动抓取公告详情、附件并进入审核队列。">
     <div class="manual-import-layout">
       <section class="content-panel import-panel">
         <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent>
@@ -224,7 +224,7 @@ onBeforeUnmount(stopPolling)
             class="guardrail-alert"
           />
 
-          <el-form-item label="采购公告地址" prop="detailUrl">
+          <el-form-item label="前置公告地址" prop="detailUrl">
             <el-input
               v-model.trim="form.detailUrl"
               :prefix-icon="Link"

@@ -13,6 +13,10 @@ public interface IBidOpsReviewService
         BulkApproveReviewTasksRequest request,
         CancellationToken ct = default);
 
+    Task<EnqueueJobDto> EnqueueBulkApproveAsync(
+        BulkApproveReviewTasksRequest request,
+        CancellationToken ct = default);
+
     Task<BulkReviewTaskActionResultDto> BatchReparseAsync(
         BatchReviewTaskReparseRequest request,
         CancellationToken ct = default);

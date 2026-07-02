@@ -33,7 +33,7 @@ const table = useTableQuery<RawNoticeDto, RawNoticeListQuery>(
 async function backfillHistoricalAttachments() {
   try {
     await ElMessageBox.confirm(
-      '将重新检查历史国家电网招标/采购公告的公开 ZIP 附件，并由 Worker 下载、抽取文本、重新生成待审核解析结果。',
+      '将重新检查历史国家电网招标/前置公告的公开 ZIP 附件，并由 Worker 下载、抽取文本、重新生成待审核解析结果。',
       '补齐历史附件',
       { type: 'warning', confirmButtonText: '开始补齐', cancelButtonText: '取消' },
     )

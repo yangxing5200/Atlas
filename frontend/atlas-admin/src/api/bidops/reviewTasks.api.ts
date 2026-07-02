@@ -51,6 +51,10 @@ export const reviewTasksApi = {
     return http.post<BulkReviewTaskActionResultDto>(`${base}/bulk-approve`, data)
   },
 
+  bulkApproveJob(data: BulkApproveReviewTasksRequest) {
+    return http.post<EnqueueJobDto>(`${base}/bulk-approve/job`, data)
+  },
+
   batchReparse(data: BatchReviewTaskReparseRequest) {
     return http.post<BulkReviewTaskActionResultDto>(`${base}/batch-reparse`, data)
   },

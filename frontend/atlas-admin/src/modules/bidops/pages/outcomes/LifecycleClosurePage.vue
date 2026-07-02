@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Bottom, Check, Close, Link as LinkIcon, Refresh, Search, Tickets, Top, Upload, View } from '@element-plus/icons-vue'
+import { Bottom, Check, Close, Delete, Edit, Link as LinkIcon, Refresh, Search, Tickets, Top, Upload, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { lifecycleApi } from '@/api/bidops/lifecycle.api'
+import { rawNoticesApi } from '@/api/bidops/rawNotices.api'
 import { backgroundJobsApi } from '@/api/operations/backgroundJobs.api'
 import DataTable from '@/shared/components/DataTable.vue'
 import PageContainer from '@/shared/components/PageContainer.vue'
@@ -16,9 +17,11 @@ import type { BackgroundJobDetailDto } from '@/modules/operations/types'
 import BidOpsStatusTag from '../../components/BidOpsStatusTag.vue'
 import RawAttachmentTable from '../../components/RawAttachmentTable.vue'
 import { BIDOPS_PERMISSIONS } from '../../constants'
-import type { EnqueueJobDto, LifecycleNoticeRefDto, LifecyclePackageLinkDto, LifecycleProcurementNoticeCandidateDto } from '../../types'
+import type { AmountCandidateDto, AmountCandidateOperationResultDto, LifecycleNoticeRefDto, LifecyclePackageLinkDto, LifecycleProcurementNoticeCandidateDto } from '../../types'
 import {
+  formatAmountCandidateType,
   formatLifecycleAmountSource,
+  formatCommonStatus,
   formatNoticeType,
   lifecycleAmountSourceOptions,
   lifecycleLinkMatchTypeOptions,
@@ -79,18 +82,27 @@ const decisionLoading = ref(false)
 const decisionMode = ref<'confirm' | 'reject'>('confirm')
 const activeLink = ref<LifecyclePackageLinkDto | null>(null)
 const decisionLink = ref<LifecyclePackageLinkDto | null>(null)
+const projectCodeVisible = ref(false)
+const projectCodeLoading = ref(false)
+const projectCodeLink = ref<LifecyclePackageLinkDto | null>(null)
 const procurementSearchVisible = ref(false)
 const procurementSearchLoading = ref(false)
 const procurementImportingKey = ref('')
 const procurementSearchLink = ref<LifecyclePackageLinkDto | null>(null)
+const procurementSearchApplyToRelatedLinks = ref(false)
 const procurementCandidates = ref<LifecycleProcurementNoticeCandidateDto[]>([])
+const amountCandidateLoading = ref(false)
+const amountCandidateActionLoadingKey = ref('')
 const outcomeReparseLoadingKey = ref('')
+const procurementReparseLoadingKey = ref('')
 const noticePromptVisible = ref(false)
 const noticePromptKind = ref<NoticePromptKind>('award')
 const noticePromptItem = ref<NoticeContextItem | null>(null)
 const noticePromptLoadingKey = ref('')
 const selectedRows = ref<LifecyclePackageLinkDto[]>([])
 const batchReviewLoading = ref(false)
+const batchAmountClearLoading = ref(false)
+const autoCollectLoading = ref(false)
 const pageTopRef = ref<HTMLElement | null>(null)
 const pageBottomRef = ref<HTMLElement | null>(null)
 const promptTaskTimers = new Map<string, number>()
@@ -99,6 +111,12 @@ const decisionForm = reactive({
   remark: '',
   finalAwardAmount: null as number | null,
   finalAwardAmountSource: '',
+})
+const projectCodeForm = reactive({
+  projectCode: '',
+  remark: '',
+  applyToRelatedLinks: true,
+  clearProcurementNotice: true,
 })
 const noticePromptForm = reactive({
   reviewerPrompt: '',
@@ -146,20 +164,21 @@ const selectedMissingFields = computed(() => parseJsonTextList(activeLink.value?
 const selectedEvidenceJson = computed(() => prettyJson(activeLink.value?.evidenceJson))
 const selectedFieldEnrichment = computed(() => fieldEnrichment(activeLink.value))
 const decisionTitle = computed(() => (decisionMode.value === 'confirm' ? '确认生命周期关联' : '驳回生命周期关联'))
+const projectCodeDialogTitle = computed(() => `修改项目编号${projectCodeLink.value?.projectCode ? `（当前 ${projectCodeLink.value.projectCode}）` : ''}`)
 const noticePromptTitle = computed(() =>
   noticePromptKind.value === 'award'
     ? '中标公告 AI 提示词辅助解析'
-    : '采购公告 AI 提示词辅助解析',
+    : '前置公告 AI 提示词辅助解析',
 )
 const noticePromptHelpText = computed(() =>
   noticePromptKind.value === 'award'
     ? '按当前中标公告重新抽取全部中标/候选厂家明细，并在后台任务成功后刷新闭环列表。'
-    : '按当前采购公告证据辅助解析关联明细中的分标、包号和金额，并在后台任务成功后刷新闭环列表。',
+    : '按当前前置公告重新结构化解析包件、需求、金额等暂存证据，并在后台任务成功后刷新闭环列表。',
 )
 const noticePromptPlaceholder = computed(() =>
   noticePromptKind.value === 'award'
     ? '例如：附件 PDF 的“成交结果明细”表中，分标编号、分标名称、包号、成交人和成交金额在同一行；金额单位按表头或附近“万元”处理。'
-    : '例如：采购公告附件的“货物清单/需求一览表”中，分标名称和包号对应包级预算金额；优先按分标名称+包号匹配金额，不要把分标总金额当成包金额。',
+    : '例如：前置公告附件的“货物清单/需求一览表”中，分标名称和包号对应包级预算金额；优先按分标名称+包号匹配金额，不要把分标总金额当成包金额。',
 )
 const noticePromptSubmitLoading = computed(() => {
   const rawNoticeId = noticePromptRawNoticeId(noticePromptItem.value)
@@ -171,12 +190,41 @@ const decisionAmountSourceOptions = computed(() => {
   return [{ label: '其他来源', value }, ...lifecycleAmountSourceOptions]
 })
 const selectedReviewRows = computed(() => selectedRows.value.filter(canSelectLifecycleRow))
+const selectedRowsWithFinalAmount = computed(() =>
+  selectedReviewRows.value.filter((row) => (row.finalAwardAmount !== null && row.finalAwardAmount !== undefined) || !!row.finalAwardAmountSource),
+)
 const awardNoticeContext = computed(() => buildNoticeContext('award'))
 const procurementNoticeContext = computed(() => buildNoticeContext('procurement'))
+const closureProjectCodeEditTarget = computed(() => {
+  const links = awardNoticeContext.value.primary?.links?.length
+    ? awardNoticeContext.value.primary.links
+    : table.result.items
+  return links.find((link) => canOperateLifecycleRow(link) && link.linkStatus !== 'Rejected') || links.find(canOperateLifecycleRow) || null
+})
+const closureCurrentProjectCode = computed(() => {
+  const links = awardNoticeContext.value.primary?.links?.length
+    ? awardNoticeContext.value.primary.links
+    : table.result.items
+  const projectCodes = uniqueDisplayTexts(links.map((item) => item.projectCode))
+  if (projectCodes.length === 1) return projectCodes[0]
+  if (projectCodes.length > 1) return `多个：${projectCodes.join(' / ')}`
+  return '未识别'
+})
 const procurementSearchTarget = computed(() =>
-  table.result.items.find((item) => !item.procurementNotice && !!item.projectCode) ||
-  table.result.items.find((item) => !!item.projectCode) ||
+  table.result.items.find((item) => canOperateLifecycleRow(item) && !item.procurementNotice && !!item.projectCode) ||
+  table.result.items.find((item) => canOperateLifecycleRow(item) && !!item.projectCode) ||
   null,
+)
+const procurementSearchDialogTitle = computed(() => {
+  const code = procurementSearchLink.value?.projectCode || '-'
+  return procurementSearchApplyToRelatedLinks.value
+    ? `按招标编号/采购编号 ${code} 重新匹配前置公告`
+    : `按招标编号/采购编号 ${code} 搜索国网公开前置公告`
+})
+const procurementSearchDialogDescription = computed(() =>
+  procurementSearchApplyToRelatedLinks.value
+    ? '选择已导入候选后，会同步替换同一中标/成交公告下当前指向同一个错误前置 RawNotice 的待审核闭环行。'
+    : '',
 )
 const closureProjectSummary = computed(() => {
   const projectCodes = uniqueDisplayTexts(table.result.items.map((item) => item.projectCode))
@@ -188,6 +236,48 @@ const closureProjectSummary = computed(() => {
   return '暂无闭环数据'
 })
 const activeRawNoticeId = computed(() => firstDisplayText(table.query.rawNoticeId, route.query.rawNoticeId))
+const amountCandidateGroups = computed(() => {
+  const rows = activeLink.value?.amountCandidates || []
+  const order = ['Selected', 'Recommended', 'Candidate', 'Unresolved', 'Rejected']
+  return order
+    .map((status) => ({
+      status,
+      rows: rows.filter((row) => row.status === status),
+    }))
+    .filter((group) => group.rows.length > 0)
+})
+
+const amountCandidateTypeOptions = [
+  { label: '中标金额', value: 'winning_amount' },
+  { label: '成交金额', value: 'deal_amount' },
+  { label: '中标价', value: 'winning_price' },
+  { label: '成交价', value: 'deal_price' },
+  { label: '报价金额', value: 'quote_amount' },
+  { label: '投标报价', value: 'bid_quote' },
+  { label: '响应报价', value: 'response_quote' },
+  { label: '最终报价', value: 'final_quote' },
+  { label: '总报价', value: 'total_quote' },
+  { label: '预算金额', value: 'budget_amount' },
+  { label: '最高限价', value: 'ceiling_price' },
+  { label: '代理服务费', value: 'agency_fee' },
+  { label: '保证金', value: 'deposit' },
+  { label: '单价', value: 'unit_price' },
+  { label: '费率', value: 'rate' },
+  { label: '折扣率', value: 'discount_rate' },
+  { label: '下浮率', value: 'reduction_rate' },
+  { label: '未知金额', value: 'unknown' },
+]
+const finalAmountCandidateTypes = new Set([
+  'winning_amount',
+  'deal_amount',
+  'winning_price',
+  'deal_price',
+  'quote_amount',
+  'bid_quote',
+  'response_quote',
+  'final_quote',
+  'total_quote',
+])
 
 function sortOrder(ascending: string, descending: string): SortOrder {
   if (table.query.sortBy === ascending)
@@ -209,6 +299,14 @@ function canSelectLifecycleRow(row: LifecyclePackageLinkDto) {
   return row.linkStatus === 'Suggested'
 }
 
+function isStatusOnlyLifecycleRow(row?: LifecyclePackageLinkDto | null) {
+  return row?.linkStatus === 'StatusOnly'
+}
+
+function canOperateLifecycleRow(row?: LifecyclePackageLinkDto | null) {
+  return !!row && !isStatusOnlyLifecycleRow(row)
+}
+
 function handleSelectionChange(rows: LifecyclePackageLinkDto[]) {
   selectedRows.value = rows
 }
@@ -221,18 +319,109 @@ function scrollToPageBottom() {
   pageBottomRef.value?.scrollIntoView({ behavior: 'smooth', block: 'end' })
 }
 
-function openDetail(row: LifecyclePackageLinkDto) {
+async function openDetail(row: LifecyclePackageLinkDto) {
   activeLink.value = row
   detailVisible.value = true
+  if (isStatusOnlyLifecycleRow(row)) return
+  await refreshAmountCandidates(row)
 }
 
 function openDecision(row: LifecyclePackageLinkDto, mode: 'confirm' | 'reject') {
+  if (!canOperateLifecycleRow(row)) return
   decisionLink.value = row
   decisionMode.value = mode
   decisionForm.remark = row.manualRemark || ''
   decisionForm.finalAwardAmount = row.finalAwardAmount ?? null
   decisionForm.finalAwardAmountSource = row.finalAwardAmountSource || ''
   decisionVisible.value = true
+}
+
+function openProjectCodeEdit(row?: LifecyclePackageLinkDto | null) {
+  const link = row || activeLink.value
+  if (!link || isStatusOnlyLifecycleRow(link)) return
+
+  projectCodeLink.value = link
+  projectCodeForm.projectCode = link.projectCode || ''
+  projectCodeForm.remark = ''
+  projectCodeForm.applyToRelatedLinks = true
+  projectCodeForm.clearProcurementNotice = true
+  projectCodeVisible.value = true
+}
+
+function openClosureProjectCodeEdit() {
+  if (awardNoticeContext.value.items.length > 1) {
+    ElMessage.warning('当前列表包含多个中标公告，请先按 RawNoticeId 筛选到单次闭环')
+    return
+  }
+
+  const link = closureProjectCodeEditTarget.value
+  if (!link) {
+    ElMessage.warning('当前闭环公告没有可修改的明细')
+    return
+  }
+
+  openProjectCodeEdit(link)
+  projectCodeForm.applyToRelatedLinks = true
+  projectCodeForm.clearProcurementNotice = true
+}
+
+function closeProjectCodeEdit() {
+  projectCodeVisible.value = false
+}
+
+async function submitProjectCodeEdit() {
+  const link = projectCodeLink.value
+  const projectCode = projectCodeForm.projectCode.trim()
+  if (!link) return
+  if (!projectCode) {
+    ElMessage.warning('请填写项目编号')
+    return
+  }
+
+  projectCodeLoading.value = true
+  try {
+    const oldQueryProjectCode = normalizeProcurementSearchCode(table.query.projectCode)
+    const oldLinkProjectCode = normalizeProcurementSearchCode(link.projectCode)
+    const targetAwardRawNoticeId = link.awardRawNoticeId
+    const result = await lifecycleApi.updateProjectCode(link.id, {
+      projectCode,
+      remark: projectCodeForm.remark.trim() || null,
+      applyToRelatedLinks: projectCodeForm.applyToRelatedLinks,
+      clearProcurementNotice: projectCodeForm.clearProcurementNotice,
+    })
+    replaceRow(result.link)
+    if (activeLink.value?.id === result.link.id) activeLink.value = result.link
+    applyProjectCodeToVisibleRows(targetAwardRawNoticeId, result.projectCode, projectCodeForm.clearProcurementNotice)
+    if (oldQueryProjectCode && oldQueryProjectCode === oldLinkProjectCode) {
+      table.query.projectCode = result.projectCode
+    }
+    await table.loadData()
+    if (activeLink.value) {
+      const activeUpdated = table.result.items.find((item) => item.id === activeLink.value?.id)
+      if (activeUpdated) activeLink.value = activeUpdated
+    }
+    ElMessage.success(result.message || `项目编号已更新为 ${result.projectCode}`)
+    projectCodeVisible.value = false
+  } finally {
+    projectCodeLoading.value = false
+  }
+}
+
+function applyProjectCodeToVisibleRows(
+  awardRawNoticeId: LifecyclePackageLinkDto['awardRawNoticeId'],
+  projectCode: string,
+  clearProcurementNotice: boolean,
+) {
+  for (const row of table.result.items) {
+    if (awardRawNoticeId && row.awardRawNoticeId !== awardRawNoticeId) continue
+    row.projectCode = projectCode
+    row.requiresManualReview = true
+    if (clearProcurementNotice) {
+      row.procurementRawNoticeId = null
+      row.procurementNotice = null
+      row.procurementNoticeMissingReason = `未匹配到前置公告 RawNotice；请先采集或导入招标编号/采购编号 ${projectCode} 对应的前置公告。`
+    }
+  }
 }
 
 function closeDecision() {
@@ -319,52 +508,231 @@ async function batchRejectSelected() {
   await runBatchDecision(rows, 'reject', result.value.trim())
 }
 
-async function runBatchDecision(rows: LifecyclePackageLinkDto[], mode: 'confirm' | 'reject', remark: string) {
-  batchReviewLoading.value = true
-  let succeeded = 0
-  let failed = 0
+async function batchClearFinalAwardAmounts() {
+  if (selectedReviewRows.value.length === 0) {
+    ElMessage.warning('请先选择待清空金额的闭环明细')
+    return
+  }
+
+  const rows = selectedRowsWithFinalAmount.value
+  if (rows.length === 0) {
+    ElMessage.warning('当前选中明细没有可清空的中标金额')
+    return
+  }
+
   try {
-    for (const row of rows) {
-      try {
-        const request = mode === 'confirm'
-          ? {
-              remark,
-              finalAwardAmount: row.finalAwardAmount ?? null,
-              finalAwardAmountSource: row.finalAwardAmountSource || null,
-              requiresManualReview: false,
-            }
-          : {
-              remark,
-              finalAwardAmount: null,
-              finalAwardAmountSource: null,
-              requiresManualReview: false,
-            }
-        const updated = mode === 'confirm'
-          ? await lifecycleApi.confirmLink(row.id, request)
-          : await lifecycleApi.rejectLink(row.id, request)
-        replaceRow(updated)
-        if (activeLink.value?.id === updated.id) activeLink.value = updated
-        succeeded += 1
-      } catch {
-        failed += 1
-      }
+    await ElMessageBox.confirm(
+      `将清空当前选中 ${rows.length} 条明细的中标金额，并撤销已采用金额候选。该操作适用于误把服务费当作中标金额的情况，不会确认或驳回闭环明细。`,
+      '批量清空中标金额',
+      {
+        type: 'warning',
+        confirmButtonText: '清空金额',
+      },
+    )
+  } catch {
+    return
+  }
+
+  batchAmountClearLoading.value = true
+  try {
+    const result = await lifecycleApi.clearFinalAwardAmounts({
+      linkIds: rows.map((row) => row.id),
+      reason: '批量清空误用服务费或非最终中标金额',
+    })
+    for (const item of result.items) {
+      const row = table.result.items.find((candidate) => String(candidate.id) === String(item.linkId))
+      if (!row || !item.succeeded) continue
+      row.finalAwardAmount = item.finalAwardAmount ?? null
+      row.finalAwardAmountSource = item.finalAwardAmountSource || 'Missing'
+      row.requiresManualReview = true
+      row.updatedAt = item.linkUpdatedAt || row.updatedAt
+      if (activeLink.value?.id === row.id) activeLink.value = { ...row, amountCandidates: activeLink.value.amountCandidates }
     }
 
     selectedRows.value = []
     await table.loadData()
-    if (failed > 0) {
-      ElMessage.warning(`批量审核完成：成功 ${succeeded} 条，失败 ${failed} 条`)
+    if (activeLink.value) {
+      const activeUpdated = table.result.items.find((item) => item.id === activeLink.value?.id)
+      if (activeUpdated) {
+        activeLink.value = activeUpdated
+        await refreshAmountCandidates(activeUpdated)
+      }
+    }
+
+    if (result.failedCount > 0) {
+      ElMessage.warning(`批量清空完成：成功 ${result.succeededCount} 条，跳过 ${result.skippedCount} 条，失败 ${result.failedCount} 条`)
     } else {
-      ElMessage.success(`批量审核完成：成功 ${succeeded} 条`)
+      ElMessage.success(`批量清空完成：成功 ${result.succeededCount} 条，跳过 ${result.skippedCount} 条`)
+    }
+  } finally {
+    batchAmountClearLoading.value = false
+  }
+}
+
+async function runBatchDecision(rows: LifecyclePackageLinkDto[], mode: 'confirm' | 'reject', remark: string) {
+  batchReviewLoading.value = true
+  try {
+    const result = await lifecycleApi.batchReviewLinks({
+      linkIds: rows.map((row) => row.id),
+      decision: mode === 'confirm' ? 'Confirm' : 'Reject',
+      remark,
+      requiresManualReview: false,
+    })
+    for (const item of result.items) {
+      if (!item.succeeded || !item.link) continue
+      replaceRow(item.link)
+      if (activeLink.value?.id === item.link.id) activeLink.value = item.link
+    }
+
+    selectedRows.value = []
+    await table.loadData()
+    if (result.failedCount > 0 || result.skippedCount > 0) {
+      ElMessage.warning(`批量审核完成：成功 ${result.succeededCount} 条，跳过 ${result.skippedCount} 条，失败 ${result.failedCount} 条`)
+    } else {
+      ElMessage.success(`批量审核完成：成功 ${result.succeededCount} 条`)
     }
   } finally {
     batchReviewLoading.value = false
   }
 }
 
+async function autoCollectAndReviewProcurementNotice() {
+  const rawNoticeId = normalizeNumericId(awardNoticeContext.value.primary?.rawNoticeId || activeRawNoticeId.value)
+  if (!rawNoticeId) {
+    ElMessage.warning('请先筛选到单个中标/成交公告')
+    return
+  }
+
+  autoCollectLoading.value = true
+  try {
+    const result = await lifecycleApi.autoCollectProcurementNotice(rawNoticeId, {
+      autoReview: true,
+      forceRefresh: false,
+    })
+    await table.loadData()
+    if (activeLink.value) {
+      const activeUpdated = table.result.items.find((item) => item.id === activeLink.value?.id)
+      if (activeUpdated) activeLink.value = activeUpdated
+    }
+
+    if (result.failedCount > 0 || result.skippedCount > 0) {
+      ElMessage.warning(result.message || `自动处理完成：关联 ${result.updatedLinkCount} 条，自动审核 ${result.autoReview?.succeededCount || 0} 条`)
+    } else {
+      ElMessage.success(result.message || `自动处理完成：关联 ${result.updatedLinkCount} 条，自动审核 ${result.autoReview?.succeededCount || 0} 条`)
+    }
+  } finally {
+    autoCollectLoading.value = false
+  }
+}
+
 function replaceRow(updated: LifecyclePackageLinkDto) {
   const index = table.result.items.findIndex((item) => item.id === updated.id)
   if (index >= 0) table.result.items.splice(index, 1, updated)
+}
+
+async function refreshAmountCandidates(row?: LifecyclePackageLinkDto | null) {
+  const link = row || activeLink.value
+  if (!link) return
+  if (isStatusOnlyLifecycleRow(link)) {
+    link.amountCandidates = []
+    if (activeLink.value?.id === link.id) activeLink.value = { ...link, amountCandidates: [] }
+    return
+  }
+
+  amountCandidateLoading.value = true
+  try {
+    const candidates = await lifecycleApi.amountCandidates(link.id)
+    link.amountCandidates = candidates
+    if (activeLink.value?.id === link.id) activeLink.value = { ...link, amountCandidates: candidates }
+    replaceRow(link)
+  } finally {
+    amountCandidateLoading.value = false
+  }
+}
+
+async function selectAmountCandidate(row: AmountCandidateDto) {
+  const link = activeLink.value
+  if (!link) return
+
+  amountCandidateActionLoadingKey.value = amountCandidateActionKey(row, 'select')
+  try {
+    const result = await lifecycleApi.selectAmountCandidate(link.id, row.id)
+    applyAmountCandidateOperation(link, result)
+    ElMessage.success('已采用金额候选')
+  } finally {
+    amountCandidateActionLoadingKey.value = ''
+  }
+}
+
+async function rejectAmountCandidate(row: AmountCandidateDto) {
+  const link = activeLink.value
+  if (!link) return
+
+  let result: { value: string }
+  try {
+    result = await ElMessageBox.prompt('请填写排除原因。该候选仍会保留在证据链中。', '排除金额候选', {
+      inputType: 'textarea',
+      inputPlaceholder: '例如：这是预算金额，不是中标金额',
+      confirmButtonText: '排除',
+      inputValidator: (value) => !!String(value || '').trim() || '请填写排除原因',
+    }) as { value: string }
+  } catch {
+    return
+  }
+
+  amountCandidateActionLoadingKey.value = amountCandidateActionKey(row, 'reject')
+  try {
+    const operation = await lifecycleApi.rejectAmountCandidate(link.id, row.id, { reason: result.value.trim() })
+    applyAmountCandidateOperation(link, operation)
+    ElMessage.success('金额候选已排除')
+  } finally {
+    amountCandidateActionLoadingKey.value = ''
+  }
+}
+
+async function restoreAmountCandidate(row: AmountCandidateDto) {
+  const link = activeLink.value
+  if (!link) return
+
+  amountCandidateActionLoadingKey.value = amountCandidateActionKey(row, 'restore')
+  try {
+    const result = await lifecycleApi.restoreAmountCandidate(link.id, row.id)
+    applyAmountCandidateOperation(link, result)
+    ElMessage.success('金额候选已恢复')
+  } finally {
+    amountCandidateActionLoadingKey.value = ''
+  }
+}
+
+async function markAmountCandidateType(row: AmountCandidateDto, amountType: string) {
+  const link = activeLink.value
+  if (!link || !amountType || amountType === row.amountType) return
+
+  amountCandidateActionLoadingKey.value = amountCandidateActionKey(row, `type:${amountType}`)
+  try {
+    const result = await lifecycleApi.markAmountCandidateType(link.id, row.id, { amountType })
+    applyAmountCandidateOperation(link, result)
+    ElMessage.success('金额类型已更新')
+  } finally {
+    amountCandidateActionLoadingKey.value = ''
+  }
+}
+
+function handleAmountCandidateTypeCommand(row: AmountCandidateDto, command: unknown) {
+  void markAmountCandidateType(row, String(command || ''))
+}
+
+function applyAmountCandidateOperation(link: LifecyclePackageLinkDto, result: AmountCandidateOperationResultDto) {
+  link.amountCandidates = result.candidates || []
+  link.finalAwardAmount = result.finalAwardAmount ?? null
+  link.finalAwardAmountSource = result.finalAwardAmountSource || ''
+  link.updatedAt = result.linkUpdatedAt || link.updatedAt
+  if (activeLink.value?.id === link.id) activeLink.value = { ...link }
+  replaceRow(link)
+}
+
+function amountCandidateActionKey(row: AmountCandidateDto, action: string) {
+  return `${row.id}:${action}`
 }
 
 async function enqueueOutcomeSupplierReparse(item?: NoticeContextItem | null) {
@@ -390,10 +758,36 @@ async function enqueueOutcomeSupplierReparse(item?: NoticeContextItem | null) {
   }
 }
 
+async function enqueueProcurementNoticeReparse(item?: NoticeContextItem | null) {
+  const rawNoticeId = noticePromptRawNoticeId(item)
+  if (!rawNoticeId) {
+    ElMessage.warning('当前没有可重新解析的前置公告 RawNotice')
+    return
+  }
+
+  await ElMessageBox.confirm(
+    '将重新抽取该前置公告的包件、需求和金额暂存证据，并在结构化解析完成后刷新闭环列表；已入库或已审核通过的公告会被系统拦截。',
+    '确认重新解析前置公告',
+    {
+      type: 'warning',
+      confirmButtonText: '提交任务',
+    },
+  )
+
+  procurementReparseLoadingKey.value = rawNoticeId
+  try {
+    const job = await rawNoticesApi.reparse(rawNoticeId, { reason: 'Lifecycle closure procurement notice reparse' })
+    ElMessage.success(job.alreadyExists ? `前置公告重解析任务已存在：${job.jobId}` : `已提交前置公告重解析任务：${job.jobId}`)
+    startPromptJobMonitor(job.jobId, 'procurement', rawNoticeId)
+  } finally {
+    procurementReparseLoadingKey.value = ''
+  }
+}
+
 function openNoticePrompt(kind: NoticePromptKind, item?: NoticeContextItem | null) {
   const rawNoticeId = noticePromptRawNoticeId(item)
   if (!rawNoticeId) {
-    ElMessage.warning(kind === 'award' ? '当前没有可解析的中标公告 RawNotice' : '当前没有可解析的采购公告 RawNotice')
+    ElMessage.warning(kind === 'award' ? '当前没有可解析的中标公告 RawNotice' : '当前没有可解析的前置公告 RawNotice')
     return
   }
 
@@ -419,7 +813,7 @@ async function submitNoticePrompt() {
   try {
     const jobs = kind === 'award'
       ? [await lifecycleApi.enqueueOutcomeSupplierReparse(rawNoticeId, { reviewerPrompt })]
-      : await enqueueProcurementNoticePromptJobs(item, reviewerPrompt)
+      : [await enqueueProcurementNoticePromptJob(rawNoticeId, reviewerPrompt)]
     if (!jobs.length) return
 
     const jobIds = jobs.map((job) => firstDisplayText(job.jobId)).filter(Boolean)
@@ -437,20 +831,11 @@ async function submitNoticePrompt() {
   }
 }
 
-async function enqueueProcurementNoticePromptJobs(item: NoticeContextItem | null, reviewerPrompt: string) {
-  const links = (item?.links || [])
-    .filter((link) => link.linkStatus !== 'Confirmed' && link.linkStatus !== 'Rejected')
-  if (!links.length) {
-    ElMessage.warning('当前采购公告没有可辅助解析的待审核明细')
-    return []
-  }
-
-  const jobs: EnqueueJobDto[] = []
-  for (const link of links) {
-    jobs.push(await lifecycleApi.enqueueFieldEnrichment(link.id, { reviewerPrompt }))
-  }
-
-  return jobs
+async function enqueueProcurementNoticePromptJob(rawNoticeId: string, reviewerPrompt: string) {
+  return rawNoticesApi.reparse(rawNoticeId, {
+    reason: 'Lifecycle closure procurement notice reviewer-prompt reparse',
+    prompt: reviewerPrompt,
+  })
 }
 
 function noticePromptRawNoticeId(item?: NoticeContextItem | null) {
@@ -495,6 +880,12 @@ function pollPromptJobs(key: string, jobIds: string[], kind: NoticePromptKind, a
       }))
       const jobs = results.map((result) => result.job).filter((job): job is BackgroundJobDetailDto => !!job)
       if (jobs.length === jobIds.length && jobs.every(isSucceededJob)) {
+        const childJobIds = kind === 'procurement' ? extractStructuredParseJobIds(jobs, jobIds) : []
+        if (childJobIds.length) {
+          pollPromptJobs(key, childJobIds, kind, 0)
+          return
+        }
+
         clearPromptJobMonitor(key)
         await table.loadData()
         ElMessage.success(`${noticePromptKindLabel(kind)}解析任务已完成，列表已刷新`)
@@ -554,11 +945,45 @@ function normalizeJobStatus(job: BackgroundJobDetailDto) {
   return firstDisplayText(job.statusName, job.status).toLowerCase()
 }
 
-function noticePromptKindLabel(kind: NoticePromptKind) {
-  return kind === 'award' ? '中标公告' : '采购公告'
+function extractStructuredParseJobIds(jobs: BackgroundJobDetailDto[], currentJobIds: string[]) {
+  const current = new Set(currentJobIds.map((id) => String(id)))
+  const childIds = jobs
+    .map((job) => extractStructuredParseJobId(job))
+    .filter((id) => id && !current.has(id))
+  return Array.from(new Set(childIds))
 }
 
-async function openProcurementSearch(row?: LifecyclePackageLinkDto | null) {
+function extractStructuredParseJobId(job: BackgroundJobDetailDto) {
+  const sources = [job.result, job.resultPreview]
+  for (const source of sources) {
+    const id = extractStructuredParseJobIdFromText(source)
+    if (id) return id
+  }
+
+  return ''
+}
+
+function extractStructuredParseJobIdFromText(value?: string | null) {
+  if (!value) return ''
+
+  const patterns = [
+    /"structuredParseJobId"\s*:\s*"?(\d+)"?/i,
+    /\bstructuredParseJobId\s*=\s*(\d+)/i,
+    /\bstructuredParseJobId\s*:\s*(\d+)/i,
+  ]
+  for (const pattern of patterns) {
+    const normalized = normalizeNumericId(value.match(pattern)?.[1])
+    if (normalized) return normalized
+  }
+
+  return ''
+}
+
+function noticePromptKindLabel(kind: NoticePromptKind) {
+  return kind === 'award' ? '中标公告' : '前置公告'
+}
+
+async function openProcurementSearch(row?: LifecyclePackageLinkDto | null, applyToRelatedLinks = false) {
   const link = row || activeLink.value
   if (!link) return
   if (!link.projectCode) {
@@ -567,19 +992,57 @@ async function openProcurementSearch(row?: LifecyclePackageLinkDto | null) {
   }
 
   procurementSearchLink.value = link
+  procurementSearchApplyToRelatedLinks.value = applyToRelatedLinks
   procurementSearchVisible.value = true
   await searchProcurementCandidates()
+}
+
+function findProcurementRematchLink(item?: NoticeContextItem | null) {
+  const links = item?.links || []
+  return links.find((link) => !!link.projectCode && link.linkStatus !== 'Rejected') ||
+    links.find((link) => !!link.projectCode) ||
+    procurementSearchTarget.value
+}
+
+async function openProcurementRematch(item?: NoticeContextItem | null) {
+  const link = findProcurementRematchLink(item)
+  if (!link?.projectCode) {
+    ElMessage.warning('当前前置公告没有可用于重新匹配的招标编号/采购编号')
+    return
+  }
+
+  await openProcurementSearch(link, true)
 }
 
 async function searchProcurementCandidates() {
   if (!procurementSearchLink.value) return
 
+  procurementCandidates.value = []
   procurementSearchLoading.value = true
   try {
-    procurementCandidates.value = await lifecycleApi.procurementCandidates(procurementSearchLink.value.id)
+    const candidates = await lifecycleApi.procurementCandidates(procurementSearchLink.value.id)
+    const filteredCandidates = filterProcurementCandidatesForLink(candidates, procurementSearchLink.value)
+    if (filteredCandidates.length < candidates.length) {
+      ElMessage.warning(`已过滤 ${candidates.length - filteredCandidates.length} 条非当前招标/采购编号的候选公告`)
+    }
+    procurementCandidates.value = filteredCandidates
   } finally {
     procurementSearchLoading.value = false
   }
+}
+
+function filterProcurementCandidatesForLink(
+  candidates: LifecycleProcurementNoticeCandidateDto[],
+  link?: LifecyclePackageLinkDto | null,
+) {
+  const projectCode = normalizeProcurementSearchCode(firstDisplayText(link?.projectCode, link?.lotNo))
+  if (!projectCode) return candidates
+
+  return candidates.filter((candidate) => {
+    const candidateCode = normalizeProcurementSearchCode(candidate.projectCode)
+    return candidateCode === projectCode ||
+      (!!candidate.title && candidate.title.toUpperCase().includes(projectCode))
+  })
 }
 
 async function importProcurementCandidate(candidate: LifecycleProcurementNoticeCandidateDto) {
@@ -596,14 +1059,17 @@ async function importProcurementCandidate(candidate: LifecycleProcurementNoticeC
       projectCode: candidate.projectCode,
       sourceId: candidate.sourceId,
       channelId: candidate.channelId,
+      applyToRelatedLinks: procurementSearchApplyToRelatedLinks.value,
     })
 
-    if (result.rawNoticeId) {
-      ElMessage.success('采购公告已关联到闭环记录')
+    if (result.message) {
+      ElMessage.success(result.message)
+    } else if (result.rawNoticeId) {
+      ElMessage.success('前置公告已重新匹配到闭环记录')
     } else if (result.importJob) {
-      ElMessage.success(`采购公告导入任务已提交：${result.importJob.jobId}`)
+      ElMessage.success(`前置公告导入任务已提交：${result.importJob.jobId}`)
     } else {
-      ElMessage.success(result.message || '操作已提交')
+      ElMessage.success('操作已提交')
     }
 
     await table.loadData()
@@ -611,6 +1077,10 @@ async function importProcurementCandidate(candidate: LifecycleProcurementNoticeC
     if (updated) {
       procurementSearchLink.value = updated
       if (activeLink.value?.id === updated.id) activeLink.value = updated
+    }
+    if (activeLink.value) {
+      const activeUpdated = table.result.items.find((item) => item.id === activeLink.value?.id)
+      if (activeUpdated) activeLink.value = activeUpdated
     }
     procurementSearchVisible.value = false
   } finally {
@@ -620,6 +1090,21 @@ async function importProcurementCandidate(candidate: LifecycleProcurementNoticeC
 
 function candidateKey(candidate: LifecycleProcurementNoticeCandidateDto) {
   return candidate.detailUrl || String(candidate.noticeId)
+}
+
+function normalizeProcurementSearchCode(value?: unknown) {
+  let cleaned = firstDisplayText(value)
+    .replace(/[－—–]/g, '-')
+    .replace(/／/g, '/')
+    .trim()
+  if (!cleaned) return ''
+
+  cleaned = cleaned.replace(/^(?:code|项目编号|项目编码|项目代码|采购编号|采购项目编号|采购项目编码|招标编号|招标项目编号|招标项目编码|批次编号)\s*[:：=]\s*/i, '')
+  const lotPrefix = cleaned.match(/(^|[^A-Za-z0-9])([A-Za-z0-9]{6})(?=[-_/.][A-Za-z0-9])/)
+  if (lotPrefix?.[2]) return lotPrefix[2].toUpperCase()
+
+  const match = cleaned.match(/[A-Za-z0-9][A-Za-z0-9_.\-/]*/)
+  return (match?.[0] || cleaned).replace(/[。.;；,，、）)]*$/g, '').toUpperCase()
 }
 
 function scorePercent(value: number) {
@@ -770,9 +1255,88 @@ function shortTitle(value?: string | null, max = 34) {
 }
 
 function noticeMatchLabel(value?: string | null) {
-  if (value === 'InferredByProjectCode') return '按采购编号推断'
+  if (value === 'InferredByProjectCode') return '按编号推断'
   if (value === 'Linked') return '已关联'
   return value || '-'
+}
+
+function sourceNoticeTypeLabel(value?: string | null) {
+  const labels: Record<string, string> = {
+    tender_notice: '招标公告',
+    bid_invitation: '投标邀请书',
+    procurement_notice: '前置公告',
+    procurement_invitation: '采购邀请',
+    prequalification_notice: '资格预审公告',
+    change_notice: '变更公告',
+    unknown: '未知',
+  }
+  return labels[firstDisplayText(value)] || firstDisplayText(value) || '-'
+}
+
+function projectProcessTypeLabel(value?: string | null) {
+  const labels: Record<string, string> = {
+    bidding: '招标项目',
+    non_bidding: '非招标项目',
+    prequalification: '资格预审项目',
+    unknown: '未知',
+  }
+  return labels[firstDisplayText(value)] || firstDisplayText(value) || '-'
+}
+
+function finalAwardAmountText(value?: number | null) {
+  return value === null || value === undefined ? '未确认' : formatMoney(value)
+}
+
+function amountCandidateAmountText(row: AmountCandidateDto) {
+  if (row.amountValue === null || row.amountValue === undefined) return row.amountRaw || '-'
+  if (row.amountUnit === 'rate') return `${(Number(row.amountValue) * 100).toFixed(2)}%`
+  if (row.amountUnit === 'discount') return `${(Number(row.amountValue) * 10).toFixed(2)}折`
+  return formatMoney(row.amountValue)
+}
+
+function amountCandidateStatusType(status?: string | null) {
+  if (status === 'Selected') return 'success'
+  if (status === 'Recommended') return 'primary'
+  if (status === 'Rejected') return 'danger'
+  if (status === 'Unresolved') return 'warning'
+  return 'info'
+}
+
+function amountCandidateSourceText(row: AmountCandidateDto) {
+  return firstDisplayText(
+    row.evidenceSource,
+    row.sourceFileName,
+    row.sourceTitle,
+    row.sourceKind,
+  ) || '-'
+}
+
+function amountCandidateLocationText(row: AmountCandidateDto) {
+  return firstDisplayText(row.sourceLocation, row.rawAttachmentId ? `附件 ${row.rawAttachmentId}` : '', row.rawNoticeId ? `Raw ${row.rawNoticeId}` : '') || '-'
+}
+
+function amountCandidateEvidenceRowText(row: AmountCandidateDto) {
+  return firstDisplayText(row.evidenceRowText, row.evidenceText, row.contextText, row.rejectReason) || '-'
+}
+
+function amountCandidateUnitBasisText(row: AmountCandidateDto) {
+  const header = firstDisplayText(row.evidenceHeaderText)
+  const unit = firstDisplayText(row.evidenceUnitText, row.amountUnit)
+  const scale = row.evidenceUnitScale ? `换算系数 ${Number(row.evidenceUnitScale).toLocaleString('zh-CN')}` : ''
+  const tenThousand = row.evidenceHasTenThousandYuanUnit ? '表头/上下文含万元' : '未见万元表头'
+  return [header ? `表头：${header}` : '', unit ? `单位：${unit}` : '', scale, tenThousand].filter(Boolean).join('；') || '-'
+}
+
+function isPotentialFinalAmountType(amountType?: string | null) {
+  return !!amountType && finalAmountCandidateTypes.has(amountType)
+}
+
+function canSelectAmountCandidate(row: AmountCandidateDto) {
+  return !!row.amountValue &&
+    row.amountUnit !== 'rate' &&
+    row.amountUnit !== 'discount' &&
+    row.status !== 'Selected' &&
+    isPotentialFinalAmountType(row.amountType)
 }
 
 function openRawNotice(id?: string | null) {
@@ -811,7 +1375,7 @@ const lifecycleReviewTextTranslations: Record<string, string> = {
   'awarded supplier matched candidate rank 1': '中标商家匹配第一候选人',
   'awarded supplier matched candidate rank 1 final quote': '中标商家匹配第一候选人的最终报价',
   'awarded supplier had a unique candidate final quote': '中标商家只有一条可用候选报价',
-  'tender/procurement package evidence matched': '已匹配采购公告包件证据',
+  'tender/procurement package evidence matched': '已匹配前置公告包件证据',
   'award notice disclosed a direct award amount': '中标公告直接披露中标金额',
   'award amount missing; defaulted final award amount to procurement package amount': '中标金额缺失，已默认采用采购包金额',
   'defaulted procurement amounts require manual review before formal supplier analytics': '采用采购金额默认值，需要人工复核后再进入正式供应商分析',
@@ -825,8 +1389,8 @@ const lifecycleReviewTextTranslations: Record<string, string> = {
   'package number ambiguous': '包号不明确',
   'awarded supplier did not match candidate supplier': '中标商家未匹配到候选厂家',
   'candidate notice not found': '未找到候选公示',
-  'tender amount missing': '采购公告金额缺失',
-  'tender notice not found': '未找到采购公告',
+  'tender amount missing': '前置公告金额缺失',
+  'tender notice not found': '未找到前置公告',
   'manual review required': '需要人工复核',
   'manualreviewrequired': '需要人工复核',
   'amountcannotbeinferred': '金额无法推断',
@@ -846,7 +1410,7 @@ function lifecycleReviewTextLabel(value: string) {
   if (awardRate) return `中标公告披露${lifecycleAmountCodeLabel(awardRate[1])}`
 
   const tenderBase = text.match(/^Tender evidence provided\s+(.+)\.?$/i)
-  if (tenderBase) return `采购公告提供${lifecycleAmountCodeLabel(tenderBase[1])}`
+  if (tenderBase) return `前置公告提供${lifecycleAmountCodeLabel(tenderBase[1])}`
 
   return text
 }
@@ -889,6 +1453,12 @@ function firstDisplayText(...values: Array<unknown>) {
     if (text && text !== '-') return text
   }
   return ''
+}
+
+function normalizeNumericId(value: unknown) {
+  if (value === null || value === undefined) return ''
+  const text = String(value).trim()
+  return /^\d+$/.test(text) ? text : ''
 }
 
 function evidenceString(row: LifecyclePackageLinkDto, path: string[]) {
@@ -953,13 +1523,21 @@ function fieldConfidencePercent(value?: number) {
 async function loadForRoute() {
   const rawNoticeId = String(route.query.rawNoticeId || '').trim()
   if (rawNoticeId) {
-    table.query.rawNoticeId = rawNoticeId
-    table.query.pageIndex = 1
+    applyRouteRawNoticeQuery(rawNoticeId)
     await table.search()
     return
   }
 
   await table.loadData()
+}
+
+function applyRouteRawNoticeQuery(rawNoticeId: string) {
+  table.query.rawNoticeId = rawNoticeId
+  table.query.linkStatus = ''
+  table.query.matchType = ''
+  table.query.requiresManualReview = ''
+  // 从公告入口进入闭环页时要看到本公告完整明细，避免沿用上次列表页的状态筛选漏掉“仅展示/流标”行。
+  table.query.pageIndex = 1
 }
 
 onMounted(loadForRoute)
@@ -976,8 +1554,7 @@ watch(
     if (value === oldValue) return
     const rawNoticeId = String(value || '').trim()
     if (!rawNoticeId) return
-    table.query.rawNoticeId = rawNoticeId
-    table.query.pageIndex = 1
+    applyRouteRawNoticeQuery(rawNoticeId)
     await table.search()
   },
 )
@@ -1047,10 +1624,26 @@ watch(
     <section v-if="table.result.items.length" class="closure-context">
       <div class="closure-context-header">
         <div class="closure-title-block">
-          <span class="context-eyebrow">本次闭环公告</span>
+          <div class="closure-eyebrow-line">
+            <span class="context-eyebrow">本次闭环公告</span>
+            <el-tag size="small" effect="light">当前项目编号：{{ closureCurrentProjectCode }}</el-tag>
+          </div>
           <strong>{{ closureProjectSummary }}</strong>
         </div>
-        <el-tag effect="plain">{{ table.result.total }} 条中标明细</el-tag>
+        <div class="closure-context-actions">
+          <el-button
+            v-if="canApprove"
+            size="small"
+            type="primary"
+            plain
+            :icon="Edit"
+            :disabled="!closureProjectCodeEditTarget || awardNoticeContext.items.length > 1"
+            @click="openClosureProjectCodeEdit"
+          >
+            修改项目编号
+          </el-button>
+          <el-tag effect="plain">{{ table.result.total }} 条中标明细</el-tag>
+        </div>
       </div>
 
       <div class="notice-context-grid">
@@ -1094,6 +1687,16 @@ watch(
               >
                 重抽并刷新闭环
               </el-button>
+              <el-button
+                v-if="canApprove"
+                link
+                type="success"
+                :icon="Check"
+                :loading="autoCollectLoading"
+                @click="autoCollectAndReviewProcurementNotice"
+              >
+                自动补采集/审核
+              </el-button>
             </div>
             <span v-if="awardNoticeContext.items.length > 1" class="muted-text">
               当前列表包含多个中标公告，可按 RawNoticeId 筛选到单次闭环。
@@ -1106,7 +1709,7 @@ watch(
 
         <div class="notice-summary">
           <div class="notice-summary-head">
-            <span>采购公告</span>
+            <span>对应前置公告</span>
             <el-tag v-if="procurementNoticeContext.items.length > 1" type="warning" effect="light">
               当前筛选 {{ procurementNoticeContext.items.length }} 条
             </el-tag>
@@ -1129,6 +1732,25 @@ watch(
               <el-button
                 v-if="canApprove"
                 link
+                type="primary"
+                :icon="Search"
+                @click="openProcurementRematch(procurementNoticeContext.primary)"
+              >
+                重新匹配前置公告
+              </el-button>
+              <el-button
+                v-if="canApprove"
+                link
+                type="warning"
+                :icon="Refresh"
+                :loading="procurementReparseLoadingKey === procurementNoticeContext.primary.rawNoticeId"
+                @click="enqueueProcurementNoticeReparse(procurementNoticeContext.primary)"
+              >
+                重新解析内容
+              </el-button>
+              <el-button
+                v-if="canApprove"
+                link
                 type="warning"
                 :loading="noticePromptLoadingKey === noticePromptItemKey('procurement', procurementNoticeContext.primary)"
                 @click="openNoticePrompt('procurement', procurementNoticeContext.primary)"
@@ -1137,14 +1759,19 @@ watch(
               </el-button>
             </div>
             <span v-if="procurementNoticeContext.missingCount > 0" class="muted-text">
-              当前明细中仍有 {{ procurementNoticeContext.missingCount }} 条未关联采购公告。
+              当前明细中仍有 {{ procurementNoticeContext.missingCount }} 条未关联前置公告。
             </span>
           </template>
           <div v-else class="notice-missing">
-            <el-tag type="warning" effect="light">未匹配采购公告</el-tag>
+            <el-tag type="warning" effect="light">未匹配前置公告</el-tag>
             <span class="muted-text">
-              {{ procurementSearchTarget?.procurementNoticeMissingReason || '可按采购编号搜索并关联公开采购公告。' }}
+              {{ procurementSearchTarget?.procurementNoticeMissingReason || '可按招标编号/采购编号搜索并关联公开前置公告。' }}
             </span>
+            <ul v-if="procurementSearchTarget?.sourceNoticeSearchColumns?.length" class="searched-columns">
+              <li v-for="column in procurementSearchTarget.sourceNoticeSearchColumns" :key="column.sourceNoticeType">
+                {{ column.columnName }}：{{ column.matched ? '已命中' : '未命中' }}，候选数量 {{ column.candidateCount }}
+              </li>
+            </ul>
             <el-button
               v-if="procurementSearchTarget"
               link
@@ -1152,7 +1779,17 @@ watch(
               :icon="Search"
               @click="openProcurementSearch(procurementSearchTarget)"
             >
-              按采购编号搜索采购公告
+              按招标/采购编号搜索前置公告
+            </el-button>
+            <el-button
+              v-if="canApprove && procurementSearchTarget"
+              link
+              type="success"
+              :icon="Check"
+              :loading="autoCollectLoading"
+              @click="autoCollectAndReviewProcurementNotice"
+            >
+              自动补采集/审核
             </el-button>
           </div>
         </div>
@@ -1174,6 +1811,17 @@ watch(
           @click="batchConfirmSelected"
         >
           批量确认
+        </el-button>
+        <el-button
+          size="small"
+          type="warning"
+          plain
+          :icon="Delete"
+          :disabled="selectedRowsWithFinalAmount.length === 0"
+          :loading="batchAmountClearLoading"
+          @click="batchClearFinalAwardAmounts"
+        >
+          清空金额
         </el-button>
         <el-button
           size="small"
@@ -1214,7 +1862,7 @@ watch(
         <template #default="{ row }">
           <div class="main-cell">
             <strong>{{ row.projectName || '-' }}</strong>
-            <span>{{ row.projectCode || '未识别采购编号' }}</span>
+            <span>{{ row.projectCode || '未识别招标/采购编号' }}</span>
           </div>
         </template>
       </el-table-column>
@@ -1282,7 +1930,7 @@ watch(
         sortable="custom"
         :sort-order="sortOrder('AmountAsc', 'AmountDesc')"
       >
-        <template #default="{ row }">{{ formatMoney(row.finalAwardAmount) }}</template>
+        <template #default="{ row }">{{ finalAwardAmountText(row.finalAwardAmount) }}</template>
       </el-table-column>
       <el-table-column
         prop="matchScore"
@@ -1340,7 +1988,7 @@ watch(
         <template #default="{ row }">
           <el-button size="small" :icon="View" @click="openDetail(row)">详情</el-button>
           <el-button
-            v-if="canApprove"
+            v-if="canApprove && canOperateLifecycleRow(row)"
             size="small"
             type="success"
             plain
@@ -1351,7 +1999,7 @@ watch(
             确认
           </el-button>
           <el-button
-            v-if="canApprove"
+            v-if="canApprove && canOperateLifecycleRow(row)"
             size="small"
             type="danger"
             plain
@@ -1389,18 +2037,22 @@ watch(
     <el-drawer v-model="detailVisible" size="920px" title="生命周期关联详情">
       <template v-if="activeLink">
         <el-descriptions :column="2" border>
-          <el-descriptions-item label="采购编号">{{ activeLink.projectCode || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="招标编号 / 采购编号">{{ activeLink.projectCode || '-' }}</el-descriptions-item>
           <el-descriptions-item label="状态"><BidOpsStatusTag :value="activeLink.linkStatus" /></el-descriptions-item>
           <el-descriptions-item label="项目名称" :span="2">{{ activeLink.projectName || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="项目流程类型">{{ projectProcessTypeLabel(activeLink.projectProcessType) }}</el-descriptions-item>
+          <el-descriptions-item label="采购方式">{{ activeLink.procurementMethod || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="前置公告类型">{{ sourceNoticeTypeLabel(activeLink.sourceNoticeType) }}</el-descriptions-item>
+          <el-descriptions-item label="命中栏目">{{ activeLink.sourceNoticeColumn || '-' }}</el-descriptions-item>
           <el-descriptions-item label="分标编号">{{ lifecycleLotNo(activeLink) || '-' }}</el-descriptions-item>
           <el-descriptions-item label="分标名称">{{ lifecycleLotName(activeLink) || '-' }}</el-descriptions-item>
           <el-descriptions-item label="包号">{{ lifecyclePackageNo(activeLink) || '-' }}</el-descriptions-item>
           <el-descriptions-item label="包名称">{{ lifecyclePackageName(activeLink) || '-' }}</el-descriptions-item>
           <el-descriptions-item label="中标商家">{{ activeLink.supplierName || '-' }}</el-descriptions-item>
           <el-descriptions-item label="采购包金额">{{ formatMoney(activeLink.procurementPackageAmount) }}</el-descriptions-item>
-          <el-descriptions-item label="中标金额">{{ formatMoney(activeLink.finalAwardAmount) }}</el-descriptions-item>
+          <el-descriptions-item label="中标金额">{{ finalAwardAmountText(activeLink.finalAwardAmount) }}</el-descriptions-item>
           <el-descriptions-item label="金额来源">{{ formatLifecycleAmountSource(activeLink.finalAwardAmountSource) }}</el-descriptions-item>
-          <el-descriptions-item label="采购公告 Raw">
+          <el-descriptions-item label="前置公告 Raw">
             <el-button link type="primary" :disabled="!activeLink.procurementRawNoticeId" @click="openRawNotice(activeLink.procurementRawNoticeId)">
               {{ activeLink.procurementRawNoticeId || '-' }}
             </el-button>
@@ -1425,14 +2077,131 @@ watch(
         </el-descriptions>
 
         <section class="detail-section">
-          <h2>采购公告证据</h2>
+          <div class="section-heading compact">
+            <h2>金额候选池</h2>
+            <el-button
+              size="small"
+              :icon="Refresh"
+              :loading="amountCandidateLoading"
+              :disabled="isStatusOnlyLifecycleRow(activeLink)"
+              @click="refreshAmountCandidates(activeLink)"
+            >
+              刷新
+            </el-button>
+          </div>
+          <el-empty v-if="!amountCandidateLoading && !activeLink.amountCandidates?.length" description="未识别到金额候选" />
+          <template v-for="group in amountCandidateGroups" :key="group.status">
+            <div class="candidate-group-heading">
+              <h3>{{ formatCommonStatus(group.status) }}</h3>
+              <el-tag effect="light">{{ group.rows.length }} 条</el-tag>
+            </div>
+            <el-table
+              v-loading="amountCandidateLoading"
+              :data="group.rows"
+              border
+              size="small"
+              empty-text="未识别到金额候选"
+            >
+              <el-table-column label="金额" width="140" align="right">
+                <template #default="{ row }">{{ amountCandidateAmountText(row) }}</template>
+              </el-table-column>
+              <el-table-column label="类型" width="120">
+                <template #default="{ row }">{{ formatAmountCandidateType(row.amountType) }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="105">
+                <template #default="{ row }">
+                  <el-tag :type="amountCandidateStatusType(row.status)" effect="light">{{ formatCommonStatus(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="来源" min-width="170" show-overflow-tooltip>
+                <template #default="{ row }">{{ amountCandidateSourceText(row) }}</template>
+              </el-table-column>
+              <el-table-column label="位置" min-width="190" show-overflow-tooltip>
+                <template #default="{ row }">{{ amountCandidateLocationText(row) }}</template>
+              </el-table-column>
+              <el-table-column label="表头/单位" min-width="240" show-overflow-tooltip>
+                <template #default="{ row }">{{ amountCandidateUnitBasisText(row) }}</template>
+              </el-table-column>
+              <el-table-column label="分标/包/供应商" min-width="210" show-overflow-tooltip>
+                <template #default="{ row }">
+                  {{ firstDisplayText(row.lotNo, '-') }} / {{ firstDisplayText(row.packageNo, '-') }} / {{ firstDisplayText(row.supplierName, '-') }}
+                </template>
+              </el-table-column>
+              <el-table-column label="原始行" min-width="300" show-overflow-tooltip>
+                <template #default="{ row }">{{ amountCandidateEvidenceRowText(row) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="230" fixed="right">
+                <template #default="{ row }">
+                  <el-button
+                    link
+                    type="primary"
+                    size="small"
+                    :loading="amountCandidateActionLoadingKey === amountCandidateActionKey(row, 'select')"
+                    :disabled="!canApprove || !canSelectAmountCandidate(row)"
+                    @click="selectAmountCandidate(row)"
+                  >
+                    采用
+                  </el-button>
+                  <el-dropdown
+                    trigger="click"
+                    :disabled="!canApprove"
+                    @command="handleAmountCandidateTypeCommand(row, $event)"
+                  >
+                    <el-button link type="primary" size="small">标记</el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item
+                          v-for="item in amountCandidateTypeOptions"
+                          :key="item.value"
+                          :command="item.value"
+                        >
+                          {{ item.label }}
+                        </el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                  <el-button
+                    v-if="row.status !== 'Rejected'"
+                    link
+                    type="danger"
+                    size="small"
+                    :loading="amountCandidateActionLoadingKey === amountCandidateActionKey(row, 'reject')"
+                    :disabled="!canApprove"
+                    @click="rejectAmountCandidate(row)"
+                  >
+                    排除
+                  </el-button>
+                  <el-button
+                    v-else
+                    link
+                    type="primary"
+                    size="small"
+                    :loading="amountCandidateActionLoadingKey === amountCandidateActionKey(row, 'restore')"
+                    :disabled="!canApprove"
+                    @click="restoreAmountCandidate(row)"
+                  >
+                    恢复
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </template>
+        </section>
+
+        <section class="detail-section">
+          <h2>对应前置公告证据</h2>
           <div v-if="!activeLink.procurementNotice" class="missing-procurement">
             <el-alert
-              :title="activeLink.procurementNoticeMissingReason || '未匹配到采购公告 RawNotice。'"
+              :title="activeLink.procurementNoticeMissingReason || '未匹配到前置公告 RawNotice。'"
               type="warning"
               show-icon
               :closable="false"
             />
+            <ul v-if="activeLink.sourceNoticeSearchColumns?.length" class="searched-columns">
+              <li v-for="column in activeLink.sourceNoticeSearchColumns" :key="column.sourceNoticeType">
+                {{ column.columnName }}：{{ column.matched ? '已命中' : '未命中' }}，候选数量 {{ column.candidateCount }}
+              </li>
+            </ul>
             <div class="notice-actions">
               <el-button
                 type="primary"
@@ -1442,13 +2211,15 @@ watch(
                 :disabled="!activeLink.projectCode"
                 @click="openProcurementSearch(activeLink)"
               >
-                按采购编号搜索采购公告
+                按招标/采购编号搜索前置公告
               </el-button>
             </div>
           </div>
           <template v-else>
             <el-descriptions :column="2" border>
               <el-descriptions-item label="公告标题" :span="2">{{ activeLink.procurementNotice.title || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="前置公告类型">{{ sourceNoticeTypeLabel(activeLink.sourceNoticeType) }}</el-descriptions-item>
+              <el-descriptions-item label="命中栏目">{{ activeLink.sourceNoticeColumn || '-' }}</el-descriptions-item>
               <el-descriptions-item label="RawNoticeId">
                 <el-button link type="primary" @click="openNoticeRef(activeLink.procurementNotice)">
                   {{ activeLink.procurementNotice.rawNoticeId }}
@@ -1462,6 +2233,19 @@ watch(
                 </el-button>
               </el-descriptions-item>
             </el-descriptions>
+            <div class="notice-actions">
+              <el-button
+                v-if="canApprove"
+                type="primary"
+                plain
+                :icon="Search"
+                :loading="procurementSearchLoading && procurementSearchLink?.id === activeLink.id"
+                :disabled="!activeLink.projectCode"
+                @click="openProcurementSearch(activeLink, true)"
+              >
+                重新匹配前置公告
+              </el-button>
+            </div>
             <RawAttachmentTable
               class="attachment-table"
               :attachments="activeLink.procurementAttachments || []"
@@ -1614,20 +2398,21 @@ watch(
       </template>
     </el-dialog>
 
-    <el-dialog v-model="procurementSearchVisible" title="搜索采购公告" width="960px">
+    <el-dialog v-model="procurementSearchVisible" title="搜索前置公告" width="960px">
       <el-alert
         v-if="procurementSearchLink"
         class="dialog-tip"
         type="info"
         :closable="false"
         show-icon
-        :title="`按采购编号 ${procurementSearchLink.projectCode || '-'} 搜索国网公开采购/招标公告`"
+        :title="procurementSearchDialogTitle"
+        :description="procurementSearchDialogDescription"
       />
       <el-table
         v-loading="procurementSearchLoading"
         :data="procurementCandidates"
         border
-        empty-text="未搜索到采购公告候选"
+        empty-text="未搜索到前置公告候选"
       >
         <el-table-column label="公告" min-width="320" show-overflow-tooltip>
           <template #default="{ row }">
@@ -1637,15 +2422,18 @@ watch(
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="采购编号" width="130">
+        <el-table-column label="招标/采购编号" width="130">
           <template #default="{ row }">
             <el-tag :type="row.isExactProjectCodeMatch ? 'success' : 'warning'" effect="light">
               {{ row.projectCode || '-' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="类型" width="150">
-          <template #default="{ row }">{{ formatNoticeType(row.noticeType) || row.doctype }}</template>
+        <el-table-column label="前置类型" width="130">
+          <template #default="{ row }">{{ sourceNoticeTypeLabel(row.sourceNoticeType) }}</template>
+        </el-table-column>
+        <el-table-column label="命中栏目" width="130">
+          <template #default="{ row }">{{ row.sourceNoticeColumn || formatNoticeType(row.noticeType) || row.doctype }}</template>
         </el-table-column>
         <el-table-column label="发布单位" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ row.publishOrgName || '-' }}</template>
@@ -1676,7 +2464,7 @@ watch(
               :loading="procurementImportingKey === candidateKey(row)"
               @click="importProcurementCandidate(row)"
             >
-              {{ row.existingRawNoticeId ? '关联' : '导入' }}
+              {{ row.existingRawNoticeId ? (procurementSearchApplyToRelatedLinks ? '替换' : '关联') : '导入' }}
             </el-button>
           </template>
         </el-table-column>
@@ -1684,6 +2472,50 @@ watch(
       <template #footer>
         <el-button :icon="Refresh" :loading="procurementSearchLoading" @click="searchProcurementCandidates">重新搜索</el-button>
         <el-button @click="procurementSearchVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="projectCodeVisible"
+      :title="projectCodeDialogTitle"
+      width="560px"
+      append-to-body
+    >
+      <el-form label-width="120px">
+        <el-form-item label="项目编号" required>
+          <el-input
+            v-model="projectCodeForm.projectCode"
+            clearable
+            placeholder="例如：SD26-FWSQ-KJ-JN02"
+            @keyup.enter="submitProjectCodeEdit"
+          />
+        </el-form-item>
+        <el-form-item label="处理范围">
+          <el-checkbox v-model="projectCodeForm.applyToRelatedLinks">
+            应用到本次闭环公告列表
+          </el-checkbox>
+        </el-form-item>
+        <el-form-item label="前置公告">
+          <el-checkbox v-model="projectCodeForm.clearProcurementNotice">
+            清空现有前置公告关联
+          </el-checkbox>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input
+            v-model="projectCodeForm.remark"
+            type="textarea"
+            :rows="3"
+            maxlength="300"
+            show-word-limit
+            placeholder="说明本次修改依据，例如：成交公告正文写有“采购项目编号：SD26-FWSQ-KJ-JN02”"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="closeProjectCodeEdit">取消</el-button>
+        <el-button type="primary" :loading="projectCodeLoading" @click="submitProjectCodeEdit">
+          保存
+        </el-button>
       </template>
     </el-dialog>
 
@@ -1866,12 +2698,28 @@ watch(
   min-width: 0;
 }
 
+.closure-eyebrow-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .closure-title-block strong {
   overflow: hidden;
   color: #1f2d3d;
   font-size: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.closure-context-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .context-eyebrow {
@@ -1955,9 +2803,43 @@ watch(
   margin-top: 18px;
 }
 
+.section-heading.compact {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+
+.candidate-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 8px;
+}
+
+.candidate-group-heading h3 {
+  margin: 0;
+  color: #17202a;
+  font-size: 14px;
+}
+
+.subsection-title {
+  margin: 14px 0 8px;
+  color: #344054;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .missing-procurement {
   display: grid;
   gap: 12px;
+}
+
+.searched-columns {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: #687385;
+  font-size: 13px;
 }
 
 .notice-actions {

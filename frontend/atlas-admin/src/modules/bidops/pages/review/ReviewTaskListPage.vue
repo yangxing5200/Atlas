@@ -79,6 +79,7 @@ const selectedIds = computed(() => selectedRows.value.map((row) => row.id))
 const selectedLowRiskCount = computed(
   () => selectedRows.value.filter((row) => row.riskLevel === 'Low' && Number(row.highRiskIssueCount || 0) <= 0).length,
 )
+const BULK_APPROVE_BACKGROUND_THRESHOLD = 10
 
 function projectTitle(row: ReviewTaskDto) {
   return row.projectName || row.taskTitle || '-'
@@ -97,7 +98,7 @@ function qualityScore(row: ReviewTaskDto) {
 }
 
 function selectableReviewTask(row: ReviewTaskDto) {
-  return !['Approved', 'Ignored', 'Merged'].includes(String(row.status))
+  return !['InReview', 'Approved', 'Ignored', 'Merged'].includes(String(row.status))
 }
 
 function handleSelectionChange(rows: ReviewTaskDto[]) {
@@ -118,18 +119,37 @@ async function bulkApproveSelected() {
     return
   }
 
+  const ids = [...selectedIds.value]
   try {
-    await ElMessageBox.confirm(`确认批量通过 ${selectedLowRiskCount.value} 个低风险任务？非低风险任务会由服务端逐项拒绝。`, '低风险批量确认', {
-      type: 'warning',
-    })
+    await ElMessageBox.confirm(
+      `确认批量通过 ${selectedLowRiskCount.value} 个低风险任务？非低风险任务会由服务端逐项拒绝。`,
+      '低风险批量确认',
+      {
+        type: 'warning',
+      },
+    )
   } catch {
     return
   }
 
   batchActionLoading.value = true
   try {
+    if (ids.length > BULK_APPROVE_BACKGROUND_THRESHOLD) {
+      // 大批量交给 Worker 执行，避免浏览器请求承担正式入库和主数据同步的长耗时。
+      const job = await reviewTasksApi.bulkApproveJob({
+        reviewTaskIds: ids,
+        expectedRiskLevel: 'Low',
+        maxHighRiskIssueCount: 0,
+        remark: '低风险批量确认',
+      })
+      ElMessage.success(`已创建后台批量审核任务：${job.jobTypeName || job.jobType}`)
+      selectedRows.value = []
+      await table.loadData()
+      return
+    }
+
     const result = await reviewTasksApi.bulkApprove({
-      reviewTaskIds: selectedIds.value,
+      reviewTaskIds: ids,
       expectedRiskLevel: 'Low',
       maxHighRiskIssueCount: 0,
       remark: '低风险批量确认',

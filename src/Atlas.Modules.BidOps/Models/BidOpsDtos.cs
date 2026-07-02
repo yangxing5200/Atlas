@@ -437,6 +437,7 @@ public sealed class ReviewTaskDetailDto
     public NoticeStagingDto? Notice { get; set; }
     public ReviewBuyerInfoDto? Buyer { get; set; }
     public List<OutcomeSupplierRecordDto> OutcomeSuppliers { get; set; } = [];
+    public List<AmountCandidateDto> AmountCandidates { get; set; } = [];
     public List<PackageStagingDto> Packages { get; set; } = [];
     public List<ProcurementDetailStagingDto> ProcurementDetails { get; set; } = [];
     public List<ReviewQualityIssueDto> QualityIssues { get; set; } = [];
@@ -750,6 +751,121 @@ public sealed class OutcomeSupplierRecordDto
     public DateTime CreatedAt { get; set; }
 }
 
+public sealed class AmountCandidateDto
+{
+    public long Id { get; set; }
+    public long? LifecyclePackageLinkId { get; set; }
+    public long RawNoticeId { get; set; }
+    public long? ResultRawNoticeId { get; set; }
+    public long? RawAttachmentId { get; set; }
+    public long? OutcomeSupplierRecordId { get; set; }
+    public long? ProcurementDetailStagingId { get; set; }
+    public long? TenderPackageId { get; set; }
+    public string SourceKind { get; set; } = string.Empty;
+    public string SourceNoticeType { get; set; } = string.Empty;
+    public string SourceTitle { get; set; } = string.Empty;
+    public string SourceFileName { get; set; } = string.Empty;
+    public string SourceLocation { get; set; } = string.Empty;
+    public string ProjectCode { get; set; } = string.Empty;
+    public string ProjectName { get; set; } = string.Empty;
+    public string LotNo { get; set; } = string.Empty;
+    public string LotName { get; set; } = string.Empty;
+    public string PackageNo { get; set; } = string.Empty;
+    public string PackageName { get; set; } = string.Empty;
+    public string SupplierName { get; set; } = string.Empty;
+    public string AmountType { get; set; } = string.Empty;
+    public string AmountRaw { get; set; } = string.Empty;
+    public decimal? AmountValue { get; set; }
+    public string AmountUnit { get; set; } = string.Empty;
+    public string Currency { get; set; } = string.Empty;
+    public bool IsPotentialFinalAmount { get; set; }
+    public decimal Confidence { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public string RejectReason { get; set; } = string.Empty;
+    public string EvidenceText { get; set; } = string.Empty;
+    public string ContextText { get; set; } = string.Empty;
+    public string EvidenceSource { get; set; } = string.Empty;
+    public string EvidenceRowText { get; set; } = string.Empty;
+    public string EvidenceHeaderText { get; set; } = string.Empty;
+    public string EvidenceUnitText { get; set; } = string.Empty;
+    public decimal? EvidenceUnitScale { get; set; }
+    public bool EvidenceHasTenThousandYuanUnit { get; set; }
+    public string ManualRemark { get; set; } = string.Empty;
+    public long? SelectedBy { get; set; }
+    public DateTime? SelectedAt { get; set; }
+    public long? RejectedBy { get; set; }
+    public DateTime? RejectedAt { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+}
+
+public sealed class AmountCandidateOperationResultDto
+{
+    public AmountCandidateDto Candidate { get; set; } = new();
+    public List<AmountCandidateDto> Candidates { get; set; } = [];
+    public decimal? FinalAwardAmount { get; set; }
+    public string FinalAwardAmountSource { get; set; } = string.Empty;
+    public DateTime? LinkUpdatedAt { get; set; }
+}
+
+public sealed class LifecycleFinalAwardAmountClearItemDto
+{
+    public long LinkId { get; set; }
+    public bool Succeeded { get; set; }
+    public bool Skipped { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public decimal? FinalAwardAmount { get; set; }
+    public string FinalAwardAmountSource { get; set; } = string.Empty;
+    public DateTime? LinkUpdatedAt { get; set; }
+}
+
+public sealed class LifecycleFinalAwardAmountClearResultDto
+{
+    public int RequestedCount { get; set; }
+    public int SucceededCount { get; set; }
+    public int FailedCount { get; set; }
+    public int SkippedCount { get; set; }
+    public List<LifecycleFinalAwardAmountClearItemDto> Items { get; set; } = [];
+}
+
+public sealed class LifecyclePackageLinkBatchReviewItemDto
+{
+    public long LinkId { get; set; }
+    public bool Succeeded { get; set; }
+    public bool Skipped { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public LifecyclePackageLinkDto? Link { get; set; }
+}
+
+public sealed class LifecyclePackageLinkBatchReviewResultDto
+{
+    public int RequestedCount { get; set; }
+    public int SucceededCount { get; set; }
+    public int FailedCount { get; set; }
+    public int SkippedCount { get; set; }
+    public List<LifecyclePackageLinkBatchReviewItemDto> Items { get; set; } = [];
+}
+
+public sealed class LifecycleAmountCandidateDebugDto
+{
+    public long LinkId { get; set; }
+    public long? AwardRawNoticeId { get; set; }
+    public long? CandidateRawNoticeId { get; set; }
+    public long? ProcurementRawNoticeId { get; set; }
+    public int PublicReviewVisibleCandidateCount { get; set; }
+    public int ClosureVisibleCandidateCount { get; set; }
+    public List<LifecycleAmountCandidateStatusCountDto> StatusCounts { get; set; } = [];
+    public List<string> DifferenceReasons { get; set; } = [];
+    public List<string> FilterReasons { get; set; } = [];
+    public List<AmountCandidateDto> Candidates { get; set; } = [];
+}
+
+public sealed class LifecycleAmountCandidateStatusCountDto
+{
+    public string Status { get; set; } = string.Empty;
+    public int Count { get; set; }
+}
+
 public sealed class LifecyclePackageLinkDto
 {
     public long Id { get; set; }
@@ -767,7 +883,17 @@ public sealed class LifecyclePackageLinkDto
     public List<RawAttachmentDto> ProcurementAttachments { get; set; } = [];
     public List<RawAttachmentDto> CandidateAttachments { get; set; } = [];
     public List<RawAttachmentDto> AwardAttachments { get; set; } = [];
+    public List<OutcomeSupplierRecordDto> AwardOutcomeSuppliers { get; set; } = [];
+    public List<OutcomeSupplierRecordDto> CandidateOutcomeSuppliers { get; set; } = [];
+    public List<ProcurementDetailStagingDto> ProcurementDetails { get; set; } = [];
+    public List<AmountCandidateDto> AmountCandidates { get; set; } = [];
     public string ProcurementNoticeMissingReason { get; set; } = string.Empty;
+    public string SourceNoticeType { get; set; } = string.Empty;
+    public string SourceNoticeColumn { get; set; } = string.Empty;
+    public string ProjectProcessType { get; set; } = string.Empty;
+    public string ProcurementMethod { get; set; } = string.Empty;
+    public List<string> PreferredSourceNoticeTypes { get; set; } = [];
+    public List<LifecycleSourceNoticeSearchColumnDto> SourceNoticeSearchColumns { get; set; } = [];
     public string ProjectCode { get; set; } = string.Empty;
     public string ProjectName { get; set; } = string.Empty;
     public string LotNo { get; set; } = string.Empty;
@@ -804,11 +930,23 @@ public sealed class LifecycleNoticeRefDto
     public string MatchSource { get; set; } = string.Empty;
 }
 
+public sealed class LifecycleSourceNoticeSearchColumnDto
+{
+    public string SourceNoticeType { get; set; } = string.Empty;
+    public string ColumnName { get; set; } = string.Empty;
+    public int CandidateCount { get; set; }
+    public bool Matched { get; set; }
+}
+
 public sealed class LifecycleProcurementNoticeCandidateDto
 {
     public long SourceId { get; set; }
     public long? ChannelId { get; set; }
     public string NoticeType { get; set; } = string.Empty;
+    public string SourceNoticeType { get; set; } = string.Empty;
+    public string SourceNoticeColumn { get; set; } = string.Empty;
+    public string ProjectProcessType { get; set; } = string.Empty;
+    public string ProcurementMethod { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string DetailUrl { get; set; } = string.Empty;
     public string Doctype { get; set; } = string.Empty;
@@ -827,6 +965,42 @@ public sealed class LifecycleProcurementNoticeImportResultDto
 {
     public long? RawNoticeId { get; set; }
     public EnqueueJobDto? ImportJob { get; set; }
+    public int UpdatedLinkCount { get; set; }
+    public string Message { get; set; } = string.Empty;
+}
+
+public sealed class LifecycleProcurementAutoCollectItemDto
+{
+    public long LinkId { get; set; }
+    public string ProjectCode { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public int CandidateCount { get; set; }
+    public int UpdatedLinkCount { get; set; }
+    public long? RawNoticeId { get; set; }
+    public string DetailUrl { get; set; } = string.Empty;
+}
+
+public sealed class LifecycleProcurementAutoCollectResultDto
+{
+    public long AwardRawNoticeId { get; set; }
+    public int EligibleLinkCount { get; set; }
+    public int CandidateCount { get; set; }
+    public int CollectedCount { get; set; }
+    public int ExistingLinkedCount { get; set; }
+    public int UpdatedLinkCount { get; set; }
+    public int SkippedCount { get; set; }
+    public int FailedCount { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public List<LifecycleProcurementAutoCollectItemDto> Items { get; set; } = [];
+    public LifecyclePackageLinkBatchReviewResultDto? AutoReview { get; set; }
+}
+
+public sealed class LifecycleProjectCodeUpdateResultDto
+{
+    public LifecyclePackageLinkDto Link { get; set; } = new();
+    public int UpdatedLinkCount { get; set; }
+    public string ProjectCode { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
 }
 

@@ -1,5 +1,6 @@
 using Atlas.Modules.BidOps.Ai.Evidence;
 using Atlas.Modules.BidOps.Entities.Outcomes;
+using Atlas.Modules.BidOps.Services;
 
 namespace Atlas.Modules.BidOps.Ai;
 
@@ -64,6 +65,7 @@ public static class BidOpsOutcomeSupplierExtractBuilder
             .Concat(wrappedExtracts)
             .Concat(candidateExtracts)
             .Concat(awardExtracts)
+            .Select(NormalizeNonAwardStatusExtract)
             .Where(x => !string.IsNullOrWhiteSpace(x.SupplierName))
             .ToList();
 
@@ -88,6 +90,38 @@ public static class BidOpsOutcomeSupplierExtractBuilder
         return extracts
             .Where(x => !IsLessSpecificPackageContextDuplicate(x, extracts))
             .ToList();
+    }
+
+    private static BidOpsOutcomeSupplierExtract NormalizeNonAwardStatusExtract(BidOpsOutcomeSupplierExtract extract)
+    {
+        if (!BidOpsOutcomeRecordPolicy.IsNonAwardOutcome(
+                extract.SupplierName,
+                extract.OutcomeType,
+                extract.EvidenceText))
+        {
+            return extract;
+        }
+
+        // “流标状态”是公告状态展示行，不是可闭环的中标供应商；金额字段不能跟随表格误入。
+        return new BidOpsOutcomeSupplierExtract
+        {
+            SupplierName = extract.SupplierName,
+            OutcomeType = BidOpsOutcomeTypes.Failed,
+            Rank = extract.Rank,
+            AwardAmount = null,
+            ProcurementAgencyServiceFeeAmount = null,
+            ExtractionOrder = extract.ExtractionOrder,
+            ProjectName = extract.ProjectName,
+            ProjectCode = extract.ProjectCode,
+            BuyerName = extract.BuyerName,
+            LotNo = extract.LotNo,
+            LotName = extract.LotName,
+            PackageNo = extract.PackageNo,
+            PackageName = extract.PackageName,
+            Category = extract.Category,
+            EvidenceText = extract.EvidenceText,
+            Confidence = Math.Min(extract.Confidence, 0.72m)
+        };
     }
 
     private static bool IsLessSpecificPackageContextDuplicate(
@@ -123,11 +157,22 @@ public static class BidOpsOutcomeSupplierExtractBuilder
         string sourceUrl,
         string text)
     {
-        var signal = $"{title}\n{noticeType}\n{sourceUrl}\n{text[..Math.Min(text.Length, 2000)]}";
-        if (ContainsAny(signal, "CandidateAnnouncement", "中标候选人", "成交候选人", "候选人公示", "推荐的中标", "推荐的成交"))
+        var explicitSignal = $"{title}\n{noticeType}\n{sourceUrl}";
+        if (ContainsAny(explicitSignal, "AwardAnnouncement", "ResultAnnouncement", "doci-win", "中标结果", "成交结果", "中标公告", "成交公告", "中标人名单"))
+            return NoticeOutcomeKind.Award;
+
+        if (ContainsAny(explicitSignal, "CandidateAnnouncement", "中标候选人", "成交候选人", "候选人公示", "推荐的中标", "推荐的成交"))
             return NoticeOutcomeKind.Candidate;
 
-        if (ContainsAny(signal, "AwardAnnouncement", "ResultAnnouncement", "doci-win", "中标结果", "成交结果", "中标公告", "成交公告"))
+        var bodySignal = text[..Math.Min(text.Length, 2000)];
+        // 中标公告正文常写“中标候选人公示活动已经结束”，不能因此降级成候选人公示。
+        if (ContainsAny(bodySignal, "中标公告", "成交公告", "中标结果", "成交结果", "中标人名单", "现将中标人名单公告"))
+            return NoticeOutcomeKind.Award;
+
+        if (ContainsAny(bodySignal, "CandidateAnnouncement", "中标候选人", "成交候选人", "候选人公示", "推荐的中标", "推荐的成交"))
+            return NoticeOutcomeKind.Candidate;
+
+        if (ContainsAny(bodySignal, "AwardAnnouncement", "ResultAnnouncement"))
             return NoticeOutcomeKind.Award;
 
         return NoticeOutcomeKind.Unknown;
@@ -139,6 +184,7 @@ public static class BidOpsOutcomeSupplierExtractBuilder
         {
             BidOpsOutcomeTypes.Awarded => BidOpsOutcomeTypes.Awarded,
             BidOpsOutcomeTypes.Shortlisted => BidOpsOutcomeTypes.Shortlisted,
+            BidOpsOutcomeTypes.Failed => BidOpsOutcomeTypes.Failed,
             _ => BidOpsOutcomeTypes.Candidate
         };
     }

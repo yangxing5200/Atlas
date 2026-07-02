@@ -152,6 +152,9 @@ switch (command)
     case "ensure-bidops-ai-settings":
         await EnsureBidOpsAiSettingsTableAsync(tenantConnection);
         break;
+    case "ensure-bidops-amount-candidates":
+        await EnsureBidOpsAmountCandidateTableAsync(tenantConnection);
+        break;
     case "repair-bidops-data-quality":
         await RepairBidOpsDataQualityAsync(tenantConnection, args);
         break;
@@ -174,7 +177,7 @@ switch (command)
         break;
     default:
         throw new InvalidOperationException(
-            $"Unknown command '{command}'. Use: init-global, create-tenant-db, seed-demo, seed-local, seed-production, ensure-background-job-cancellation, seed-bidops-state-grid, bidops-status, inspect-bidops-sgcc-notices, ensure-bidops-opportunities, ensure-bidops-suppliers, ensure-bidops-matching, ensure-bidops-pursuits, ensure-bidops-outcomes, ensure-bidops-procurement-details, ensure-bidops-crawl-progress, ensure-bidops-ai-settings, repair-bidops-data-quality, reset-bidops-derived-data, approve-bidops-pending, cancel-bidops-crawl-jobs, reset-demo.");
+            $"Unknown command '{command}'. Use: init-global, create-tenant-db, seed-demo, seed-local, seed-production, ensure-background-job-cancellation, seed-bidops-state-grid, bidops-status, inspect-bidops-sgcc-notices, ensure-bidops-opportunities, ensure-bidops-suppliers, ensure-bidops-matching, ensure-bidops-pursuits, ensure-bidops-outcomes, ensure-bidops-procurement-details, ensure-bidops-crawl-progress, ensure-bidops-ai-settings, ensure-bidops-amount-candidates, repair-bidops-data-quality, reset-bidops-derived-data, approve-bidops-pending, cancel-bidops-crawl-jobs, reset-demo.");
 }
 
 static async Task InitGlobalAsync(string globalConnection)
@@ -1193,6 +1196,107 @@ CREATE TABLE IF NOT EXISTS `bidops_runtime_setting` (
         "CREATE UNIQUE INDEX `IX_bidops_runtime_setting_TenantId_SettingKey` ON `bidops_runtime_setting` (`TenantId`, `SettingKey`);");
 
     Console.WriteLine("BidOps AI runtime settings local table is ready.");
+}
+
+static async Task EnsureBidOpsAmountCandidateTableAsync(string tenantConnection)
+{
+    await using var tenantDb = CreateTenantDbContext(tenantConnection);
+
+    await tenantDb.Database.ExecuteSqlRawAsync("""
+CREATE TABLE IF NOT EXISTS `bidops_amount_candidate` (
+    `Id` bigint NOT NULL,
+    `LifecyclePackageLinkId` bigint NULL,
+    `RawNoticeId` bigint NOT NULL,
+    `ResultRawNoticeId` bigint NULL,
+    `RawAttachmentId` bigint NULL,
+    `OutcomeSupplierRecordId` bigint NULL,
+    `ProcurementDetailStagingId` bigint NULL,
+    `TenderPackageId` bigint NULL,
+    `SourceKind` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
+    `SourceNoticeType` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
+    `SourceTitle` varchar(500) CHARACTER SET utf8mb4 NOT NULL,
+    `SourceFileName` varchar(300) CHARACTER SET utf8mb4 NOT NULL,
+    `SourceLocation` varchar(256) CHARACTER SET utf8mb4 NOT NULL,
+    `ProjectCode` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+    `ProjectName` varchar(500) CHARACTER SET utf8mb4 NOT NULL,
+    `LotNo` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+    `LotName` varchar(300) CHARACTER SET utf8mb4 NOT NULL,
+    `PackageNo` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+    `PackageName` varchar(500) CHARACTER SET utf8mb4 NOT NULL,
+    `SupplierName` varchar(300) CHARACTER SET utf8mb4 NOT NULL,
+    `AmountType` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
+    `AmountRaw` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+    `AmountValue` decimal(18,6) NULL,
+    `AmountUnit` varchar(32) CHARACTER SET utf8mb4 NOT NULL,
+    `Currency` varchar(16) CHARACTER SET utf8mb4 NOT NULL,
+    `IsPotentialFinalAmount` tinyint(1) NOT NULL,
+    `Confidence` decimal(5,4) NOT NULL,
+    `Status` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
+    `RejectReason` varchar(500) CHARACTER SET utf8mb4 NOT NULL,
+    `EvidenceText` varchar(2000) CHARACTER SET utf8mb4 NOT NULL,
+    `ContextText` varchar(1000) CHARACTER SET utf8mb4 NOT NULL,
+    `ManualRemark` varchar(1000) CHARACTER SET utf8mb4 NOT NULL,
+    `SelectedBy` bigint NULL,
+    `SelectedAt` datetime(6) NULL,
+    `RejectedBy` bigint NULL,
+    `RejectedAt` datetime(6) NULL,
+    `SourceHash` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
+    `CreatedAt` datetime(6) NOT NULL,
+    `UpdatedAt` datetime(6) NULL,
+    `TenantId` bigint NOT NULL,
+    CONSTRAINT `PK_bidops_amount_candidate` PRIMARY KEY (`Id`)
+) CHARACTER SET=utf8mb4;
+""");
+
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_amount_candidate",
+        "IX_bidops_amount_candidate_Tenant_CreatedAt",
+        "CREATE INDEX `IX_bidops_amount_candidate_Tenant_CreatedAt` ON `bidops_amount_candidate` (`TenantId`, `CreatedAt`);");
+
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_amount_candidate",
+        "IX_bidops_amount_candidate_Tenant_SourceHash",
+        "CREATE UNIQUE INDEX `IX_bidops_amount_candidate_Tenant_SourceHash` ON `bidops_amount_candidate` (`TenantId`, `SourceHash`);");
+
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_amount_candidate",
+        "IX_bidops_amount_candidate_Tenant_RawNotice_Status",
+        "CREATE INDEX `IX_bidops_amount_candidate_Tenant_RawNotice_Status` ON `bidops_amount_candidate` (`TenantId`, `RawNoticeId`, `Status`);");
+
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_amount_candidate",
+        "IX_bidops_amount_candidate_Tenant_Link_Status",
+        "CREATE INDEX `IX_bidops_amount_candidate_Tenant_Link_Status` ON `bidops_amount_candidate` (`TenantId`, `LifecyclePackageLinkId`, `Status`);");
+
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_amount_candidate",
+        "IX_bidops_amount_candidate_Tenant_Result_Package",
+        "CREATE INDEX `IX_bidops_amount_candidate_Tenant_Result_Package` ON `bidops_amount_candidate` (`TenantId`, `ResultRawNoticeId`, `PackageNo`);");
+
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_amount_candidate",
+        "IX_bidops_amount_candidate_Tenant_OutcomeRecord",
+        "CREATE INDEX `IX_bidops_amount_candidate_Tenant_OutcomeRecord` ON `bidops_amount_candidate` (`TenantId`, `OutcomeSupplierRecordId`);");
+
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_amount_candidate",
+        "IX_bidops_amount_candidate_Tenant_ProcDetail",
+        "CREATE INDEX `IX_bidops_amount_candidate_Tenant_ProcDetail` ON `bidops_amount_candidate` (`TenantId`, `ProcurementDetailStagingId`);");
+
+    await CreateIndexIfMissingAsync(
+        tenantDb,
+        "bidops_amount_candidate",
+        "IX_bidops_amount_candidate_Tenant_Attachment",
+        "CREATE INDEX `IX_bidops_amount_candidate_Tenant_Attachment` ON `bidops_amount_candidate` (`TenantId`, `RawAttachmentId`);");
+
+    Console.WriteLine("BidOps amount candidate local table is ready.");
 }
 
 static async Task CreateIndexIfMissingAsync(DbContext db, string tableName, string indexName, string createSql)
@@ -3206,6 +3310,7 @@ Atlas.LocalSetup commands:
   ensure-bidops-procurement-details Ensure local BidOps procurement detail and lifecycle link tables exist.
   ensure-bidops-crawl-progress Ensure local BidOps crawl progress tables and channel schedule columns exist.
   ensure-bidops-ai-settings Ensure local BidOps AI runtime setting table exists.
+  ensure-bidops-amount-candidates Ensure local BidOps amount candidate table exists.
   repair-bidops-data-quality Dry-run BidOps quality repair; add --confirm to update derived quality data.
   reset-bidops-derived-data Dry-run BidOps derived data cleanup; add --confirm to delete in dev DB.
   approve-bidops-pending Approve one pending BidOps review task in the local tenant.

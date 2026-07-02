@@ -58,9 +58,18 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
             ct);
 
         BidOpsReverseClosureDebugResult? lifecycleRefresh = null;
+        LifecycleProcurementAutoCollectResultDto? procurementAutoCollect = null;
         if (payload.RefreshLifecycleLinks && result.IsOutcomeNotice)
         {
             lifecycleRefresh = await _closure.ReverseCloseRawNoticeAndPersistAsync(payload.RawNoticeId, ct);
+            procurementAutoCollect = await _closure.AutoCollectProcurementNoticesForAwardAsync(
+                payload.RawNoticeId,
+                new LifecycleProcurementAutoCollectRequest
+                {
+                    AutoReview = true
+                },
+                context.Job.Id,
+                ct);
         }
 
         _logger.LogInformation(
@@ -92,6 +101,21 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
                     persistedLifecycleLinkCount = lifecycleRefresh.PersistedLifecycleLinks.Count,
                     failureCount = lifecycleRefresh.Failures.Count,
                     warningCount = lifecycleRefresh.Warnings.Count
+                },
+            procurementAutoCollect = procurementAutoCollect == null
+                ? null
+                : new
+                {
+                    procurementAutoCollect.EligibleLinkCount,
+                    procurementAutoCollect.CandidateCount,
+                    procurementAutoCollect.CollectedCount,
+                    procurementAutoCollect.ExistingLinkedCount,
+                    procurementAutoCollect.UpdatedLinkCount,
+                    procurementAutoCollect.SkippedCount,
+                    procurementAutoCollect.FailedCount,
+                    autoReviewedCount = procurementAutoCollect.AutoReview?.SucceededCount ?? 0,
+                    procurementAutoCollect.Message,
+                    procurementAutoCollect.Items
                 },
             aiResponses = _diagnostics.Entries,
             deepSeekResponses = _diagnostics.Entries

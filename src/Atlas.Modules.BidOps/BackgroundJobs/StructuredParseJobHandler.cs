@@ -3,6 +3,7 @@ using System.Text.Json;
 using Atlas.BackgroundTasks;
 using Atlas.Core.Services;
 using Atlas.Modules.BidOps.Ai;
+using Atlas.Modules.BidOps.Ai.Evidence;
 using Atlas.Modules.BidOps.Models;
 using Atlas.Modules.BidOps.Services;
 using Microsoft.Extensions.Logging;
@@ -19,6 +20,7 @@ public sealed class StructuredParseJobHandler : IBackgroundJobHandler
     private readonly IExecutionIdentityAccessor _identityAccessor;
     private readonly IBidOpsAiParsingService _parsing;
     private readonly IBidOpsOutcomeSupplierExtractionService _outcomeSupplierExtraction;
+    private readonly IBidOpsReverseLifecycleClosureService _closure;
     private readonly IBidOpsAiCallDiagnostics _diagnostics;
     private readonly ILogger<StructuredParseJobHandler> _logger;
     private readonly IBackgroundJobProgressReporter? _progress;
@@ -27,6 +29,7 @@ public sealed class StructuredParseJobHandler : IBackgroundJobHandler
         IExecutionIdentityAccessor identityAccessor,
         IBidOpsAiParsingService parsing,
         IBidOpsOutcomeSupplierExtractionService outcomeSupplierExtraction,
+        IBidOpsReverseLifecycleClosureService closure,
         IBidOpsAiCallDiagnostics diagnostics,
         ILogger<StructuredParseJobHandler> logger,
         IBackgroundJobProgressReporter? progress = null)
@@ -34,6 +37,7 @@ public sealed class StructuredParseJobHandler : IBackgroundJobHandler
         _identityAccessor = identityAccessor ?? throw new ArgumentNullException(nameof(identityAccessor));
         _parsing = parsing ?? throw new ArgumentNullException(nameof(parsing));
         _outcomeSupplierExtraction = outcomeSupplierExtraction ?? throw new ArgumentNullException(nameof(outcomeSupplierExtraction));
+        _closure = closure ?? throw new ArgumentNullException(nameof(closure));
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _progress = progress;
@@ -71,6 +75,21 @@ public sealed class StructuredParseJobHandler : IBackgroundJobHandler
             payload.RawNoticeId);
 
         var outcome = await TryExtractOutcomeSuppliersAsync(context, payload.RawNoticeId, ct);
+        BidOpsReverseClosureDebugResult? lifecycleRefresh = null;
+        LifecycleProcurementAutoCollectResultDto? procurementAutoCollect = null;
+        if (outcome?.IsOutcomeNotice == true)
+        {
+            lifecycleRefresh = await _closure.ReverseCloseRawNoticeAndPersistAsync(payload.RawNoticeId, ct);
+            procurementAutoCollect = await _closure.AutoCollectProcurementNoticesForAwardAsync(
+                payload.RawNoticeId,
+                new LifecycleProcurementAutoCollectRequest
+                {
+                    AutoReview = true
+                },
+                context.Job.Id,
+                ct);
+        }
+
         return BackgroundJobExecutionResult.Success(JsonSerializer.Serialize(new
         {
             rawNoticeId = payload.RawNoticeId,
@@ -78,6 +97,30 @@ public sealed class StructuredParseJobHandler : IBackgroundJobHandler
             reviewTaskId,
             reviewerPrompt = !string.IsNullOrWhiteSpace(payload.ReviewerPrompt),
             outcomeSupplierExtraction = outcome,
+            lifecycleRefresh = lifecycleRefresh == null
+                ? null
+                : new
+                {
+                    closureCount = lifecycleRefresh.Closures.Count,
+                    persistedLifecycleLinkCount = lifecycleRefresh.PersistedLifecycleLinks.Count,
+                    failureCount = lifecycleRefresh.Failures.Count,
+                    warningCount = lifecycleRefresh.Warnings.Count
+                },
+            procurementAutoCollect = procurementAutoCollect == null
+                ? null
+                : new
+                {
+                    procurementAutoCollect.EligibleLinkCount,
+                    procurementAutoCollect.CandidateCount,
+                    procurementAutoCollect.CollectedCount,
+                    procurementAutoCollect.ExistingLinkedCount,
+                    procurementAutoCollect.UpdatedLinkCount,
+                    procurementAutoCollect.SkippedCount,
+                    procurementAutoCollect.FailedCount,
+                    autoReviewedCount = procurementAutoCollect.AutoReview?.SucceededCount ?? 0,
+                    procurementAutoCollect.Message,
+                    procurementAutoCollect.Items
+                },
             aiResponses = _diagnostics.Entries,
             deepSeekResponses = _diagnostics.Entries
         }, JsonOptions), BackgroundJobResultStorageLimits.AiDiagnosticsMaxCharacters);

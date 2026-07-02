@@ -49,6 +49,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
     private readonly IRepository<ProcurementDetail> _procurementDetails;
     private readonly IRepository<RequirementItem> _requirements;
     private readonly IBidOpsFileStore _fileStore;
+    private readonly IBidOpsAmountCandidateService _amountCandidates;
     private readonly ILogger<BidOpsQueryService> _logger;
 
     public BidOpsQueryService(
@@ -72,6 +73,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         IRepository<ProcurementDetail> procurementDetails,
         IRepository<RequirementItem> requirements,
         IBidOpsFileStore fileStore,
+        IBidOpsAmountCandidateService amountCandidates,
         ILogger<BidOpsQueryService> logger)
     {
         _sources = sources ?? throw new ArgumentNullException(nameof(sources));
@@ -94,6 +96,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         _procurementDetails = procurementDetails ?? throw new ArgumentNullException(nameof(procurementDetails));
         _requirements = requirements ?? throw new ArgumentNullException(nameof(requirements));
         _fileStore = fileStore ?? throw new ArgumentNullException(nameof(fileStore));
+        _amountCandidates = amountCandidates ?? throw new ArgumentNullException(nameof(amountCandidates));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -754,6 +757,9 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             : await ListOutcomeSupplierRecordsForReviewAsync(raw.Id, ct);
         if (outcomeRecords.Count == 0 && raw != null)
             outcomeRecords = await BuildOutcomeSupplierPreviewRecordsAsync(raw, ct);
+        var amountCandidates = raw == null
+            ? []
+            : (await _amountCandidates.EnsureRawNoticeAmountCandidatesAsync(raw.Id, ct)).ToList();
 
         var buyer = await BuildReviewBuyerInfoAsync(notice, raw, packageDtos.Count, outcomeRecords, ct);
         var qualityIssues = await ListReviewQualityIssuesAsync(task.Id, ct);
@@ -769,6 +775,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             Notice = notice == null ? null : Map(notice),
             Buyer = buyer,
             OutcomeSuppliers = outcomeRecords.Select(MapOutcomeRecord).ToList(),
+            AmountCandidates = amountCandidates,
             Packages = packageDtos,
             ProcurementDetails = procurementDetailDtos,
             QualityIssues = qualityIssues.Select(MapReviewQualityIssue).ToList(),
@@ -1048,6 +1055,13 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             if (string.IsNullOrWhiteSpace(supplierName) || string.IsNullOrWhiteSpace(supplierNameNormalized))
                 continue;
 
+            var outcomeType = NormalizeOutcomeType(extract.OutcomeType);
+            outcomeType = BidOpsOutcomeRecordPolicy.NormalizeOutcomeTypeForPersistence(
+                outcomeType,
+                supplierName,
+                extract.EvidenceText,
+                outcomeType);
+            var isNonAwardOutcome = outcomeType == BidOpsOutcomeTypes.Failed;
             records.Add(new OutcomeSupplierRecord
             {
                 TenantId = raw.TenantId,
@@ -1066,10 +1080,10 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
                 Category = Truncate(extract.Category, 128),
                 SupplierName = supplierName,
                 SupplierNameNormalized = supplierNameNormalized,
-                OutcomeType = NormalizeOutcomeType(extract.OutcomeType),
+                OutcomeType = outcomeType,
                 Rank = extract.Rank,
-                AwardAmount = extract.AwardAmount,
-                ProcurementAgencyServiceFeeAmount = extract.ProcurementAgencyServiceFeeAmount,
+                AwardAmount = isNonAwardOutcome ? null : extract.AwardAmount,
+                ProcurementAgencyServiceFeeAmount = isNonAwardOutcome ? null : extract.ProcurementAgencyServiceFeeAmount,
                 ExtractionOrder = records.Count,
                 Currency = "CNY",
                 EvidenceText = Truncate(extract.EvidenceText, 2000),
@@ -2304,7 +2318,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             SupplierName = record.SupplierName,
             OutcomeType = record.OutcomeType,
             Rank = record.Rank,
-            AwardAmount = record.AwardAmount,
+            AwardAmount = BidOpsOutcomeRecordPolicy.DisplayAwardAmount(record),
             ProcurementAgencyServiceFeeAmount = record.ProcurementAgencyServiceFeeAmount,
             ExtractionOrder = record.ExtractionOrder,
             Currency = record.Currency,
@@ -2320,6 +2334,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         {
             BidOpsOutcomeTypes.Awarded => BidOpsOutcomeTypes.Awarded,
             BidOpsOutcomeTypes.Shortlisted => BidOpsOutcomeTypes.Shortlisted,
+            BidOpsOutcomeTypes.Failed => BidOpsOutcomeTypes.Failed,
             _ => BidOpsOutcomeTypes.Candidate
         };
     }

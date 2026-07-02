@@ -52,7 +52,7 @@ public sealed class AttachmentProcessJobHandler : IBackgroundJobHandler
             ? $"bidops:structured-parse:{BidOpsSystemValues.StructuredParserVersion}:{payload.TenantId}:{payload.RawNoticeId}:{contentHash}"
             : $"bidops:structured-parse:{BidOpsSystemValues.StructuredParserVersion}:{payload.TenantId}:{payload.RawNoticeId}:manual-reparse:{payload.ForceParseRunId}";
 
-        await _jobs.EnqueueAsync(
+        var parseJob = await _jobs.EnqueueAsync(
             new EnqueueBackgroundJobRequest<StructuredParseJobPayload>
             {
                 JobType = BidOpsBackgroundJobTypes.StructuredParse,
@@ -84,7 +84,8 @@ public sealed class AttachmentProcessJobHandler : IBackgroundJobHandler
             result.Extracted,
             result.Failed);
 
+        // 前置公告重解析从闭环页发起时，前端需要继续等待这里派生出的结构化解析子任务。
         return BackgroundJobExecutionResult.Success(
-            $"rawNoticeId={result.RawNoticeId};projectCode={projectCode};attachments={result.Total};downloaded={result.Downloaded};extracted={result.Extracted};failed={result.Failed}");
+            $"rawNoticeId={result.RawNoticeId};projectCode={projectCode};attachments={result.Total};downloaded={result.Downloaded};extracted={result.Extracted};failed={result.Failed};structuredParseJobId={parseJob.JobId};structuredParseAlreadyExists={parseJob.AlreadyExists}");
     }
 }

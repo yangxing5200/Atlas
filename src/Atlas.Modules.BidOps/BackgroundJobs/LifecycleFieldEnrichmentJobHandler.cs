@@ -2,6 +2,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using Atlas.BackgroundTasks;
 using Atlas.Core.Services;
+using Atlas.Modules.BidOps.Ai;
 using Atlas.Modules.BidOps.Models;
 using Atlas.Modules.BidOps.Services;
 using Microsoft.Extensions.Logging;
@@ -17,15 +18,18 @@ public sealed class LifecycleFieldEnrichmentJobHandler : IBackgroundJobHandler
 
     private readonly IExecutionIdentityAccessor _identityAccessor;
     private readonly IBidOpsReverseLifecycleClosureService _closure;
+    private readonly IBidOpsAiCallDiagnostics _diagnostics;
     private readonly ILogger<LifecycleFieldEnrichmentJobHandler> _logger;
 
     public LifecycleFieldEnrichmentJobHandler(
         IExecutionIdentityAccessor identityAccessor,
         IBidOpsReverseLifecycleClosureService closure,
+        IBidOpsAiCallDiagnostics diagnostics,
         ILogger<LifecycleFieldEnrichmentJobHandler> logger)
     {
         _identityAccessor = identityAccessor ?? throw new ArgumentNullException(nameof(identityAccessor));
         _closure = closure ?? throw new ArgumentNullException(nameof(closure));
+        _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -45,7 +49,14 @@ public sealed class LifecycleFieldEnrichmentJobHandler : IBackgroundJobHandler
             !string.IsNullOrWhiteSpace(payload.ReviewerPrompt));
 
         return BackgroundJobExecutionResult.Success(
-            JsonSerializer.Serialize(result, JsonOptions),
+            JsonSerializer.Serialize(new
+            {
+                linkId = payload.LinkId,
+                reviewerPrompt = !string.IsNullOrWhiteSpace(payload.ReviewerPrompt),
+                result,
+                aiResponses = _diagnostics.Entries,
+                deepSeekResponses = _diagnostics.Entries
+            }, JsonOptions),
             BackgroundJobResultStorageLimits.AiDiagnosticsMaxCharacters);
     }
 }

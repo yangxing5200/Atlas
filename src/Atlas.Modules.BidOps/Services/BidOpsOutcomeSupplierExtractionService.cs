@@ -147,13 +147,20 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
             var packageNoForHash = FirstMeaningful(extract.PackageNo, package.PackageNo);
             var lotNoForHash = FirstMeaningful(extract.LotNo, package.LotNo);
             var lotNameForHash = FirstMeaningful(extract.LotName, package.LotName);
+            var outcomeType = NormalizeOutcomeType(extract.OutcomeType);
+            outcomeType = BidOpsOutcomeRecordPolicy.NormalizeOutcomeTypeForPersistence(
+                outcomeType,
+                supplierName,
+                extract.EvidenceText,
+                outcomeType);
+            var isNonAwardOutcome = outcomeType == BidOpsOutcomeTypes.Failed;
             var sourceHash = ComputeSourceHash(
                 raw.Id.ToString(),
                 supplierNameNormalized,
                 packageNoForHash,
                 lotNoForHash,
                 lotNameForHash,
-                extract.OutcomeType,
+                outcomeType,
                 extract.Rank?.ToString() ?? string.Empty,
                 extract.EvidenceText);
 
@@ -185,10 +192,10 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
                 Category = Truncate(FirstMeaningful(extract.Category, package.Category), 128),
                 SupplierName = supplierName,
                 SupplierNameNormalized = supplierNameNormalized,
-                OutcomeType = NormalizeOutcomeType(extract.OutcomeType),
+                OutcomeType = outcomeType,
                 Rank = extract.Rank,
-                AwardAmount = extract.AwardAmount,
-                ProcurementAgencyServiceFeeAmount = extract.ProcurementAgencyServiceFeeAmount,
+                AwardAmount = isNonAwardOutcome ? null : extract.AwardAmount,
+                ProcurementAgencyServiceFeeAmount = isNonAwardOutcome ? null : extract.ProcurementAgencyServiceFeeAmount,
                 ExtractionOrder = extractionOrder++,
                 Currency = "CNY",
                 EvidenceText = Truncate(extract.EvidenceText, 2000),
@@ -200,7 +207,12 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
 
         if (records.Count > 0)
         {
-            var syncResult = await _organizationMasterData.SyncOutcomeOrganizationsAsync(raw.TenantId, records, ct);
+            var syncRecords = records
+                .Where(record => !BidOpsOutcomeRecordPolicy.IsNonAwardOutcome(record))
+                .ToList();
+            var syncResult = syncRecords.Count == 0
+                ? new BidOpsOrganizationMasterDataSyncResult()
+                : await _organizationMasterData.SyncOutcomeOrganizationsAsync(raw.TenantId, syncRecords, ct);
             await _records.AddRangeAsync(records, raw.TenantId, ct);
             await ApplyOutcomeQualityIfReviewTaskExistsAsync(raw, records, ct);
             await _unitOfWork.SaveChangesAsync(raw.TenantId, ct);
@@ -505,6 +517,9 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
 
         var rowLotName = NormalizeEvidenceText(row.LotName);
         var strongLotName = NormalizeEvidenceText(strong.LotName);
+        if (!HasMeaningfulLotContext(row))
+            return true;
+
         return string.IsNullOrWhiteSpace(rowLotName) ||
                string.IsNullOrWhiteSpace(strongLotName) ||
                string.Equals(rowLotName, strongLotName, StringComparison.OrdinalIgnoreCase);
@@ -533,6 +548,10 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         BidOpsOutcomeSupplierExtract extract,
         string sourceText)
     {
+        var isNonAwardOutcome = BidOpsOutcomeRecordPolicy.IsNonAwardOutcome(
+            extract.SupplierName,
+            extract.OutcomeType,
+            extract.EvidenceText);
         var lotNo = string.IsNullOrWhiteSpace(extract.LotNo) ||
             IsExplicitLotNoSupported(extract.LotNo, extract.EvidenceText, sourceText)
             ? extract.LotNo
@@ -562,7 +581,8 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
             packageName = string.Empty;
         }
 
-        if (string.Equals(lotNo, extract.LotNo, StringComparison.Ordinal) &&
+        if (!isNonAwardOutcome &&
+            string.Equals(lotNo, extract.LotNo, StringComparison.Ordinal) &&
             string.Equals(projectName, extract.ProjectName, StringComparison.Ordinal) &&
             string.Equals(packageName, extract.PackageName, StringComparison.Ordinal))
         {
@@ -572,10 +592,10 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         return new BidOpsOutcomeSupplierExtract
         {
             SupplierName = extract.SupplierName,
-            OutcomeType = extract.OutcomeType,
+            OutcomeType = isNonAwardOutcome ? BidOpsOutcomeTypes.Failed : extract.OutcomeType,
             Rank = extract.Rank,
-            AwardAmount = extract.AwardAmount,
-            ProcurementAgencyServiceFeeAmount = extract.ProcurementAgencyServiceFeeAmount,
+            AwardAmount = isNonAwardOutcome ? null : extract.AwardAmount,
+            ProcurementAgencyServiceFeeAmount = isNonAwardOutcome ? null : extract.ProcurementAgencyServiceFeeAmount,
             ExtractionOrder = extract.ExtractionOrder,
             ProjectName = projectName,
             ProjectCode = extract.ProjectCode,
@@ -596,6 +616,10 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
     {
         foreach (var line in SplitSourceLines(evidenceText))
         {
+            var pipeDelimitedLotNo = ExtractPipeDelimitedLotNo(line);
+            if (!string.IsNullOrWhiteSpace(pipeDelimitedLotNo))
+                return pipeDelimitedLotNo;
+
             var match = Regex.Match(
                 line,
                 @"^\s*(?:\d+(?:[.、]|\s+)\s*)?(?<value>[A-Za-z0-9]{3,}(?:[-_/][A-Za-z0-9]{2,}){2,})\s+(?:包\s*[A-Za-z0-9一二三四五六七八九十]+|第?\s*[A-Za-z0-9一二三四五六七八九十]+\s*包)",
@@ -630,9 +654,57 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         if (string.IsNullOrWhiteSpace(normalizedLotNo))
             return true;
 
+        // 国网 HTML 表格证据会被整理成 “分标编号 | 分标名称 | 包号 | ...”，这类行本身就是可信来源。
         return ContainsLabeledLotNo(evidenceText, normalizedLotNo) ||
+               ContainsPipeDelimitedLotNoEvidence(evidenceText, normalizedLotNo) ||
                ContainsLabeledLotNo(sourceText, normalizedLotNo) ||
                ContainsLotNoInLabeledTable(sourceText, normalizedLotNo);
+    }
+
+    private static bool ContainsPipeDelimitedLotNoEvidence(string? text, string normalizedLotNo)
+    {
+        foreach (var line in SplitSourceLines(text))
+        {
+            var lotNo = ExtractPipeDelimitedLotNo(line);
+            if (string.Equals(NormalizeCode(lotNo), normalizedLotNo, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string ExtractPipeDelimitedLotNo(string? line)
+    {
+        if (string.IsNullOrWhiteSpace(line) || !line.Contains('|', StringComparison.Ordinal))
+            return string.Empty;
+
+        var cells = line
+            .Split('|', StringSplitOptions.TrimEntries)
+            .Select(BidOpsTextQuality.CleanExtractedValue)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToArray();
+        if (cells.Length < 3)
+            return string.Empty;
+
+        var normalizedFirst = NormalizeCode(cells[0]);
+        if (string.IsNullOrWhiteSpace(normalizedFirst) ||
+            !Regex.IsMatch(normalizedFirst, @"^[A-Z0-9]{3,}(?:[-_/][A-Z0-9]{2,}){2,}$", RegexOptions.CultureInvariant))
+        {
+            return string.Empty;
+        }
+
+        return cells.Skip(1).Take(4).Any(LooksLikePackageNo)
+            ? cells[0]
+            : string.Empty;
+    }
+
+    private static bool LooksLikePackageNo(string value)
+    {
+        var normalized = BidOpsTextQuality.CleanExtractedValue(value);
+        return Regex.IsMatch(
+            normalized,
+            @"^(?:包\s*[A-Za-z0-9一二三四五六七八九十]+|第?\s*[A-Za-z0-9一二三四五六七八九十]+\s*包)$",
+            RegexOptions.CultureInvariant);
     }
 
     private static bool ContainsLabeledLotNo(string? text, string normalizedLotNo)
@@ -817,6 +889,15 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         if (HasUnbalancedLeadingBracket(supplierName))
             return false;
 
+        if (BidOpsOutcomeRecordPolicy.IsNonAwardOutcome(
+                supplierName,
+                extract.OutcomeType,
+                extract.EvidenceText))
+        {
+            // 流标/废标行没有供应商实体，但仍要作为结果公告状态行展示。
+            return HasPackageIdentity(extract) || !string.IsNullOrWhiteSpace(extract.EvidenceText);
+        }
+
         if (LooksLikeNonAwardEvidence(extract.EvidenceText))
             return false;
 
@@ -885,6 +966,13 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
             "检测院",
             "计量院",
             "研究所",
+            // 成交公告中可能出现个体工商户或服务门店，不能只按“公司/院所”判断供应商实体。
+            "服务部",
+            "经营部",
+            "营业部",
+            "门市部",
+            "商行",
+            "工作室",
             "事务所",
             "大学",
             "学院",
@@ -1112,6 +1200,7 @@ public sealed class BidOpsOutcomeSupplierExtractionService : IBidOpsOutcomeSuppl
         {
             BidOpsOutcomeTypes.Awarded => BidOpsOutcomeTypes.Awarded,
             BidOpsOutcomeTypes.Shortlisted => BidOpsOutcomeTypes.Shortlisted,
+            BidOpsOutcomeTypes.Failed => BidOpsOutcomeTypes.Failed,
             _ => BidOpsOutcomeTypes.Candidate
         };
     }

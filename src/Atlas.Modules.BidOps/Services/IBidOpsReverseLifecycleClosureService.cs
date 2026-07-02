@@ -19,6 +19,17 @@ public interface IBidOpsReverseLifecycleClosureService
         LifecycleProcurementNoticeImportRequest request,
         CancellationToken ct = default);
 
+    Task<LifecycleProcurementAutoCollectResultDto> AutoCollectProcurementNoticesForAwardAsync(
+        long awardRawNoticeId,
+        LifecycleProcurementAutoCollectRequest request,
+        long? backgroundJobId = null,
+        CancellationToken ct = default);
+
+    Task<LifecycleProjectCodeUpdateResultDto> UpdateLifecycleProjectCodeAsync(
+        long linkId,
+        LifecycleProjectCodeUpdateRequest request,
+        CancellationToken ct = default);
+
     Task<EnqueueJobDto> EnqueueReverseClosureAsync(
         BidOpsReverseCloseJobRequest request,
         CancellationToken ct = default);
@@ -53,6 +64,14 @@ public interface IBidOpsReverseLifecycleClosureService
     Task<LifecyclePackageLinkDto> ConfirmLifecycleLinkAsync(
         long linkId,
         LifecyclePackageLinkDecisionRequest request,
+        CancellationToken ct = default);
+
+    Task<LifecyclePackageLinkBatchReviewResultDto> BatchReviewLifecycleLinksAsync(
+        LifecyclePackageLinkBatchReviewRequest request,
+        CancellationToken ct = default);
+
+    Task<LifecyclePackageLinkBatchReviewResultDto> AutoReviewLifecycleLinksForAwardAsync(
+        long awardRawNoticeId,
         CancellationToken ct = default);
 
     Task<LifecyclePackageLinkDto> RejectLifecycleLinkAsync(
