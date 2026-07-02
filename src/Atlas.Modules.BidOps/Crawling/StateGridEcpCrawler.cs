@@ -210,7 +210,7 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
         var channels = await LoadEnabledStateGridChannelsAsync(source.Id, ct);
         var menus = BuildPublicNoticeSearchMenus(request.MenuIds, channels);
         var pageSize = Math.Clamp(request.PageSize <= 0 ? 10 : request.PageSize, 1, MaxNoticesPerScanLimit);
-        var candidates = new List<StateGridEcpPublicNoticeCandidate>();
+        var exactSearchCandidates = new List<StateGridEcpPublicNoticeCandidate>();
 
         foreach (var menu in menus)
         {
@@ -223,26 +223,54 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
                 ct,
                 projectCode: projectCode);
 
-            AddPublicNoticeCandidates(candidates, source, channels, menu, page);
+            AddPublicNoticeCandidates(exactSearchCandidates, source, channels, menu, page);
         }
 
-        if (candidates.Count < pageSize)
+        // 手动重匹配依赖国网返回的 code；聚合记录可快速识别接口默认列表或菜单参数异常。
+        _logger.LogInformation(
+            "State Grid public notice exact search projectCode {ProjectCode}, menus {MenuIds}, candidates {CandidateCount}, returned {ReturnedCodes}.",
+            projectCode,
+            string.Join(",", menus.Select(x => x.MenuId)),
+            exactSearchCandidates.Count,
+            string.Join(
+                ",",
+                exactSearchCandidates
+                    .Take(10)
+                    .Select(x => $"{x.MenuId}:{x.ProjectCode}:{x.NoticeId}")));
+
+        var exactProjectCodeCandidates = exactSearchCandidates
+            .Where(candidate => ProjectCodeEquals(candidate.ProjectCode, projectCode))
+            .ToList();
+        // 国网 noteList 的 purOrgCode 是采购/项目编号精确检索；命中后只保留 code 精确一致的结果，避免接口返回默认列表时混入其它省份公告。
+        if (exactProjectCodeCandidates.Count > 0)
+            return SortPublicNoticeCandidates(exactProjectCodeCandidates, projectCode, pageSize);
+
+        var fallbackCandidates = new List<StateGridEcpPublicNoticeCandidate>();
+        foreach (var menu in menus)
         {
-            foreach (var menu in menus)
-            {
-                ct.ThrowIfCancellationRequested();
-                var page = await FetchApiNoticeListAsync(
-                    source,
-                    menu.MenuId,
-                    pageIndex: 1,
-                    pageSize,
-                    ct,
-                    keyword: projectCode);
+            ct.ThrowIfCancellationRequested();
+            var page = await FetchApiNoticeListAsync(
+                source,
+                menu.MenuId,
+                pageIndex: 1,
+                pageSize,
+                ct,
+                keyword: projectCode);
 
-                AddPublicNoticeCandidates(candidates, source, channels, menu, page);
-            }
+            AddPublicNoticeCandidates(fallbackCandidates, source, channels, menu, page);
         }
 
+        var fallbackMatches = fallbackCandidates
+            .Where(candidate => CandidateMatchesProjectCode(candidate, projectCode))
+            .ToList();
+        return SortPublicNoticeCandidates(fallbackMatches, projectCode, pageSize);
+    }
+
+    private static IReadOnlyList<StateGridEcpPublicNoticeCandidate> SortPublicNoticeCandidates(
+        IEnumerable<StateGridEcpPublicNoticeCandidate> candidates,
+        string projectCode,
+        int pageSize)
+    {
         return candidates
             .GroupBy(x => x.DetailUrl, StringComparer.OrdinalIgnoreCase)
             .Select(x => x
@@ -255,6 +283,13 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
             .ThenByDescending(x => x.PublishTime ?? DateTime.MinValue)
             .Take(pageSize)
             .ToArray();
+    }
+
+    private static bool CandidateMatchesProjectCode(StateGridEcpPublicNoticeCandidate candidate, string projectCode)
+    {
+        return ProjectCodeEquals(candidate.ProjectCode, projectCode) ||
+               (!string.IsNullOrWhiteSpace(candidate.Title) &&
+                candidate.Title.Contains(projectCode, StringComparison.OrdinalIgnoreCase));
     }
 
     private static void AddPublicNoticeCandidates(
@@ -771,6 +806,18 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
             @"^(?:code|项目编号|项目编码|采购编号|招标编号|批次编号|采购项目编号|招标项目编号)\s*[:：=]\s*",
             string.Empty,
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        cleaned = cleaned
+            .Replace('－', '-')
+            .Replace('—', '-')
+            .Replace('–', '-')
+            .Replace('／', '/');
+        var lotPrefix = Regex.Match(
+            cleaned,
+            @"(?<![A-Za-z0-9])(?<value>[A-Za-z0-9]{6})(?=[\-_/.][A-Za-z0-9])",
+            RegexOptions.CultureInvariant);
+        if (lotPrefix.Success)
+            return lotPrefix.Groups["value"].Value.ToUpperInvariant();
+
         var match = Regex.Match(cleaned, @"[A-Za-z0-9][A-Za-z0-9_.\-/]*", RegexOptions.CultureInvariant);
         return match.Success
             ? match.Value.ToUpperInvariant()
@@ -829,8 +876,6 @@ public sealed class StateGridEcpCrawler : IStateGridEcpCrawler
             firstPageMenuId = menuId,
             purOrgStatus = string.Empty,
             purOrgCode,
-            purType = string.Empty,
-            noticeType = string.Empty,
             orgId = string.Empty,
             key = searchKey,
             orgName = string.Empty

@@ -149,6 +149,20 @@ public sealed class BidOpsLifecycleFieldEnrichmentAiService : IBidOpsLifecycleFi
             requestBody["max_tokens"] = settings.MaxOutputTokens.Value;
 
         var requestJson = JsonSerializer.Serialize(requestBody, JsonOptions);
+        var requestSummaryJson = BidOpsAiDiagnosticRequestCapture.BuildHttpSummary(
+            "LifecycleFieldEnrichment",
+            settings.Provider,
+            settings.Model,
+            FormatEndpointForLog(settings.Endpoint),
+            prompt,
+            requestJson,
+            new Dictionary<string, object?>
+            {
+                ["linkId"] = request.LinkId,
+                ["reviewerPrompt"] = !string.IsNullOrWhiteSpace(request.ReviewerPrompt)
+            });
+        var requestBodyJson = BidOpsAiDiagnosticRequestCapture.CaptureHttpRequestBody(requestJson);
+        var requestPrompt = BidOpsAiDiagnosticRequestCapture.CapturePrompt(prompt);
         var stopwatch = Stopwatch.StartNew();
         _logger.LogInformation(
             "BidOps lifecycle field enrichment AI request started. provider={Provider}, model={Model}, endpoint={Endpoint}, linkId={LinkId}, promptChars={PromptChars}, reviewerPrompt={HasReviewerPrompt}.",
@@ -182,7 +196,10 @@ public sealed class BidOpsLifecycleFieldEnrichmentAiService : IBidOpsLifecycleFi
             content.Length,
             finishReason,
             responseText,
-            content));
+            content,
+            requestSummaryJson,
+            requestBodyJson,
+            requestPrompt));
 
         if ((int)response.StatusCode == 429)
             BidOpsAiHttpRateLimiter.RegisterRateLimit(settings, _configuration);
@@ -219,13 +236,21 @@ public sealed class BidOpsLifecycleFieldEnrichmentAiService : IBidOpsLifecycleFi
             prompt.Length,
             !string.IsNullOrWhiteSpace(request.ReviewerPrompt));
 
-        var result = await _codexCli!.ExecuteJsonAsync(
-            BidOpsCodexCliSettingsFactory.CreateRequest(
-                settings,
-                BidOpsAiUse.OutcomeSuppliers,
-                BuildCodexExtractionPrompt(prompt),
-                FieldEnrichmentJsonSchema),
-            ct);
+        var codexRequest = BidOpsCodexCliSettingsFactory.CreateRequest(
+            settings,
+            BidOpsAiUse.OutcomeSuppliers,
+            BuildCodexExtractionPrompt(prompt),
+            FieldEnrichmentJsonSchema);
+        var requestSummaryJson = BidOpsAiDiagnosticRequestCapture.BuildCodexCliSummary(
+            codexRequest,
+            new Dictionary<string, object?>
+            {
+                ["linkId"] = request.LinkId,
+                ["reviewerPrompt"] = !string.IsNullOrWhiteSpace(request.ReviewerPrompt)
+            });
+        var requestBodyJson = BidOpsAiDiagnosticRequestCapture.CaptureCodexCliRequestBody(codexRequest);
+        var requestPrompt = BidOpsAiDiagnosticRequestCapture.CapturePrompt(codexRequest.Prompt);
+        var result = await _codexCli!.ExecuteJsonAsync(codexRequest, ct);
         stopwatch.Stop();
 
         var content = BidOpsAiJsonLogging.ExtractJsonObjectOrRaw(result.AssistantContent);
@@ -241,7 +266,10 @@ public sealed class BidOpsLifecycleFieldEnrichmentAiService : IBidOpsLifecycleFi
             content.Length,
             $"exit:{result.ExitCode}",
             combinedResponse,
-            content));
+            content,
+            requestSummaryJson,
+            requestBodyJson,
+            requestPrompt));
 
         if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(content))
             return EmptyResult($"Codex CLI 字段补全失败：exit {result.ExitCode}");

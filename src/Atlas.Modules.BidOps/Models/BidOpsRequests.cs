@@ -349,6 +349,70 @@ public sealed class LifecyclePackageLinkDecisionRequest
     public bool? RequiresManualReview { get; set; }
 }
 
+public sealed class LifecyclePackageLinkBatchReviewRequest
+{
+    public List<long> LinkIds { get; set; } = [];
+
+    public string Decision { get; set; } = "Confirm";
+
+    public string Remark { get; set; } = string.Empty;
+
+    public bool? RequiresManualReview { get; set; }
+}
+
+public sealed class LifecycleProcurementAutoCollectRequest
+{
+    public bool ForceRefresh { get; set; }
+
+    public bool AutoReview { get; set; } = true;
+}
+
+public sealed class AmountCandidateSelectRequest
+{
+    public string? Remark { get; set; }
+}
+
+public sealed class AmountCandidateMarkTypeRequest
+{
+    public string AmountType { get; set; } = string.Empty;
+
+    public string? Remark { get; set; }
+}
+
+public sealed class AmountCandidateRejectRequest
+{
+    public string Reason { get; set; } = string.Empty;
+}
+
+public sealed class AmountCandidateRestoreRequest
+{
+    public string? Remark { get; set; }
+}
+
+public sealed class LifecycleFinalAwardAmountClearRequest
+{
+    public List<long> LinkIds { get; set; } = [];
+
+    public string? Reason { get; set; }
+}
+
+public sealed class LifecycleProjectCodeUpdateRequest
+{
+    public string ProjectCode { get; set; } = string.Empty;
+
+    public string? Remark { get; set; }
+
+    /// <summary>
+    /// 是否同步同一中标/成交公告下尚未定稿的相关闭环行。
+    /// </summary>
+    public bool ApplyToRelatedLinks { get; set; }
+
+    /// <summary>
+    /// 项目编号变化后是否清空现有前置公告关联，避免继续展示旧编号匹配出的错误公告。
+    /// </summary>
+    public bool ClearProcurementNotice { get; set; }
+}
+
 public sealed class LifecycleFieldEnrichmentRequest
 {
     public string? ReviewerPrompt { get; set; }
@@ -374,6 +438,11 @@ public sealed class LifecycleProcurementNoticeImportRequest
     public long? ChannelId { get; set; }
 
     public bool ForceRefresh { get; set; }
+
+    /// <summary>
+    /// 是否将同一结果公告下当前指向同一个前置 RawNotice 的待审核闭环行一起替换。
+    /// </summary>
+    public bool ApplyToRelatedLinks { get; set; }
 }
 
 public sealed class ReparseRawNoticeRequest

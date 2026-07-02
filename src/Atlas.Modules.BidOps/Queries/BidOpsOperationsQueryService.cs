@@ -341,7 +341,8 @@ public sealed class BidOpsOperationsQueryService : IBidOpsOperationsQueryService
 
     public async Task<IReadOnlyList<BidOpsChannelHealthDto>> GetChannelHealthAsync(CancellationToken ct = default)
     {
-        var now = DateTime.Now;
+        // 采集器写入 LastScanTime/LastSuccessTime 时使用 UTC，健康检查必须同一时间基准，避免本地时区把刚成功的任务误判为超期。
+        var now = DateTime.UtcNow;
         var since24h = now.AddHours(-24);
         var sourceQuery = await _sources.QueryDataScopeAsync(BidOpsDataResources.CrawlSource, AtlasDataScopeType.AllTenant, ct);
         var channelQuery = await _channels.QueryDataScopeAsync(BidOpsDataResources.CrawlSource, AtlasDataScopeType.AllTenant, ct);

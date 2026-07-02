@@ -13,10 +13,14 @@ namespace Atlas.Modules.BidOps.Controllers;
 public sealed class LifecycleDebugController : ControllerBase
 {
     private readonly IBidOpsReverseLifecycleClosureService _closure;
+    private readonly IBidOpsAmountCandidateService _amountCandidates;
 
-    public LifecycleDebugController(IBidOpsReverseLifecycleClosureService closure)
+    public LifecycleDebugController(
+        IBidOpsReverseLifecycleClosureService closure,
+        IBidOpsAmountCandidateService amountCandidates)
     {
         _closure = closure ?? throw new ArgumentNullException(nameof(closure));
+        _amountCandidates = amountCandidates ?? throw new ArgumentNullException(nameof(amountCandidates));
     }
 
     [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewRead)]
@@ -26,6 +30,85 @@ public sealed class LifecycleDebugController : ControllerBase
         CancellationToken ct)
     {
         return Ok(await _closure.SearchLifecycleLinksAsync(query, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewRead)]
+    [HttpGet("links/{linkId:long}/amount-candidates")]
+    public async Task<ActionResult<IReadOnlyList<AmountCandidateDto>>> ListAmountCandidatesAsync(
+        long linkId,
+        CancellationToken ct)
+    {
+        return Ok(await _amountCandidates.EnsureLifecycleAmountCandidatesAsync(linkId, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewRead)]
+    [HttpGet("links/{linkId:long}/amount-candidates/debug")]
+    public async Task<ActionResult<LifecycleAmountCandidateDebugDto>> DiagnoseAmountCandidatesAsync(
+        long linkId,
+        CancellationToken ct)
+    {
+        return Ok(await _amountCandidates.DiagnoseLifecycleAmountCandidatesAsync(linkId, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpPost("links/{linkId:long}/amount-candidates/{candidateId:long}/select")]
+    public async Task<ActionResult<AmountCandidateOperationResultDto>> SelectAmountCandidateAsync(
+        long linkId,
+        long candidateId,
+        [FromBody] AmountCandidateSelectRequest? request,
+        CancellationToken ct)
+    {
+        return Ok(await _amountCandidates.SelectCandidateAsync(
+            linkId,
+            candidateId,
+            request ?? new AmountCandidateSelectRequest(),
+            ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpPost("links/{linkId:long}/amount-candidates/{candidateId:long}/mark-type")]
+    public async Task<ActionResult<AmountCandidateOperationResultDto>> MarkAmountCandidateTypeAsync(
+        long linkId,
+        long candidateId,
+        [FromBody] AmountCandidateMarkTypeRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _amountCandidates.MarkCandidateTypeAsync(linkId, candidateId, request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpPost("links/{linkId:long}/amount-candidates/{candidateId:long}/reject")]
+    public async Task<ActionResult<AmountCandidateOperationResultDto>> RejectAmountCandidateAsync(
+        long linkId,
+        long candidateId,
+        [FromBody] AmountCandidateRejectRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _amountCandidates.RejectCandidateAsync(linkId, candidateId, request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpPost("links/{linkId:long}/amount-candidates/{candidateId:long}/restore")]
+    public async Task<ActionResult<AmountCandidateOperationResultDto>> RestoreAmountCandidateAsync(
+        long linkId,
+        long candidateId,
+        [FromBody] AmountCandidateRestoreRequest? request,
+        CancellationToken ct)
+    {
+        return Ok(await _amountCandidates.RestoreCandidateAsync(
+            linkId,
+            candidateId,
+            request ?? new AmountCandidateRestoreRequest(),
+            ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpPost("links/final-award-amount/clear")]
+    public async Task<ActionResult<LifecycleFinalAwardAmountClearResultDto>> ClearFinalAwardAmountsAsync(
+        [FromBody] LifecycleFinalAwardAmountClearRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _amountCandidates.ClearFinalAwardAmountsAsync(request, ct));
     }
 
     [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewRead)]
@@ -45,6 +128,30 @@ public sealed class LifecycleDebugController : ControllerBase
         CancellationToken ct)
     {
         return Accepted(await _closure.ImportProcurementNoticeCandidateAsync(linkId, request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.CrawlImport)]
+    [HttpPost("award-notices/{rawNoticeId:long}/procurement-auto-collect")]
+    public async Task<ActionResult<LifecycleProcurementAutoCollectResultDto>> AutoCollectProcurementNoticeAsync(
+        long rawNoticeId,
+        [FromBody] LifecycleProcurementAutoCollectRequest? request,
+        CancellationToken ct)
+    {
+        return Ok(await _closure.AutoCollectProcurementNoticesForAwardAsync(
+            rawNoticeId,
+            request ?? new LifecycleProcurementAutoCollectRequest(),
+            null,
+            ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpPost("links/{linkId:long}/project-code")]
+    public async Task<ActionResult<LifecycleProjectCodeUpdateResultDto>> UpdateLifecycleProjectCodeAsync(
+        long linkId,
+        [FromBody] LifecycleProjectCodeUpdateRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _closure.UpdateLifecycleProjectCodeAsync(linkId, request, ct));
     }
 
     [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
@@ -114,6 +221,24 @@ public sealed class LifecycleDebugController : ControllerBase
         CancellationToken ct)
     {
         return Ok(await _closure.ConfirmLifecycleLinkAsync(linkId, request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpPost("links/batch-review")]
+    public async Task<ActionResult<LifecyclePackageLinkBatchReviewResultDto>> BatchReviewLifecycleLinksAsync(
+        [FromBody] LifecyclePackageLinkBatchReviewRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _closure.BatchReviewLifecycleLinksAsync(request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpPost("award-notices/{rawNoticeId:long}/auto-review")]
+    public async Task<ActionResult<LifecyclePackageLinkBatchReviewResultDto>> AutoReviewLifecycleLinksAsync(
+        long rawNoticeId,
+        CancellationToken ct)
+    {
+        return Ok(await _closure.AutoReviewLifecycleLinksForAwardAsync(rawNoticeId, ct));
     }
 
     [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]

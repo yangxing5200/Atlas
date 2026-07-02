@@ -182,6 +182,22 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
                 requestBody["max_tokens"] = settings.MaxOutputTokens.Value;
 
             var requestJson = JsonSerializer.Serialize(requestBody, JsonOptions);
+            var requestSummaryJson = BidOpsAiDiagnosticRequestCapture.BuildHttpSummary(
+                BidOpsAiUse.OutcomeSuppliers.ToString(),
+                settings.Provider,
+                settings.Model,
+                FormatEndpointForLog(settings.Endpoint),
+                prompt,
+                requestJson,
+                new Dictionary<string, object?>
+                {
+                    ["noticeType"] = request.NoticeType,
+                    ["titleLength"] = request.Title.Length,
+                    ["attachmentCount"] = request.Attachments?.Count ?? 0,
+                    ["reviewerPrompt"] = !string.IsNullOrWhiteSpace(request.ReviewerPrompt)
+                });
+            var requestBodyJson = BidOpsAiDiagnosticRequestCapture.CaptureHttpRequestBody(requestJson);
+            var requestPrompt = BidOpsAiDiagnosticRequestCapture.CapturePrompt(prompt);
             var stopwatch = Stopwatch.StartNew();
             _logger.LogInformation(
                 "BidOps outcome supplier AI request started. provider={Provider}, model={Model}, endpoint={Endpoint}, noticeType={NoticeType}, titleLength={TitleLength}, promptChars={PromptChars}, attachmentCount={AttachmentCount}, reviewerPrompt={HasReviewerPrompt}.",
@@ -220,7 +236,10 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
                 content.Length,
                 finishReason,
                 responseText,
-                content));
+                content,
+                requestSummaryJson,
+                requestBodyJson,
+                requestPrompt));
             _logger.LogInformation(
                 "BidOps outcome supplier AI raw DeepSeek response. statusCode={StatusCode}, responseBody={ResponseBody}",
                 (int)response.StatusCode,
@@ -297,13 +316,23 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
             request.Attachments?.Count ?? 0,
             !string.IsNullOrWhiteSpace(request.ReviewerPrompt));
 
-        var result = await _codexCli!.ExecuteJsonAsync(
-            BidOpsCodexCliSettingsFactory.CreateRequest(
-                settings,
-                BidOpsAiUse.OutcomeSuppliers,
-                BuildCodexExtractionPrompt("公开中标/成交/候选厂家明细抽取", prompt),
-                OutcomeSupplierJsonSchema),
-            ct);
+        var codexRequest = BidOpsCodexCliSettingsFactory.CreateRequest(
+            settings,
+            BidOpsAiUse.OutcomeSuppliers,
+            BuildCodexExtractionPrompt("公开中标/成交/候选厂家明细抽取", prompt),
+            OutcomeSupplierJsonSchema);
+        var requestSummaryJson = BidOpsAiDiagnosticRequestCapture.BuildCodexCliSummary(
+            codexRequest,
+            new Dictionary<string, object?>
+            {
+                ["noticeType"] = request.NoticeType,
+                ["titleLength"] = request.Title.Length,
+                ["attachmentCount"] = request.Attachments?.Count ?? 0,
+                ["reviewerPrompt"] = !string.IsNullOrWhiteSpace(request.ReviewerPrompt)
+            });
+        var requestBodyJson = BidOpsAiDiagnosticRequestCapture.CaptureCodexCliRequestBody(codexRequest);
+        var requestPrompt = BidOpsAiDiagnosticRequestCapture.CapturePrompt(codexRequest.Prompt);
+        var result = await _codexCli!.ExecuteJsonAsync(codexRequest, ct);
         stopwatch.Stop();
 
         var content = BidOpsAiJsonLogging.ExtractJsonObjectOrRaw(result.AssistantContent);
@@ -319,7 +348,10 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
             content.Length,
             $"exit:{result.ExitCode}",
             combinedResponse,
-            content));
+            content,
+            requestSummaryJson,
+            requestBodyJson,
+            requestPrompt));
 
         _logger.LogInformation(
             "BidOps outcome supplier Codex CLI response. exitCode={ExitCode}, elapsedMs={ElapsedMs}, stdoutChars={StdoutChars}, stderrChars={StderrChars}, assistantChars={AssistantChars}.",
@@ -449,7 +481,7 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
   "records": [
     {
       "supplierName": "",
-      "outcomeType": "Awarded|Candidate|Shortlisted",
+      "outcomeType": "Awarded|Candidate|Shortlisted|Failed",
       "rank": null,
       "awardAmount": null,
       "procurementAgencyServiceFeeAmount": null,
@@ -482,7 +514,8 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
 - 不要把“分标名称”和“分标编号”混淆。名称放 lotName/packageName，编号放 lotNo/packageNo。
 - packageNo 必须保留原文写法，包括“包”“第...包”等前缀。原文是“包1”时不要返回裸数字“1”。
 - 除非附件文件名里的值也出现在正文或附件内容里，否则不要把附件文件名前缀当成事实。
-- 流标、废标、失败行不要作为中标/候选明细返回，除非该行明确给出了中标或推荐厂家。
+- 若“中标商家/成交供应商/中标人”列明确写的是“流标状态/流标/废标/采购失败”等状态，保留为展示行：supplierName 按原文填该状态，outcomeType 必须为 Failed，awardAmount 和 procurementAgencyServiceFeeAmount 必须为 null。
+- 流标、废标、失败行不得作为中标/候选明细或金额依据返回；只有该行明确给出了真实中标或推荐厂家时，才按真实厂家返回。
 - 采购方、代理机构、联系人、银行账户、服务费收取单位、投诉受理单位都不是厂家。
 - “采购代理服务费”“代理服务费”“服务费金额”放到 procurementAgencyServiceFeeAmount，不能放到 awardAmount。
 - 金额统一返回人民币“元”。只有公告单元格、同列表头或紧邻上下文明确标识“万元/万”时，才在返回 JSON 前乘以 10000；没有明确单位或表头未标识万元时，按“元”处理。未知金额、折扣率、费率、百分比返回 null。
@@ -553,7 +586,7 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
         if (ContainsAny(signal, "AwardAnnouncement", "ResultAnnouncement", "中标结果", "成交结果", "结果公告"))
         {
             return """
-  - 公告类型为 AwardAnnouncement 或 ResultAnnouncement（中标/成交结果公告）时：每一行中标/成交厂家返回一条记录；需要包含 projectCode、lotName、packageNo、packageName、supplierName；outcomeType 用 Awarded；公开成交金额放 awardAmount；公开代理服务费放 procurementAgencyServiceFeeAmount；evidenceText 保留原文证据。projectName 仅在原文明确给出项目名称时填写；lotNo 仅在原文明确给出分标编号/标段编号时填写，否则空字符串。
+  - 公告类型为 AwardAnnouncement 或 ResultAnnouncement（中标/成交结果公告）时：每一行中标/成交厂家返回一条记录；需要包含 projectCode、lotName、packageNo、packageName、supplierName；outcomeType 用 Awarded；公开成交金额放 awardAmount；公开代理服务费放 procurementAgencyServiceFeeAmount；若中标商家列是“流标状态/流标/废标/采购失败”，outcomeType 用 Failed 且金额字段必须为 null。evidenceText 保留原文证据。projectName 仅在原文明确给出项目名称时填写；lotNo 仅在原文明确给出分标编号/标段编号时填写，否则空字符串。
 """;
         }
 
@@ -757,13 +790,20 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
                 continue;
 
             var evidenceText = Trim(GetString(item, "evidenceText"), 2000);
+            var outcomeType = NormalizeOutcomeType(GetString(item, "outcomeType"));
+            outcomeType = BidOpsOutcomeRecordPolicy.NormalizeOutcomeTypeForPersistence(
+                outcomeType,
+                supplierName,
+                evidenceText,
+                outcomeType);
+            var isNonAwardOutcome = outcomeType == BidOpsOutcomeTypes.Failed;
             records.Add(new BidOpsOutcomeSupplierExtract
             {
                 SupplierName = supplierName,
-                OutcomeType = NormalizeOutcomeType(GetString(item, "outcomeType")),
+                OutcomeType = outcomeType,
                 Rank = GetNullableInt(item, "rank"),
-                AwardAmount = GetAmount(item, "awardAmount"),
-                ProcurementAgencyServiceFeeAmount = GetAmount(item, "procurementAgencyServiceFeeAmount"),
+                AwardAmount = isNonAwardOutcome ? null : GetAmount(item, "awardAmount"),
+                ProcurementAgencyServiceFeeAmount = isNonAwardOutcome ? null : GetAmount(item, "procurementAgencyServiceFeeAmount"),
                 ExtractionOrder = extractionOrder++,
                 ProjectName = Trim(GetString(item, "projectName"), 500),
                 ProjectCode = Trim(GetString(item, "projectCode"), 128),
@@ -867,8 +907,10 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
         {
             BidOpsOutcomeTypes.Awarded => BidOpsOutcomeTypes.Awarded,
             BidOpsOutcomeTypes.Shortlisted => BidOpsOutcomeTypes.Shortlisted,
+            BidOpsOutcomeTypes.Failed => BidOpsOutcomeTypes.Failed,
             "中标" or "成交" or "中选" or "Award" or "Winner" => BidOpsOutcomeTypes.Awarded,
             "入围" or "Shortlist" => BidOpsOutcomeTypes.Shortlisted,
+            "流标" or "流标状态" or "废标" or "采购失败" or "招标失败" or "成交失败" or "中标失败" => BidOpsOutcomeTypes.Failed,
             _ => BidOpsOutcomeTypes.Candidate
         };
     }

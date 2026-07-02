@@ -44,7 +44,7 @@ public static class BidOpsReviewQualityEvaluator
                 BidOpsReviewQualityIssueTypes.MissingLotOrPackage,
                 ReviewQualityRiskLevel.High,
                 "Packages",
-                "采购公告未识别到分标/包件明细，无法形成可审核的包件闭环。",
+                "前置公告未识别到分标/包件明细，无法形成可审核的包件闭环。",
                 Evidence: new Dictionary<string, object?>
                 {
                     ["noticeStagingId"] = notice.Id,
@@ -354,7 +354,7 @@ public static class BidOpsReviewQualityEvaluator
                 BidOpsReviewQualityIssueTypes.MissingLotOrPackage,
                 ReviewQualityRiskLevel.High,
                 nameof(OutcomeSupplierRecord.PackageNo),
-                "分标编号和包号均缺失，无法可靠匹配采购公告包件。",
+                "分标编号和包号均缺失，无法可靠匹配前置公告包件。",
                 OutcomeSupplierRecordId: record.Id,
                 Evidence: OutcomeRecordEvidence(record)));
         }
@@ -446,7 +446,7 @@ public static class BidOpsReviewQualityEvaluator
             BidOpsReviewQualityIssueTypes.LifecycleMatchMissing,
             ReviewQualityRiskLevel.Medium,
             nameof(OutcomeSupplierRecord.PackageNo),
-            "中标/候选结果暂未匹配到采购公告包件，闭环分析可能缺少服务内容和资质要求。",
+            "中标/候选结果暂未匹配到前置公告包件，闭环分析可能缺少服务内容和资质要求。",
             OutcomeSupplierRecordId: record.Id,
             Evidence: OutcomeRecordEvidence(record)));
     }

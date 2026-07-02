@@ -1,12 +1,17 @@
 using System.IO.Compression;
+using System.Linq.Expressions;
 using System.Net;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Atlas.BackgroundTasks;
+using Atlas.BackgroundTasks.Operations;
 using Atlas.Core.Authorization;
 using Atlas.Core.Entities.Global;
+using Atlas.Core.Enums;
+using Atlas.Core.IdGenerators;
 using Atlas.Core.Services;
+using Atlas.Data.Abstractions;
 using Atlas.Extensions.DependencyInjection;
 using Atlas.Modules.BidOps;
 using Atlas.Modules.BidOps.Ai;
@@ -19,17 +24,20 @@ using Atlas.Modules.BidOps.EntityConfigurations;
 using Atlas.Modules.BidOps.Entities;
 using Atlas.Modules.BidOps.Entities.Crawling;
 using Atlas.Modules.BidOps.Entities.Outcomes;
+using Atlas.Modules.BidOps.Entities.Opportunities;
 using Atlas.Modules.BidOps.Entities.Staging;
 using Atlas.Modules.BidOps.Entities.Tendering;
 using Atlas.Modules.BidOps.Models;
 using Atlas.Modules.BidOps.Queries;
 using Atlas.Modules.BidOps.Services;
+using Atlas.Models.Tenant.Responses;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 using UglyToad.PdfPig.Core;
 using UglyToad.PdfPig.Fonts.Standard14Fonts;
@@ -182,6 +190,38 @@ public sealed class BidOpsModuleTests
                 nameof(LifecyclePackageLink.LinkStatus),
                 nameof(LifecyclePackageLink.RequiresManualReview),
                 nameof(LifecyclePackageLink.MatchScore)
+            ]));
+    }
+
+    [Fact]
+    public void AmountCandidateConfiguration_UsesTenantScopedSourceHashAndReviewIndexes()
+    {
+        var modelBuilder = new ModelBuilder();
+        new AmountCandidateConfiguration().Configure(modelBuilder.Entity<AmountCandidate>());
+
+        var entityType = modelBuilder.Model.FindEntityType(typeof(AmountCandidate));
+        Assert.NotNull(entityType);
+
+        Assert.Equal("bidops_amount_candidate", entityType!.GetTableName());
+        Assert.Equal("decimal(18,6)", entityType.FindProperty(nameof(AmountCandidate.AmountValue))!.GetColumnType());
+        Assert.Equal("decimal(5,4)", entityType.FindProperty(nameof(AmountCandidate.Confidence))!.GetColumnType());
+        Assert.Contains(entityType.GetIndexes(), index =>
+            index.IsUnique &&
+            index.Properties.Select(x => x.Name).SequenceEqual([
+                nameof(AmountCandidate.TenantId),
+                nameof(AmountCandidate.SourceHash)
+            ]));
+        Assert.Contains(entityType.GetIndexes(), index =>
+            index.Properties.Select(x => x.Name).SequenceEqual([
+                nameof(AmountCandidate.TenantId),
+                nameof(AmountCandidate.RawNoticeId),
+                nameof(AmountCandidate.Status)
+            ]));
+        Assert.Contains(entityType.GetIndexes(), index =>
+            index.Properties.Select(x => x.Name).SequenceEqual([
+                nameof(AmountCandidate.TenantId),
+                nameof(AmountCandidate.LifecyclePackageLinkId),
+                nameof(AmountCandidate.Status)
             ]));
     }
 
@@ -820,6 +860,7 @@ public sealed class BidOpsModuleTests
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsMatchingService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsPursuitService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsPricingInferenceService));
+        Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsAmountCandidateService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsReverseLifecycleClosureService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsOperationsQueryService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsCrawlAdapter) && x.ImplementationType == typeof(StateGridEcpCrawlAdapter));
@@ -827,6 +868,7 @@ public sealed class BidOpsModuleTests
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsAttachmentProcessingService));
         Assert.Contains(services, x => x.ServiceType == typeof(IBidOpsTextExtractor));
         Assert.Contains(services, x => x.ServiceType == typeof(IBackgroundJobExecutionGate) && x.ImplementationType == typeof(BidOpsBackgroundJobExecutionGate));
+        Assert.Contains(services, x => x.ServiceType == typeof(IBackgroundJobHandler) && x.ImplementationType == typeof(ReviewBulkApproveJobHandler));
         Assert.Contains(services, x => x.ServiceType == typeof(IBackgroundJobHandler) && x.ImplementationType == typeof(ReviewQualityBackfillJobHandler));
         Assert.Contains(services, x => x.ServiceType == typeof(IBackgroundJobHandler) && x.ImplementationType == typeof(LifecycleReverseClosureJobHandler));
         Assert.Contains(services, x => x.ServiceType == typeof(IBackgroundJobHandler) && x.ImplementationType == typeof(LifecycleFieldEnrichmentJobHandler));
@@ -914,10 +956,11 @@ public sealed class BidOpsModuleTests
                 ["BidOps:CodexCli:WorkingDirectory"] = "D:\\code\\Personal\\Atlas"
             })
             .Build();
+        var diagnostics = new BidOpsAiCallDiagnostics();
         var service = new BidOpsStructuredExtractionService(
             new HttpClient(new StubHttpMessageHandler((_, _) => throw new InvalidOperationException("HTTP should not be called."))),
             configuration,
-            new BidOpsAiCallDiagnostics(),
+            diagnostics,
             new CapturingLogger<BidOpsStructuredExtractionService>(),
             codex);
 
@@ -948,6 +991,12 @@ public sealed class BidOpsModuleTests
         Assert.Contains("不要读取工作目录文件", request.Prompt);
         Assert.Contains("国网测试采购项目采购公告", request.Prompt);
         Assert.Contains("\"packages\"", request.OutputSchemaJson);
+        var diagnostic = Assert.Single(diagnostics.Entries);
+        Assert.Contains("\"transport\":\"CodexCli\"", diagnostic.RequestSummaryJson);
+        Assert.Contains("\"binaryPath\":\"codex-test\"", diagnostic.RequestSummaryJson);
+        Assert.Contains("公开招投标/采购公告结构化抽取", diagnostic.RequestPrompt);
+        Assert.Contains("国网测试采购项目采购公告", diagnostic.RequestBodyJson);
+        Assert.DoesNotContain("apiKey\":\"codex-key", diagnostic.RequestBodyJson, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1511,6 +1560,12 @@ public sealed class BidOpsModuleTests
         Assert.Equal("gpt-outcome", diagnostic.Model);
         Assert.Equal(200, diagnostic.StatusCode);
         Assert.Contains("北京乙科技有限公司", diagnostic.AssistantContent);
+        Assert.Contains("\"transport\":\"CodexCli\"", diagnostic.RequestSummaryJson);
+        Assert.Contains("\"hasApiKey\":true", diagnostic.RequestSummaryJson);
+        Assert.Contains("公开中标/成交/候选厂家明细抽取", diagnostic.RequestPrompt);
+        Assert.Contains("成交结果公告.pdf", diagnostic.RequestBodyJson);
+        Assert.DoesNotContain("codex-key", diagnostic.RequestSummaryJson);
+        Assert.DoesNotContain("codex-key", diagnostic.RequestBodyJson);
     }
 
     [Fact]
@@ -2336,6 +2391,72 @@ public sealed class BidOpsModuleTests
     }
 
     [Fact]
+    public void BidOpsOutcomeSupplierExtractionService_PrunesShortLotNameFragmentsWhenFullPackageRowsExist()
+    {
+        var ai = new List<BidOpsOutcomeSupplierExtract>
+        {
+            new()
+            {
+                SupplierName = "山东资德会计师事务所(普通合伙)",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                LotNo = "06FA03-9012020-0899",
+                LotName = "中介服务-审计服务",
+                PackageNo = "包 1",
+                EvidenceText = "06FA03-9012020-0899 中介服务-审计服务 包 1 山东资德会计师事务所(普通合伙)",
+                Confidence = 0.96m
+            },
+            new()
+            {
+                SupplierName = "山东资德会计师事务所",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                LotName = "务",
+                PackageNo = "包 1",
+                EvidenceText = "务 包 1 山东资德会计师事务所",
+                Confidence = 0.84m
+            }
+        };
+        var method = typeof(BidOpsOutcomeSupplierExtractionService).GetMethod(
+            "ChooseOutcomeExtractsForPersistence",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        var selected = (IReadOnlyList<BidOpsOutcomeSupplierExtract>)method!.Invoke(
+            null,
+            new object?[] { Array.Empty<BidOpsOutcomeSupplierExtract>(), ai, "按附件表格重新解析" })!;
+
+        var record = Assert.Single(selected);
+        Assert.Equal("06FA03-9012020-0899", record.LotNo);
+        Assert.Equal("山东资德会计师事务所(普通合伙)", record.SupplierName);
+    }
+
+    [Fact]
+    public void BidOpsOutcomeSupplierExtractionService_PreservesPipeDelimitedLotNoEvidence()
+    {
+        var extract = new BidOpsOutcomeSupplierExtract
+        {
+            SupplierName = "甘肃送变电工程有限公司",
+            OutcomeType = BidOpsOutcomeTypes.Awarded,
+            LotNo = "SG2670-9001-13049",
+            LotName = "线路施工",
+            PackageNo = "包1",
+            EvidenceText = "SG2670-9001-13049 | 线路施工 | 包1 | 中标 | 国网四川省电力公司 | 甘肃送变电工程有限公司",
+            Confidence = 0.88m
+        };
+        var method = typeof(BidOpsOutcomeSupplierExtractionService).GetMethod(
+            "SanitizeOutcomeExtractForPersistence",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        var sanitized = (BidOpsOutcomeSupplierExtract)method!.Invoke(
+            null,
+            new object?[] { extract, string.Empty })!;
+
+        Assert.Equal("SG2670-9001-13049", sanitized.LotNo);
+        Assert.Equal("包1", sanitized.PackageNo);
+        Assert.Equal("甘肃送变电工程有限公司", sanitized.SupplierName);
+    }
+
+    [Fact]
     public void BidOpsOutcomeSupplierExtractionService_ClearsUnsupportedAiLotNo()
     {
         var extracts = new List<BidOpsOutcomeSupplierExtract>
@@ -2808,6 +2929,31 @@ public sealed class BidOpsModuleTests
     }
 
     [Fact]
+    public void BidOpsOutcomeSupplierExtractionService_KeepsIndividualBusinessSupplierNames()
+    {
+        var extracts = new List<BidOpsOutcomeSupplierExtract>
+        {
+            new()
+            {
+                SupplierName = "牡丹江市爱民区华能工程劳务服务部",
+                OutcomeType = BidOpsOutcomeTypes.Awarded,
+                LotName = "后勤服务",
+                PackageNo = "包1",
+                EvidenceText = "4. | 后勤服务 | 包1 | 牡丹江市爱民区华能工程劳务服务部 | 0.2250",
+                ProcurementAgencyServiceFeeAmount = 2250m,
+                Confidence = 0.9m
+            }
+        };
+
+        var selected = SanitizeOutcomeExtractsForPersistence(extracts, string.Empty);
+
+        var record = Assert.Single(selected);
+        Assert.Equal("牡丹江市爱民区华能工程劳务服务部", record.SupplierName);
+        Assert.Equal("包1", record.PackageNo);
+        Assert.Equal(2250m, record.ProcurementAgencyServiceFeeAmount);
+    }
+
+    [Fact]
     public void BidOpsOutcomeSupplierExtractionService_ReviewerPromptForcesAiAttempt()
     {
         var method = typeof(BidOpsOutcomeSupplierExtractionService).GetMethod(
@@ -3209,11 +3355,13 @@ public sealed class BidOpsModuleTests
                 ExtractedCount = 93,
                 SavedCount = 93
             });
+        var closure = new Mock<IBidOpsReverseLifecycleClosureService>(MockBehavior.Strict);
 
         var handler = new StructuredParseJobHandler(
             new ExecutionIdentityAccessor(),
             parsing.Object,
             extraction.Object,
+            closure.Object,
             new BidOpsAiCallDiagnostics(),
             NullLogger<StructuredParseJobHandler>.Instance);
         var payload = new StructuredParseJobPayload(300001, null, 42, "bidops", 123);
@@ -3247,6 +3395,33 @@ public sealed class BidOpsModuleTests
                 SavedCount = 2,
                 Message = "saved"
             });
+        var closure = new Mock<IBidOpsReverseLifecycleClosureService>(MockBehavior.Strict);
+        closure
+            .Setup(x => x.ReverseCloseRawNoticeAndPersistAsync(123, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BidOpsReverseClosureDebugResult
+            {
+                PersistedLifecycleLinks =
+                [
+                    new LifecyclePackageLinkDto { Id = 1 }
+                ]
+            });
+        closure
+            .Setup(x => x.AutoCollectProcurementNoticesForAwardAsync(
+                123,
+                It.IsAny<LifecycleProcurementAutoCollectRequest>(),
+                1,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LifecycleProcurementAutoCollectResultDto
+            {
+                AwardRawNoticeId = 123,
+                EligibleLinkCount = 1,
+                UpdatedLinkCount = 1,
+                Message = "自动补采集完成",
+                AutoReview = new LifecyclePackageLinkBatchReviewResultDto
+                {
+                    SucceededCount = 1
+                }
+            });
 
         var diagnostics = new BidOpsAiCallDiagnostics();
         diagnostics.Record(new BidOpsAiCallDiagnosticEntry(
@@ -3260,12 +3435,16 @@ public sealed class BidOpsModuleTests
             42,
             "stop",
             "{\"choices\":[{\"message\":{\"content\":\"{\\\"ok\\\":true}\"}}]}",
-            "{\"ok\":true}"));
+            "{\"ok\":true}",
+            "{\"transport\":\"Http\",\"model\":\"deepseek-v4-pro\"}",
+            "{\"model\":\"deepseek-v4-pro\",\"messages\":[{\"role\":\"user\",\"content\":\"采购公告提示词\"}]}",
+            "采购公告提示词"));
 
         var handler = new StructuredParseJobHandler(
             new ExecutionIdentityAccessor(),
             parsing.Object,
             extraction.Object,
+            closure.Object,
             diagnostics,
             NullLogger<StructuredParseJobHandler>.Instance);
         var payload = new StructuredParseJobPayload(300001, null, 42, "bidops", 123, "manual", "采购公告提示词");
@@ -3287,12 +3466,95 @@ public sealed class BidOpsModuleTests
             .GetProperty("outcomeSupplierExtraction")
             .GetProperty("savedCount")
             .GetInt32());
+        Assert.Equal(1, document.RootElement
+            .GetProperty("lifecycleRefresh")
+            .GetProperty("persistedLifecycleLinkCount")
+            .GetInt32());
+        Assert.Equal(1, document.RootElement
+            .GetProperty("procurementAutoCollect")
+            .GetProperty("autoReviewedCount")
+            .GetInt32());
         var aiResponse = Assert.Single(document.RootElement.GetProperty("aiResponses").EnumerateArray());
         Assert.Equal("DeepSeek", aiResponse.GetProperty("provider").GetString());
         var deepSeekResponse = Assert.Single(document.RootElement.GetProperty("deepSeekResponses").EnumerateArray());
         Assert.Equal("DeepSeek", deepSeekResponse.GetProperty("provider").GetString());
         Assert.Contains("choices", deepSeekResponse.GetProperty("rawResponseBody").GetString());
         Assert.Equal("{\"ok\":true}", deepSeekResponse.GetProperty("assistantContent").GetString());
+        Assert.Contains("deepseek-v4-pro", deepSeekResponse.GetProperty("requestSummaryJson").GetString());
+        Assert.Contains("采购公告提示词", deepSeekResponse.GetProperty("requestBodyJson").GetString());
+        Assert.Equal("采购公告提示词", deepSeekResponse.GetProperty("requestPrompt").GetString());
+    }
+
+    [Fact]
+    public async Task AttachmentProcessJobHandler_ReturnsStructuredParseChildJobId()
+    {
+        var attachments = new Mock<IBidOpsAttachmentProcessingService>(MockBehavior.Strict);
+        attachments
+            .Setup(x => x.ProcessRawNoticeAttachmentsAsync(123, true, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BidOpsAttachmentProcessingResult(
+                RawNoticeId: 123,
+                Total: 2,
+                Downloaded: 1,
+                Extracted: 1,
+                Failed: 0));
+
+        var rawNotices = new Mock<IRepository<RawNotice>>(MockBehavior.Strict);
+        rawNotices
+            .Setup(x => x.GetByIdAsync(123, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RawNotice
+            {
+                Id = 123,
+                TenantId = 300001,
+                ContentHash = "hash-123",
+                SourceNoticeId = "url:test"
+            });
+
+        EnqueueBackgroundJobRequest<StructuredParseJobPayload>? capturedRequest = null;
+        var jobs = new Mock<IBackgroundJobClient>(MockBehavior.Strict);
+        jobs
+            .Setup(x => x.EnqueueAsync(
+                It.IsAny<EnqueueBackgroundJobRequest<StructuredParseJobPayload>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<EnqueueBackgroundJobRequest<StructuredParseJobPayload>, CancellationToken>((request, _) => capturedRequest = request)
+            .ReturnsAsync(new BackgroundJobEnqueueResult(
+                JobId: 789,
+                JobType: BidOpsBackgroundJobTypes.StructuredParse,
+                Queue: BidOpsBackgroundJobQueues.BidOps,
+                Status: BackgroundJobStatus.Pending,
+                AlreadyExists: false));
+
+        var handler = new AttachmentProcessJobHandler(
+            new ExecutionIdentityAccessor(),
+            attachments.Object,
+            rawNotices.Object,
+            jobs.Object,
+            NullLogger<AttachmentProcessJobHandler>.Instance);
+        var payload = new AttachmentProcessJobPayload(
+            300001,
+            null,
+            42,
+            "bidops",
+            123,
+            ForceParseRunId: "manual-run",
+            ReviewerPrompt: "按前置公告附件重新解析",
+            ProjectCode: "23FEA1");
+        var context = new BackgroundJobExecutionContext(new BackgroundJob
+        {
+            Id = 1,
+            Priority = BidOpsBackgroundJobPriorities.Manual,
+            Payload = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+        });
+
+        var result = await handler.HandleAsync(context);
+
+        Assert.True(result.Succeeded);
+        Assert.Contains("structuredParseJobId=789", result.Result);
+        Assert.Contains("rawNoticeId=123", result.Result);
+        Assert.NotNull(capturedRequest);
+        Assert.Equal(BidOpsBackgroundJobTypes.StructuredParse, capturedRequest!.JobType);
+        Assert.Equal(BidOpsBackgroundJobPriorities.Manual, capturedRequest.Priority);
+        Assert.Equal("23FEA1", capturedRequest.Payload?.ProjectCode);
+        Assert.Equal("按前置公告附件重新解析", capturedRequest.Payload?.ReviewerPrompt);
     }
 
     [Fact]
@@ -3324,7 +3586,10 @@ public sealed class BidOpsModuleTests
             60,
             "stop",
             "{\"choices\":[{\"message\":{\"content\":\"{\\\"records\\\":[]}\"}}]}",
-            "{\"records\":[]}"));
+            "{\"records\":[]}",
+            "{\"transport\":\"Http\",\"model\":\"deepseek-v4-pro\"}",
+            "{\"model\":\"deepseek-v4-pro\",\"messages\":[{\"role\":\"user\",\"content\":\"提示词\"}]}",
+            "提示词"));
         var closure = new Mock<IBidOpsReverseLifecycleClosureService>(MockBehavior.Strict);
 
         var handler = new OutcomeSupplierExtractJobHandler(
@@ -3355,6 +3620,9 @@ public sealed class BidOpsModuleTests
         var deepSeekResponse = Assert.Single(document.RootElement.GetProperty("deepSeekResponses").EnumerateArray());
         Assert.Equal("OutcomeSuppliers", deepSeekResponse.GetProperty("use").GetString());
         Assert.Equal("{\"records\":[]}", deepSeekResponse.GetProperty("assistantContent").GetString());
+        Assert.Contains("deepseek-v4-pro", deepSeekResponse.GetProperty("requestSummaryJson").GetString());
+        Assert.Contains("提示词", deepSeekResponse.GetProperty("requestBodyJson").GetString());
+        Assert.Equal("提示词", deepSeekResponse.GetProperty("requestPrompt").GetString());
         Assert.Contains("已保存", result.Result);
         Assert.DoesNotContain("\\u", result.Result);
         closure.Verify(
@@ -3387,6 +3655,23 @@ public sealed class BidOpsModuleTests
                     new LifecyclePackageLinkDto { Id = 2 }
                 ]
             });
+        closure
+            .Setup(x => x.AutoCollectProcurementNoticesForAwardAsync(
+                123,
+                It.IsAny<LifecycleProcurementAutoCollectRequest>(),
+                1,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LifecycleProcurementAutoCollectResultDto
+            {
+                AwardRawNoticeId = 123,
+                EligibleLinkCount = 2,
+                UpdatedLinkCount = 2,
+                Message = "自动补采集完成",
+                AutoReview = new LifecyclePackageLinkBatchReviewResultDto
+                {
+                    SucceededCount = 2
+                }
+            });
 
         var handler = new OutcomeSupplierExtractJobHandler(
             new ExecutionIdentityAccessor(),
@@ -3416,6 +3701,10 @@ public sealed class BidOpsModuleTests
         Assert.Equal(2, document.RootElement
             .GetProperty("lifecycleRefresh")
             .GetProperty("persistedLifecycleLinkCount")
+            .GetInt32());
+        Assert.Equal(2, document.RootElement
+            .GetProperty("procurementAutoCollect")
+            .GetProperty("autoReviewedCount")
             .GetInt32());
         closure.VerifyAll();
     }
@@ -3464,6 +3753,7 @@ public sealed class BidOpsModuleTests
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.Supplier));
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.SupplierEvidence));
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.OutcomeSupplierRecord));
+        Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.AmountCandidate));
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.LifecyclePackageLink));
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.Matching));
         Assert.True(catalog.DataResources.ContainsKey(BidOpsDataResources.GoNoGoDecision));
@@ -3591,6 +3881,72 @@ public sealed class BidOpsModuleTests
     }
 
     [Fact]
+    public async Task BidOpsOperationsQueryService_ChannelHealthUsesUtcClock()
+    {
+        var successUtc = DateTime.UtcNow.AddMinutes(-5);
+        var source = new CrawlSource
+        {
+            Id = 1,
+            TenantId = 300001,
+            Code = "sgcc",
+            Name = "国家电网",
+            SourceType = BidOpsCrawlSourceTypes.StateGridEcp,
+            Enabled = true,
+            NeedLogin = false,
+            CrawlIntervalMinutes = 60
+        };
+        var channel = new CrawlChannel
+        {
+            Id = 330104,
+            TenantId = 300001,
+            SourceId = source.Id,
+            Code = "sgcc-award",
+            Name = "中标结果公告",
+            NoticeType = "AwardAnnouncement",
+            Enabled = true,
+            LastScanTime = successUtc,
+            LastSuccessTime = successUtc,
+            LastError = string.Empty
+        };
+        var jobOperations = new Mock<IBackgroundJobOperationsService>();
+        jobOperations
+            .Setup(x => x.SearchAsync(
+                It.IsAny<BackgroundJobSearchQuery>(),
+                true,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((BackgroundJobSearchQuery query, bool _, CancellationToken _) =>
+                new PagedResult<BackgroundJobListItemDto>(
+                    0,
+                    [],
+                    query.PageIndex,
+                    query.PageSize));
+
+        var service = new BidOpsOperationsQueryService(
+            RepositoryFor(source),
+            RepositoryFor(channel),
+            RepositoryFor<CrawlCheckpoint>(),
+            RepositoryFor<RawNotice>(),
+            RepositoryFor<RawAttachment>(),
+            RepositoryFor<ReviewTask>(),
+            RepositoryFor<Notice>(),
+            RepositoryFor<TenderPackage>(),
+            RepositoryFor<RequirementItem>(),
+            RepositoryFor<Opportunity>(),
+            jobOperations.Object,
+            Options.Create(new BackgroundJobWorkerOptions()),
+            Options.Create(new RecurringTaskRunnerOptions()),
+            new ConfigurationBuilder().Build(),
+            Mock.Of<IBidOpsAiSettingsService>(),
+            Mock.Of<IBidOpsRuntimeControlService>());
+
+        var items = await service.GetChannelHealthAsync();
+
+        var item = Assert.Single(items);
+        Assert.Equal("Healthy", item.HealthStatus);
+        Assert.InRange(item.MinutesSinceLastSuccess.GetValueOrDefault(), 0, 10);
+    }
+
+    [Fact]
     public void BidOpsDashboardController_DeclaresSummaryRoute()
     {
         var controllerRoute = typeof(BidOpsDashboardController)
@@ -3693,6 +4049,11 @@ public sealed class BidOpsModuleTests
             .GetCustomAttributes<HttpPostAttribute>()
             .SingleOrDefault()?
             .Template;
+        var bulkApproveJobRoute = typeof(ReviewTasksController)
+            .GetMethod(nameof(ReviewTasksController.EnqueueBulkApproveAsync))?
+            .GetCustomAttributes<HttpPostAttribute>()
+            .SingleOrDefault()?
+            .Template;
         var batchReparseRoute = typeof(ReviewTasksController)
             .GetMethod(nameof(ReviewTasksController.BatchReparseAsync))?
             .GetCustomAttributes<HttpPostAttribute>()
@@ -3715,16 +4076,110 @@ public sealed class BidOpsModuleTests
             .Template;
 
         Assert.Equal("bulk-approve", bulkApproveRoute);
+        Assert.Equal("bulk-approve/job", bulkApproveJobRoute);
         Assert.Equal("batch-reparse", batchReparseRoute);
         Assert.Equal("quality-backfill", backfillRoute);
         Assert.Equal("corrections/analysis", analysisRoute);
         Assert.Equal("efficiency-metrics", metricsRoute);
         Assert.NotNull(typeof(BulkApproveReviewTasksRequest).GetProperty(nameof(BulkApproveReviewTasksRequest.ReviewTaskIds)));
+        Assert.NotNull(typeof(ReviewBulkApproveJobPayload).GetProperty(nameof(ReviewBulkApproveJobPayload.ReviewTaskIds)));
         Assert.NotNull(typeof(BatchReviewTaskReparseRequest).GetProperty(nameof(BatchReviewTaskReparseRequest.Prompt)));
         Assert.NotNull(typeof(ReviewQualityBackfillRequest).GetProperty(nameof(ReviewQualityBackfillRequest.DryRun)));
         Assert.NotNull(typeof(ReviewCorrectionAnalysisDto).GetProperty(nameof(ReviewCorrectionAnalysisDto.TopOriginalHeaders)));
         Assert.NotNull(typeof(ReviewEfficiencyMetricsDto).GetProperty(nameof(ReviewEfficiencyMetricsDto.LowRiskRatio)));
         Assert.NotNull(typeof(ReviewQualityBackfillJobPayload).GetProperty(nameof(ReviewQualityBackfillJobPayload.PauseSourceAware)));
+    }
+
+    [Fact]
+    public async Task BidOpsReviewService_EnqueueBulkApproveReservesEligiblePendingTasks()
+    {
+        var tasks = new[]
+        {
+            new ReviewTask
+            {
+                Id = 1,
+                TenantId = 300001,
+                Status = ReviewTaskStatus.Pending,
+                RiskLevel = ReviewQualityRiskLevel.Low,
+                HighRiskIssueCount = 0
+            },
+            new ReviewTask
+            {
+                Id = 2,
+                TenantId = 300001,
+                Status = ReviewTaskStatus.Pending,
+                RiskLevel = ReviewQualityRiskLevel.High,
+                HighRiskIssueCount = 1
+            },
+            new ReviewTask
+            {
+                Id = 3,
+                TenantId = 300001,
+                Status = ReviewTaskStatus.InReview,
+                RiskLevel = ReviewQualityRiskLevel.Low,
+                HighRiskIssueCount = 0
+            }
+        };
+        EnqueueBackgroundJobRequest<ReviewBulkApproveJobPayload>? capturedRequest = null;
+        var jobs = new Mock<IBackgroundJobClient>();
+        jobs
+            .Setup(x => x.EnqueueAsync(
+                It.IsAny<EnqueueBackgroundJobRequest<ReviewBulkApproveJobPayload>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<EnqueueBackgroundJobRequest<ReviewBulkApproveJobPayload>, CancellationToken>((request, _) => capturedRequest = request)
+            .ReturnsAsync(new BackgroundJobEnqueueResult(
+                900,
+                BidOpsBackgroundJobTypes.ReviewBulkApprove,
+                BidOpsBackgroundJobQueues.BidOps,
+                BackgroundJobStatus.Pending,
+                false));
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork
+            .Setup(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+        var identity = new Mock<ICurrentIdentity>();
+        identity.SetupGet(x => x.TenantId).Returns(300001);
+        identity.SetupGet(x => x.StoreId).Returns(320001);
+        identity.SetupGet(x => x.UserId).Returns(700001);
+        identity.SetupGet(x => x.UserName).Returns("tester");
+        identity.SetupGet(x => x.IsAuthenticated).Returns(true);
+        var service = new BidOpsReviewService(
+            RepositoryFor(tasks),
+            RepositoryFor<NoticeStaging>(),
+            RepositoryFor<PackageStaging>(),
+            RepositoryFor<RequirementStaging>(),
+            RepositoryFor<RawNotice>(),
+            RepositoryFor<Notice>(),
+            RepositoryFor<TenderPackage>(),
+            RepositoryFor<RequirementItem>(),
+            RepositoryFor<OutcomeSupplierRecord>(),
+            RepositoryFor<ReviewCorrectionSample>(),
+            Mock.Of<IBidOpsOrganizationMasterDataService>(),
+            unitOfWork.Object,
+            jobs.Object,
+            identity.Object,
+            Mock.Of<IIdGenerator>(),
+            Mock.Of<IBidOpsRuntimeControlService>(),
+            NullLogger<BidOpsReviewService>.Instance);
+
+        var job = await service.EnqueueBulkApproveAsync(new BulkApproveReviewTasksRequest
+        {
+            ReviewTaskIds = [1, 2, 3],
+            ExpectedRiskLevel = "Low",
+            MaxHighRiskIssueCount = 0,
+            Remark = "低风险批量确认"
+        });
+
+        Assert.Equal(900, job.JobId);
+        Assert.NotNull(capturedRequest);
+        Assert.Equal(new long[] { 1 }, capturedRequest.Payload!.ReviewTaskIds);
+        Assert.NotNull(capturedRequest.AvailableAtUtc);
+        Assert.Equal(ReviewTaskStatus.InReview, tasks[0].Status);
+        Assert.Equal(700001, tasks[0].AssignedTo);
+        Assert.Contains("900", tasks[0].Remark);
+        Assert.Equal(ReviewTaskStatus.Pending, tasks[1].Status);
+        Assert.Equal(ReviewTaskStatus.InReview, tasks[2].Status);
+        unitOfWork.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -4135,6 +4590,58 @@ public sealed class BidOpsModuleTests
     }
 
     [Fact]
+    public void BidOpsOutcomeSupplierExtractBuilder_TreatsAwardAnnouncementAsAwardWhenBodyMentionsCandidatePublicityEnded()
+    {
+        const string html = """
+中标公告
+国家电网有限公司2026年特高压项目第一次服务公开招标采购（招标编号：0711-26OTL01013005）中标候选人公示活动已经结束。现将中标人名单公告如下。
+<table>
+  <tr><td>分标编号</td><td>分标名称</td><td>包号</td><td>中标状态</td><td>项目单位</td><td>中标人</td></tr>
+  <tr><td>SG2670-9001-13031</td><td>换流站土建施工</td><td>包1</td><td>中标</td><td>国网安徽省电力有限公司</td><td>中国电建集团江西省水电工程局有限公司</td></tr>
+  <tr><td>SG2670-9001-13031</td><td>换流站土建施工</td><td>包2</td><td>中标</td><td>国网安徽省电力有限公司</td><td>浙江省二建建设集团有限公司</td></tr>
+  <tr><td>SG2670-9001-13046</td><td>换流站桩基施工</td><td>包1</td><td>中标</td><td>国网安徽省电力有限公司</td><td>河南竣祥建设工程有限公司</td></tr>
+  <tr><td>SG2670-9001-13049</td><td>线路施工</td><td>包1</td><td>中标</td><td>国网四川省电力公司</td><td>甘肃送变电工程有限公司</td></tr>
+</table>
+""";
+
+        var records = BidOpsOutcomeSupplierExtractBuilder.Extract(
+            "国家电网有限公司2026年特高压项目第一次服务公开招标采购中标公告",
+            "AwardAnnouncement",
+            "https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-win/2603315139268086_2018060501171111",
+            new DateTime(2026, 3, 31, 11, 31, 13),
+            html);
+
+        Assert.True(records.Count >= 4);
+        Assert.Contains(records, x =>
+            x.LotNo == "SG2670-9001-13049" &&
+            x.PackageNo == "包1" &&
+            x.SupplierName == "甘肃送变电工程有限公司");
+    }
+
+    [Fact]
+    public void BidOpsOutcomeSupplierExtractBuilder_ExtractsOpenEndedStateGridHtmlAwardTable()
+    {
+        const string html = """
+中标公告
+现将中标人名单公告如下。
+<table>
+  <tr><td>分标编号</td><td>分标名称</td><td>包号</td><td>中标状态</td><td>项目单位</td><td>中标人</td></tr>
+  <tr><td>SG2670-9001-13049</td><td>线路施工</td><td>包1</td><td>中标</td><td>国网四川省电力公司</td><td>甘肃送变电工程有限公司</td></tr>
+  <tr><td>SG2670-9001-13049</td><td>线路施工</td><td>包2</td><td>中标</td><td>国网四川省电力公司</td><td>国网黑龙江省送变电工程有限公司</td></tr>
+""";
+
+        var records = BidOpsOutcomeSupplierExtractBuilder.Extract(
+            "国家电网有限公司2026年特高压项目第一次服务公开招标采购中标公告",
+            "AwardAnnouncement",
+            "https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-win/2603315139268086_2018060501171111",
+            new DateTime(2026, 3, 31, 11, 31, 13),
+            html);
+
+        Assert.True(records.Count >= 2);
+        Assert.Contains(records, x => x.PackageNo == "包2" && x.SupplierName == "国网黑龙江省送变电工程有限公司");
+    }
+
+    [Fact]
     public void BidOpsOutcomeSupplierTextParser_CleansPdfTableRowSupplierNames()
     {
         const string text = """
@@ -4537,6 +5044,15 @@ resultValue.notice.BID_AGT: 山东诚信工程建设监理有限公司
         Assert.Equal("2018032900295987", projectCodeDocument.RootElement.GetProperty("firstPageMenuId").GetString());
         Assert.Equal("22FK09", projectCodeDocument.RootElement.GetProperty("purOrgCode").GetString());
         Assert.Equal(string.Empty, projectCodeDocument.RootElement.GetProperty("key").GetString());
+        Assert.False(projectCodeDocument.RootElement.TryGetProperty("purType", out _));
+        Assert.False(projectCodeDocument.RootElement.TryGetProperty("noticeType", out _));
+
+        var lotNoPayload = (string)method.Invoke(
+            null,
+            [1, 20, "2018032900295987", null, "23FEA1-9012006-0001"])!;
+        using var lotNoDocument = JsonDocument.Parse(lotNoPayload);
+        Assert.Equal("23FEA1", lotNoDocument.RootElement.GetProperty("purOrgCode").GetString());
+        Assert.Equal(string.Empty, lotNoDocument.RootElement.GetProperty("key").GetString());
 
         var keywordPayload = (string)method!.Invoke(
             null,
@@ -5001,6 +5517,33 @@ resultValue.notice.CONT: <p><span>包</span><span>件号：</span><span>包1</sp
     }
 
     [Fact]
+    public void BidOpsSourceNoticeClassifier_ClassifiesPublicTenderAwardAsBidding()
+    {
+        var classification = BidOpsSourceNoticeClassifier.Classify(
+            "国网测试公开招标采购中标结果公告",
+            "招标编号：182605",
+            projectCode: "182605");
+
+        Assert.Equal(BidOpsProjectProcessTypes.Bidding, classification.ProjectProcessType);
+        Assert.Equal("公开招标", classification.ProcurementMethod);
+        Assert.Equal(BidOpsSourceNoticeTypes.TenderNotice, classification.PreferredSourceNoticeTypes[0]);
+        Assert.Equal(BidOpsSourceNoticeTypes.BidInvitation, classification.PreferredSourceNoticeTypes[1]);
+        Assert.NotEqual(BidOpsSourceNoticeTypes.ProcurementNotice, classification.PreferredSourceNoticeTypes[0]);
+    }
+
+    [Fact]
+    public void BidOpsSourceNoticeClassifier_ClassifiesNegotiatedDealAsNonBidding()
+    {
+        var classification = BidOpsSourceNoticeClassifier.Classify(
+            "国网测试竞争性谈判成交结果公告",
+            "公开谈判采购文件 应答人");
+
+        Assert.Equal(BidOpsProjectProcessTypes.NonBidding, classification.ProjectProcessType);
+        Assert.Equal("竞争性谈判", classification.ProcurementMethod);
+        Assert.Equal(BidOpsSourceNoticeTypes.ProcurementNotice, classification.PreferredSourceNoticeTypes[0]);
+    }
+
+    [Fact]
     public async Task BidOpsTextExtractor_ExtractsHtmlText()
     {
         var extractor = new BidOpsTextExtractor();
@@ -5061,6 +5604,55 @@ resultValue.notice.CONT: <p><span>包</span><span>件号：</span><span>包1</sp
         Assert.Contains("File: 附件/采购公告附件.xlsx", text);
         Assert.Contains("| 分标编号 | 包名称 | 最高限价(万元)（含税） |", text);
         Assert.Contains("45.78", text);
+    }
+
+    [Fact]
+    public async Task BidOpsTextExtractor_ExtractsNestedZipExcelEntries()
+    {
+        var extractor = new BidOpsTextExtractor();
+        await using var xlsx = CreateXlsx(
+            "报价明细",
+            [
+                ["分标编号", "包号", "成交金额（万元）"],
+                ["182605-01", "包1", "128.50"]
+            ]);
+
+        await using var inner = new MemoryStream();
+        using (var archive = new ZipArchive(inner, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            AddZipEntry(archive, "amount.xlsx", xlsx.ToArray());
+        }
+
+        await using var root = new MemoryStream();
+        using (var archive = new ZipArchive(root, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            AddZipEntry(archive, "采购文件.zip", inner.ToArray());
+        }
+
+        root.Position = 0;
+        var text = await extractor.ExtractAsync(root, "root.zip", "application/zip");
+
+        Assert.Contains("File: 采购文件.zip", text);
+        Assert.Contains("File: amount.xlsx", text);
+        Assert.Contains("| 分标编号 | 包号 | 成交金额（万元） |", text);
+        Assert.Contains("128.50", text);
+    }
+
+    [Fact]
+    public async Task BidOpsTextExtractor_RecordsNestedZipParseErrors()
+    {
+        var extractor = new BidOpsTextExtractor();
+        await using var root = new MemoryStream();
+        using (var archive = new ZipArchive(root, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            AddZipEntry(archive, "broken.zip", Encoding.UTF8.GetBytes("not a zip"));
+        }
+
+        root.Position = 0;
+        var text = await extractor.ExtractAsync(root, "root.zip", "application/zip");
+
+        Assert.Contains("File: broken.zip", text);
+        Assert.Contains("ParseError:", text);
     }
 
     [Fact]
@@ -5331,6 +5923,26 @@ resultValue.notice.bidagtName: 山东诚信工程建设监理有限公司
         Assert.DoesNotContain("ProjectCode:", text);
         Assert.DoesNotContain("BIDAGT_ID", text);
         Assert.DoesNotContain("<span>", text);
+    }
+
+    [Fact]
+    public void BidOpsJobProjectCode_DoesNotUseMetadataFieldNamesAfterBlankProjectCode()
+    {
+        const string text = """
+国网测试公告
+SourceUrl: https://ecp.sgcc.com.cn/ecp2.0/portal/#/doc/doci-win/1_2
+ProjectCode:
+ListPublishTime: 2026-06-11
+resultValue.notice.CONT: 见附件
+""";
+
+        var type = typeof(BidOpsModule).Assembly.GetType("Atlas.Modules.BidOps.Models.BidOpsJobProjectCode");
+        var method = type?.GetMethod(
+            "FromText",
+            BindingFlags.Static | BindingFlags.Public);
+
+        Assert.NotNull(method);
+        Assert.Equal(string.Empty, method.Invoke(null, [new[] { text }]));
     }
 
     [Fact]
@@ -5670,6 +6282,123 @@ resultValue.notice.bidagtName: 山东诚信工程建设监理有限公司
             public void Dispose()
             {
             }
+        }
+    }
+
+    private static IRepository<TEntity> RepositoryFor<TEntity>(params TEntity[] items)
+        where TEntity : class
+    {
+        var values = items.ToList();
+        var repository = new Mock<IRepository<TEntity>>();
+        repository
+            .Setup(x => x.QueryDataScopeAsync(
+                It.IsAny<string>(),
+                It.IsAny<AtlasDataScopeType>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new InMemoryQueryBuilder<TEntity>(values));
+        repository
+            .Setup(x => x.QueryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new InMemoryQueryBuilder<TEntity>(values));
+        repository
+            .Setup(x => x.QueryTrackingAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new InMemoryQueryBuilder<TEntity>(values));
+        repository
+            .Setup(x => x.QueryAsync(It.IsAny<long>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new InMemoryQueryBuilder<TEntity>(values));
+        repository
+            .Setup(x => x.QueryTrackingAsync(It.IsAny<long>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new InMemoryQueryBuilder<TEntity>(values));
+        return repository.Object;
+    }
+
+    private sealed class InMemoryQueryBuilder<TEntity> : IQueryBuilder<TEntity>
+        where TEntity : class
+    {
+        private IQueryable<TEntity> _query;
+
+        public InMemoryQueryBuilder(IEnumerable<TEntity> items)
+        {
+            _query = items.AsQueryable();
+        }
+
+        private InMemoryQueryBuilder(IQueryable<TEntity> query)
+        {
+            _query = query;
+        }
+
+        public IQueryBuilder<TEntity> Where(Expression<Func<TEntity, bool>> predicate)
+        {
+            _query = _query.Where(predicate);
+            return this;
+        }
+
+        public IQueryBuilder<TEntity> Include<TProperty>(Expression<Func<TEntity, TProperty>> navigation)
+        {
+            return this;
+        }
+
+        public IQueryBuilder<TEntity> ThenInclude<TPreviousProperty, TProperty>(
+            Expression<Func<TPreviousProperty, TProperty>> navigation)
+            where TPreviousProperty : class
+        {
+            return this;
+        }
+
+        public IQueryBuilder<TEntity> OrderBy<TKey>(Expression<Func<TEntity, TKey>> keySelector)
+        {
+            _query = _query.OrderBy(keySelector);
+            return this;
+        }
+
+        public IQueryBuilder<TEntity> OrderByDescending<TKey>(Expression<Func<TEntity, TKey>> keySelector)
+        {
+            _query = _query.OrderByDescending(keySelector);
+            return this;
+        }
+
+        public IQueryBuilder<TEntity> Skip(int count)
+        {
+            _query = _query.Skip(count);
+            return this;
+        }
+
+        public IQueryBuilder<TEntity> Take(int count)
+        {
+            _query = _query.Take(count);
+            return this;
+        }
+
+        public IQueryBuilder<TResult> Select<TResult>(Expression<Func<TEntity, TResult>> selector)
+            where TResult : class
+        {
+            return new InMemoryQueryBuilder<TResult>(_query.Select(selector));
+        }
+
+        public Task<List<TResult>> SelectToListAsync<TResult>(
+            Expression<Func<TEntity, TResult>> selector,
+            CancellationToken ct = default)
+        {
+            return Task.FromResult(_query.Select(selector).ToList());
+        }
+
+        public Task<TEntity?> FirstOrDefaultAsync(CancellationToken ct = default)
+        {
+            return Task.FromResult(_query.FirstOrDefault());
+        }
+
+        public Task<List<TEntity>> ToListAsync(CancellationToken ct = default)
+        {
+            return Task.FromResult(_query.ToList());
+        }
+
+        public Task<long> CountAsync(CancellationToken ct = default)
+        {
+            return Task.FromResult((long)_query.Count());
+        }
+
+        public Task<bool> AnyAsync(CancellationToken ct = default)
+        {
+            return Task.FromResult(_query.Any());
         }
     }
 

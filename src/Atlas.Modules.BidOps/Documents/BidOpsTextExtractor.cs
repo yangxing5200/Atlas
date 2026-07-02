@@ -16,7 +16,7 @@ namespace Atlas.Modules.BidOps.Documents;
 public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
 {
     private const int MaxExtractedTextLength = 500_000;
-    private const int MaxArchiveDepth = 3;
+    private const int MaxArchiveDepth = 5;
     private const int MaxArchiveEntries = 100;
     private const int MaxArchiveEntryBytes = 20 * 1024 * 1024;
     private const int MinLegacyTextRunLength = 4;
@@ -418,53 +418,88 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
         if (stream.CanSeek)
             stream.Position = 0;
 
-        using var archive = OpenReadZipArchive(stream);
         var builder = new StringBuilder();
-        var entries = archive.Entries
-            .Where(x => !string.IsNullOrWhiteSpace(x.Name))
-            .Take(MaxArchiveEntries)
-            .ToList();
-
-        foreach (var entry in entries)
+        ZipArchive archive;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (entry.Length > MaxArchiveEntryBytes || !IsSupportedArchiveEntry(entry.Name))
-                continue;
+            archive = OpenReadZipArchive(stream);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppendArchiveParseError(builder, archiveName, archiveName, ex.Message);
+            return builder.ToString();
+        }
 
-            string entryText;
-            try
+        using (archive)
+        {
+            var entries = archive.Entries
+                .Where(x => !string.IsNullOrWhiteSpace(x.Name))
+                .Take(MaxArchiveEntries)
+                .ToList();
+
+            foreach (var entry in entries)
             {
-                await using var entryStream = entry.Open();
-                await using var entryCopy = await CopyToMemoryWithLimitAsync(entryStream, MaxArchiveEntryBytes, cancellationToken);
-                entryCopy.Position = 0;
+                cancellationToken.ThrowIfCancellationRequested();
+                if (entry.Length > MaxArchiveEntryBytes || !IsSupportedArchiveEntry(entry.Name))
+                    continue;
 
-                entryText = await ExtractInternalAsync(
-                    entryCopy,
-                    entry.Name,
-                    GuessContentTypeFromFileName(entry.Name),
-                    depth + 1,
-                    cancellationToken);
+                var entryPath = NormalizeArchivePath(entry.FullName);
+                if (!IsSafeArchiveEntryPath(entryPath))
+                {
+                    AppendArchiveParseError(builder, archiveName, entryPath, "Unsafe archive entry path was skipped.");
+                    continue;
+                }
+
+                string entryText;
+                try
+                {
+                    await using var entryStream = entry.Open();
+                    await using var entryCopy = await CopyToMemoryWithLimitAsync(entryStream, MaxArchiveEntryBytes, cancellationToken);
+                    entryCopy.Position = 0;
+
+                    entryText = await ExtractInternalAsync(
+                        entryCopy,
+                        entry.Name,
+                        GuessContentTypeFromFileName(entry.Name),
+                        depth + 1,
+                        cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    AppendArchiveParseError(builder, archiveName, entryPath, ex.Message);
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(entryText))
+                    continue;
+
+                if (builder.Length > 0)
+                    builder.AppendLine().AppendLine();
+
+                builder.AppendLine($"Archive: {archiveName}");
+                builder.AppendLine($"File: {entryPath}");
+                builder.Append(entryText);
+
+                if (builder.Length >= MaxExtractedTextLength)
+                    break;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                continue;
-            }
-
-            if (string.IsNullOrWhiteSpace(entryText))
-                continue;
-
-            if (builder.Length > 0)
-                builder.AppendLine().AppendLine();
-
-            builder.AppendLine($"Archive: {archiveName}");
-            builder.AppendLine($"File: {NormalizeArchivePath(entry.FullName)}");
-            builder.Append(entryText);
-
-            if (builder.Length >= MaxExtractedTextLength)
-                break;
         }
 
         return builder.ToString();
+    }
+
+    private static void AppendArchiveParseError(
+        StringBuilder builder,
+        string archiveName,
+        string entryPath,
+        string message)
+    {
+        if (builder.Length > 0)
+            builder.AppendLine().AppendLine();
+
+        builder.AppendLine($"Archive: {archiveName}");
+        builder.AppendLine($"File: {entryPath}");
+        builder.AppendLine($"ParseError: {message}");
     }
 
     private static string ExtractPdfText(Stream stream)
@@ -874,6 +909,20 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
     private static string NormalizeArchivePath(string value)
     {
         return value.Replace('\\', '/').Trim();
+    }
+
+    private static bool IsSafeArchiveEntryPath(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) ||
+            value.StartsWith("/", StringComparison.Ordinal) ||
+            value.Contains(':'))
+        {
+            return false;
+        }
+
+        return value
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .All(part => part != "." && part != "..");
     }
 
     private static ZipArchive OpenReadZipArchive(Stream stream)

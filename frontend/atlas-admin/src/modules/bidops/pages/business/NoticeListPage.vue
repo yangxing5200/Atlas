@@ -21,7 +21,11 @@ import { formatNoticeType, isResultNoticeType, lifecycleReviewStatusOptions, not
 const router = useRouter()
 const analyzingRawNoticeId = ref('')
 const { visible: canAnalyzeLifecycle } = usePermission(BIDOPS_PERMISSIONS.CRAWL_IMPORT)
-const table = useTableQuery<NoticeDto, { keyword: string; noticeType?: string; lifecycleReviewStatus?: string; pageIndex: number; pageSize: number }>(
+
+// 正式公告库需要在刷新后恢复最近一次搜索条件，复用通用表格查询的本地缓存。
+const noticeListQueryStorageKey = 'atlas.bidops.notices.query.v1'
+
+const table = useTableQuery<NoticeDto, { keyword: string; noticeType: string; lifecycleReviewStatus: string; pageIndex: number; pageSize: number }>(
   (params) => noticesApi.search({
     ...params,
     noticeType: params.noticeType || undefined,
@@ -33,6 +37,9 @@ const table = useTableQuery<NoticeDto, { keyword: string; noticeType?: string; l
     lifecycleReviewStatus: '',
     pageIndex: 1,
     pageSize: 20,
+  },
+  {
+    storageKey: noticeListQueryStorageKey,
   },
 )
 
@@ -66,12 +73,12 @@ async function analyzeLifecycle(row: NoticeDto) {
         <el-input v-model="table.query.keyword" clearable placeholder="标题 / 项目 / 采购人" />
       </el-form-item>
       <el-form-item label="公告类型">
-        <el-select v-model="table.query.noticeType" clearable filterable placeholder="全部" style="width: 210px">
+        <el-select v-model="table.query.noticeType" clearable filterable :value-on-clear="''" placeholder="全部" style="width: 210px">
           <el-option v-for="item in noticeTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
       </el-form-item>
       <el-form-item label="闭环审核">
-        <el-select v-model="table.query.lifecycleReviewStatus" clearable placeholder="全部" style="width: 180px">
+        <el-select v-model="table.query.lifecycleReviewStatus" clearable :value-on-clear="''" placeholder="全部" style="width: 180px">
           <el-option v-for="item in lifecycleReviewStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
       </el-form-item>

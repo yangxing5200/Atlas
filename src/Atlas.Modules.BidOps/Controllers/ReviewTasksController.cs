@@ -59,6 +59,15 @@ public sealed class ReviewTasksController : ControllerBase
     }
 
     [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpPost("bulk-approve/job")]
+    public async Task<ActionResult<EnqueueJobDto>> EnqueueBulkApproveAsync(
+        [FromBody] BulkApproveReviewTasksRequest request,
+        CancellationToken ct)
+    {
+        return Accepted(await _review.EnqueueBulkApproveAsync(request, ct));
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
     [HttpPost("batch-reparse")]
     public async Task<ActionResult<BulkReviewTaskActionResultDto>> BatchReparseAsync(
         [FromBody] BatchReviewTaskReparseRequest request,

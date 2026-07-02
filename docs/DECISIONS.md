@@ -1,5 +1,89 @@
 # Decisions
 
+## 2026-07-01 BidOps Closure Count Display Safety
+
+- Lifecycle list reads may backfill amount candidates, but amount-candidate evidence must not be able to break closure row display. If an extracted amount exceeds the `decimal(18,6)` storage range, BidOps stores the candidate as unresolved with raw text and evidence instead of persisting an invalid numeric value.
+- Opening the closure center with a specific `rawNoticeId` is an announcement-detail workflow. It should clear cached lifecycle status/match filters so operators see the complete public result set, including read-only `StatusOnly` 流标 rows, unless they explicitly filter again.
+
+## 2026-07-01 BidOps Failed Outcome Display Rows
+
+- Outcome rows whose supplier cell is `流标` / `废标` / `失败` remain non-actionable: they do not create persisted lifecycle links and cannot be confirmed, rejected, used for supplier master data, or used as final award amount evidence.
+- Lifecycle closure filtered by a specific RawNoticeId still needs to display those public status rows. The API therefore synthesizes read-only `StatusOnly` rows from failed `OutcomeSupplierRecord` entries for display only, while persisted `LifecyclePackageLink` rows remain limited to actionable awarded/candidate suppliers.
+- Result notices may award to individual business names such as `服务部`, `经营部`, `商行`, or `工作室`. These names are valid public supplier evidence and must not be dropped merely because they do not contain `公司` / `院` / `所`.
+
+## 2026-07-01 BidOps AI Request Diagnostics
+
+- Background jobs that call AI must include request-side diagnostics together with response diagnostics. The stored shape is `requestSummaryJson`, `requestBodyJson`, and `requestPrompt`, so operators can see what model, transport, schema, prompt, and notice/attachment context were sent.
+- Request diagnostics may include public notice text, extracted attachment text, and reviewer prompts because these are the evidence needed to reproduce an AI extraction. Secrets are not evidence: API keys, authorization headers, tokens, cookies, passwords, and secret-like fields are redacted before diagnostics are stored.
+- Structured parse, outcome supplier extraction, and lifecycle field enrichment use the same AI diagnostic shape. This keeps job-result troubleshooting consistent whether the provider is OpenAI-compatible HTTP or Codex CLI.
+
+## 2026-07-01 BidOps Award Result Detail Source
+
+- Award/result notices can mention `中标候选人公示活动已经结束` as background text. This phrase must not downgrade a notice titled or typed as `中标公告` / `成交公告` / result announcement into a candidate announcement; award/result signals are checked first.
+- SGCC HTML table snapshots may be truncated before the closing `</table>` tag. BidOps treats open-ended `<table>` fragments as parseable evidence so visible table rows are not lost just because the storage preview was capped.
+- Pipe-delimited table evidence generated from SGCC rows, for example `分标编号 | 分标名称 | 包号 | 中标状态 | 项目单位 | 中标人`, is trusted lot/package evidence when the first cell is a structured lot number and another nearby cell is a package number. This keeps the AI safety sanitizer from clearing a real `LotNo`.
+- For award/result notices, closure detail rows are owned by `OutcomeSupplierRecord` plus `LifecyclePackageLink`. `PackageStaging` and `TenderPackage` remain procurement/package structured data and should not be used as the row count for award supplier details.
+
+## 2026-07-01 BidOps Formal Notice Search Persistence
+
+- The “正式公告库” list stores its last searched filters in browser `localStorage` through the shared `useTableQuery` option. This keeps the behavior consistent with BidOps review and lifecycle pages and avoids a backend/user-preference table for this lightweight operator convenience.
+- The reset action intentionally overwrites the saved query with the default formal-notice filters, so a refresh after reset does not resurrect stale search conditions.
+- Empty select values are stored as explicit empty strings so the operator's “全部” choice is treated as a real saved condition, not as a missing value that would fall back to the default notice type.
+
+## 2026-06-30 BidOps Lifecycle Project Code Correction
+
+- Explicit labels in award/result notices, such as `采购项目编号：SD26-FWSQ-KJ-JN02`, outrank historical lifecycle `ProjectCode`, lot-number prefixes, and attachment filenames for source-notice rematch. Those labels are closer to the public business identifier than derived evidence.
+- Manual project-code edits are exposed as an action on the current “本次闭环公告” context. The edit is stored on `LifecyclePackageLink.ProjectCode`, marks touched links as requiring manual review, and updates every lifecycle detail row under the same award/result RawNotice because project code is announcement-level metadata, not a row-level supplier/package value.
+- Once an operator manually edits the project code, that value outranks award/result notice auto-extraction for both list display enrichment and 前置公告 rematch. This prevents a stale extracted code from overriding a reviewed correction.
+- Manual project-code edits may clear the existing `ProcurementRawNoticeId`. This is intentional when correcting a wrong code: keeping the old pre-notice link would continue to display the previous mismatch even though future search should use the new project code.
+- A six-character lot prefix such as `06FA03` is only fallback evidence when no explicit or manual project/procurement code exists. If a result notice or operator correction provides a full code such as `SD26-FWSQ-KJ-JN02`, the lot prefix must not replace it during lifecycle refresh, list display enrichment, or source-notice rematch.
+- Manual project-code audit remarks are treated as durable evidence. If a refresh rebuilds `EvidenceJson`, the service parses the latest `项目编号手动改为 ...` remark and writes it back to `ProjectCode` and `manualProjectCodeOverride` so reviewed corrections survive reparse jobs.
+- When normalized `OutcomeSupplierRecord` rows already exist for an award/result RawNotice, lifecycle closure treats those rows as the primary supplier/package evidence. Parsed PDF attachment rows are only appended as standalone closure candidates when they carry strong evidence such as an explicit lot number or amount/package context; weak row fragments from PDF column shifts must not create extra lifecycle links.
+- Reviewer-prompt outcome reparse may still merge deterministic fallback rows, but fallback rows with short or generic lot-name fragments are considered less specific duplicates when a same package/supplier row has an explicit lot number. This avoids keeping rows like `务 包 1 ...` beside the full `06FA03-... 中介服务-审计服务 包 1 ...` record.
+- Lifecycle award evidence also prunes same-lot/same-package supplier-name fragments after merge. A parsed row such as `山东资德会计师事务所` must not create a second closure row when a more complete same-package row says `山东资德会计师事务所(普通合伙)`.
+- Outcome rows whose supplier field is actually a status such as `流标状态`, `流标`, `废标`, or `采购失败` are kept only as public result display rows. They are normalized to `Failed`, must not carry award amounts, must not sync to supplier master data, must not create lifecycle closure links, and cannot be confirmed or selected as final award amount evidence.
+
+## 2026-06-30 BidOps Final Amount Candidate Safety
+
+- Lifecycle `FinalAwardAmount` is treated as the actual winning/deal/quote amount only. Agency/service fees, budgets, ceilings, deposits, unit prices, rates, discounts, and reduction rates remain visible evidence but cannot be adopted directly as final中标/成交金额.
+- Batch clearing final amounts is intentionally non-destructive for evidence: it clears the lifecycle link's final amount fields and unselects selected amount candidates, but it does not delete amount candidates or change the lifecycle link's review decision status.
+- When a selected amount candidate is unselected, its status is recalculated from its amount type. For example, `agency_fee` returns to `Rejected` because service fee is not a true final award amount.
+
+## 2026-06-30 BidOps Lifecycle Rematch Project Code Guard
+
+- Lifecycle 前置公告重匹配 must treat package labels such as `包` / `包1` as invalid project-code evidence. These values can exist in historical `LifecyclePackageLink.ProjectCode` rows, but they are package context, not 国网 `purOrgCode`.
+- Project/procurement codes used for SGCC precise rematch must normalize to ASCII alphanumeric code forms, including six-character prefixes such as `23FEA1` from attachment names or lot numbers. When a stored value is invalid, matching continues to award attachment and outcome evidence instead of stopping early.
+- SGCC `index/noteList` precise search payload should mirror the public portal request shape for this path: `index`, `size`, `firstPageMenuId`, `purOrgStatus`, `purOrgCode`, `orgId`, `key`, and `orgName`. Empty `purType` / `noticeType` fields are not needed for this rematch flow.
+
+## 2026-06-29 BidOps Lifecycle Project Code Matching
+
+- Raw notice source identifiers such as `url:*` are ingestion metadata, not business project/procurement codes. Lifecycle closure must not use them as project-code fallback values for source-notice lookup.
+- When explicit `ProjectCode` / 采购编号 / 招标编号 is absent but the lot number begins with a 6-character alphanumeric prefix followed by a separator, for example `23FEA1-9012006-0001`, BidOps treats that prefix as the project/batch code for read-time closure matching.
+- Award/result attachment file names can also be authoritative project-code evidence when they begin with the same 6-character project/batch code, for example `23FEA1 成交结果公告.pdf`.
+- Metadata field names and labels such as `SourceUrl`, `ProjectCode`, `ListPublishTime`, `NoticeId`, `Doctype`, and `MenuId` are invalid project-code candidates even if they satisfy a broad alphanumeric token pattern.
+- Already-linked 前置公告 can be manually rematched from the lifecycle closure page. Selecting a locally imported candidate replaces `ProcurementRawNoticeId`; when requested from the matched notice context, the replacement is applied to the same award/result RawNotice rows that still point to the same old 前置 RawNotice and are not confirmed/rejected.
+- State Grid source-notice candidate search must use the resolved project/procurement code in `purOrgCode` across the tender and procurement source columns first. When a lot number such as `23FEA1-9012006-0001` is the available evidence, BidOps sends only the `23FEA1` project/batch prefix to `purOrgCode`. Keyword fallback is used only when both source columns return no project-code candidates.
+- Source-notice candidates returned by SGCC must still echo the searched code in their list `code` field before they are shown as a rematch candidate. This prevents a default or unrelated SGCC response page from displaying Sichuan or other-province notices under a Jilin `23FEA1` search.
+- Lifecycle closure supports 前置公告 reparse by reusing the existing RawNotice attachment extraction and structured-parse pipeline. The closure UI waits for the structured parse child job before refreshing so operators do not see stale package/amount evidence after only attachment processing has completed.
+
+## 2026-06-29 BidOps P1 Amount Candidate Pool
+
+- Amount candidates are now first-class BidOps tenant data in `bidops_amount_candidate`. The pool stores source metadata, evidence snippets, normalized value, type, status, and selection/rejection audit fields, but still does not store file binary content.
+- Candidate generation is idempotent by tenant-scoped `SourceHash`. Public review and lifecycle closure may both trigger candidate backfill on read, but repeated opens should only fill missing candidates and preserve manual selected/rejected/type edits.
+- Public review detail and lifecycle closure detail share the same candidate pool. Closure rows include candidates linked to the lifecycle row plus candidates from its award/result, candidate, and matched source/前置 RawNotice rows; rejected and unresolved candidates are intentionally included.
+- Selecting an amount candidate updates the existing `LifecyclePackageLink.FinalAwardAmount` and `FinalAwardAmountSource` compatibility fields. The MVP enforces one selected final amount per lifecycle link rather than adding a new final-amount table.
+- Budget, ceiling, agency fee, deposit, unit price, rate, discount, and reduction values are preserved as evidence but are not recommended as final award amounts. Operators may restore or re-type candidates when public evidence proves the automatic classification was wrong.
+- Outcome tables headed `中标服务费（万元）` or `成交服务费（万元）` are normalized as service-fee evidence, for example `1.7000` becomes `17000` CNY. These candidates remain `agency_fee` and rejected by default because the header describes a service fee rather than the final中标/成交金额.
+- ZIP-in-ZIP Word/Excel support remains in the existing attachment text extraction path. Inner Word/Excel/PDF/ZIP entries are recursively extracted into the parent attachment text with archive/file headers, so the amount candidate pool can scan those extracted text blocks without introducing child attachment rows in this phase.
+
+## 2026-06-29 BidOps P0 Source Notice And Candidate Consistency
+
+- Lifecycle closure keeps the existing persisted `ProcurementRawNoticeId` compatibility field for now, but product-facing UI/API enrichment treats it as the matched source notice / 前置公告. This avoids a database migration and broad historical-row rewrite while fixing operator wording and search behavior.
+- Result notices are classified by rule before source-notice lookup. Public/invited bidding and result/candidate signals prefer `tender_notice` / `bid_invitation`; negotiated, inquiry, single-source, and deal-result signals prefer `procurement_notice` / `procurement_invitation`. A bare `采购编号` is not treated as a non-bidding signal.
+- State Grid ECP source-notice search maps `2018032700291334` to the tender/bid-invitation source column and `2018032900295987` to the procurement/procurement-invitation source column. For bidding projects this means 招标公告 / 投标邀请书 are searched and sorted ahead of 采购公告.
+- Closure DTOs now carry the same candidate pools operators can inspect on the public review page: outcome supplier/amount rows, procurement detail staging rows, and attachment lists. The closure page may repeat these source-level candidates on each lifecycle row in the current page so no unresolved, unbound, or low-confidence candidate silently disappears.
+- Nested ZIP handling remains inside the existing `RawAttachment` text extraction path rather than creating child attachment rows in this P0. Inner Word/Excel/PDF/ZIP files are recursively read into the parent attachment extracted text, with archive/file path headers and `ParseError:` lines for broken or unsafe entries. A future migration can add child file ids, parent/root ids, and archive-depth columns if operators need per-inner-file records.
+
 ## 2026-06-29 BidOps Reviewer-Prompt Outcome Reparse Fallback
 
 - Reviewer-prompted outcome supplier reparse remains a replacement of the current stored `OutcomeSupplierRecord` rows for that RawNotice, but persistence no longer trusts only the AI-returned rows.
@@ -859,3 +943,37 @@
 - Award notice prompt parsing uses the announcement-scoped outcome supplier re-extraction flow, which replaces outcome supplier records for the award RawNotice and refreshes lifecycle links on job completion.
 - Procurement notice prompt assistance is triggered from the procurement notice context and enqueues field-enrichment jobs for the currently associated non-final lifecycle links. This avoids using the general RawNotice reparse path that can reset review state or reject already-approved formal notices.
 - Prompt tasks started from the closure context must refresh the lifecycle list after their background jobs reach a terminal success state, so operators do not have to manually reload after AI work completes.
+
+## 2026-07-01 BidOps Award Auto Procurement Closure
+
+- Result notice collection should refresh lifecycle links and then try to collect the corresponding 前置公告 automatically. This keeps the collection workflow and the closure review page aligned instead of requiring operators to manually run "找前置公告" after each award parse.
+- Auto procurement collection must reuse the same State Grid project-code search path used by the closure page. It only proceeds on exact project-code candidates and skips ambiguous same-priority matches so a public default-list response cannot silently create a wrong province/project link.
+- Source notice priority follows the existing classifier: bidding projects prefer `招标公告 / 投标邀请书`, while non-bidding projects prefer `前置公告 / 采购邀请`.
+- Auto-review is deliberately narrower than manual batch review. It confirms only suggested, actionable award rows with a linked procurement RawNotice, adequate match score, non-empty project code/supplier, and no service-fee-looking final amount source. Flow-failed rows remain display-only.
+- The closure page's batch review now uses a backend batch contract. This gives the server one place to enforce status-only/failed-row safeguards and keeps browser-side loops from drifting from backend approval rules.
+
+## 2026-07-01 BidOps Queue Health Clock
+
+- BidOps crawl timestamps such as `LastScanTime`, `LastSuccessTime`, checkpoint run times, and crawl-run completion times are stored as UTC values.
+- Operations channel health must use a UTC clock when calculating `MinutesSinceLastSuccess`, `Due`, and `Stale`; local wall-clock time is only suitable for product-facing date grouping such as "today" counts.
+- A successful crawl that discovers only duplicates or skipped records still counts as a successful queue run as long as the crawler completed without item failures.
+
+## 2026-07-02 BidOps Review Pool Bulk Approval
+
+- Review-pool bulk approval keeps the existing synchronous endpoint for small selections because operators expect immediate success/failure feedback for a few rows.
+- Large selections must be represented as one backend background job, not as many browser requests. The `bidops.review.bulk-approve` job carries the selected review-task IDs and executes the existing per-item approval rules in Worker.
+- The background job intentionally reuses the single-item approval path instead of introducing set-based mutations first. This preserves risk checks, correction samples, formal notice persistence, post-approval extraction enqueueing, and organization master-data updates while moving long-running work out of the HTTP timeout window.
+- Creating a large bulk-approval job must also reserve eligible pending tasks as `InReview` before the Worker consumes the job. Otherwise the review pool still shows queued work under `待审核`, allowing duplicate operator actions.
+
+## 2026-07-02 BidOps AI Output Versus Persisted Outcome Rows
+
+- Large review-detail tables need stable visible row numbers. Operators often diagnose extraction issues by saying "第 N 行", and relying on scroll position alone is brittle for 100+ row notices.
+- When comparing AI quality with persisted outcome rows, the first diagnostic split should be: AI response rows from the background-job `aiResponses[].assistantContent.records`, selected/merged extracts, and final `bidops_outcome_supplier_record` rows. This separates "AI did not extract it" from "merge/sanitize/persistence lost or duplicated it".
+- Empty `lotNo` is not automatically an AI failure. Current outcome prompts intentionally require `lotNo` to stay empty unless the source explicitly labels a 分标编号/标段编号; 分标名称 belongs in `lotName`.
+- Weak fallback rows with the same supplier, package, outcome type, rank, and evidence as a stronger row should be pruned before persistence. If historical data already contains weak duplicates, rerun outcome-supplier extraction for the RawNotice to replace the persisted set.
+
+## 2026-07-02 BidOps Amount Candidate Reparse Freshness
+
+- Amount candidates derived from `OutcomeSupplierRecord` are cached review evidence, not independent source facts. When outcome supplier records are re-extracted and replaced, candidates pointing at deleted outcome rows must be removed before loading the review or lifecycle candidate pool.
+- Raw notice and attachment full-text scans may produce `unknown` numeric candidates from package numbers, page numbers, or voltage levels such as `500 千伏`. If such candidates have no lot/package/supplier context, they should not be shown as reviewable amount candidates and should not be generated going forward.
+- Review-detail amount context should prefer business names (`lotName`, `packageName`) and only fall back to codes (`lotNo`, `packageNo`) when names are absent. This matches how operators identify problematic rows in result notices.

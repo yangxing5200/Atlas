@@ -276,6 +276,21 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
             requestBody["max_tokens"] = settings.MaxOutputTokens.Value;
 
         var requestJson = JsonSerializer.Serialize(requestBody, JsonOptions);
+        var requestSummaryJson = BidOpsAiDiagnosticRequestCapture.BuildHttpSummary(
+            BidOpsAiUse.NoticeStaging.ToString(),
+            settings.Provider,
+            settings.Model,
+            FormatEndpointForLog(settings.Endpoint),
+            prompt,
+            requestJson,
+            new Dictionary<string, object?>
+            {
+                ["noticeTypeHint"] = request.NoticeType,
+                ["titleLength"] = request.Title.Length,
+                ["attachmentCount"] = request.Attachments.Count
+            });
+        var requestBodyJson = BidOpsAiDiagnosticRequestCapture.CaptureHttpRequestBody(requestJson);
+        var requestPrompt = BidOpsAiDiagnosticRequestCapture.CapturePrompt(prompt);
         var stopwatch = Stopwatch.StartNew();
         _logger.LogInformation(
             "BidOps structured AI request started. provider={Provider}, model={Model}, endpoint={Endpoint}, noticeTypeHint={NoticeTypeHint}, titleLength={TitleLength}, promptChars={PromptChars}, attachmentCount={AttachmentCount}.",
@@ -313,7 +328,10 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
             content.Length,
             finishReason,
             responseText,
-            content));
+            content,
+            requestSummaryJson,
+            requestBodyJson,
+            requestPrompt));
         _logger.LogInformation(
             "BidOps structured AI raw DeepSeek response. statusCode={StatusCode}, responseBody={ResponseBody}",
             (int)response.StatusCode,
@@ -385,13 +403,22 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
             prompt.Length,
             request.Attachments.Count);
 
-        var result = await _codexCli!.ExecuteJsonAsync(
-            BidOpsCodexCliSettingsFactory.CreateRequest(
-                settings,
-                BidOpsAiUse.NoticeStaging,
-                BuildCodexExtractionPrompt("公开招投标/采购公告结构化抽取", prompt),
-                NoticeExtractionJsonSchema),
-            ct);
+        var codexRequest = BidOpsCodexCliSettingsFactory.CreateRequest(
+            settings,
+            BidOpsAiUse.NoticeStaging,
+            BuildCodexExtractionPrompt("公开招投标/采购公告结构化抽取", prompt),
+            NoticeExtractionJsonSchema);
+        var requestSummaryJson = BidOpsAiDiagnosticRequestCapture.BuildCodexCliSummary(
+            codexRequest,
+            new Dictionary<string, object?>
+            {
+                ["noticeTypeHint"] = request.NoticeType,
+                ["titleLength"] = request.Title.Length,
+                ["attachmentCount"] = request.Attachments.Count
+            });
+        var requestBodyJson = BidOpsAiDiagnosticRequestCapture.CaptureCodexCliRequestBody(codexRequest);
+        var requestPrompt = BidOpsAiDiagnosticRequestCapture.CapturePrompt(codexRequest.Prompt);
+        var result = await _codexCli!.ExecuteJsonAsync(codexRequest, ct);
         stopwatch.Stop();
 
         var content = BidOpsAiJsonLogging.ExtractJsonObjectOrRaw(result.AssistantContent);
@@ -407,7 +434,10 @@ public sealed class BidOpsStructuredExtractionService : IBidOpsAiExtractionServi
             content.Length,
             $"exit:{result.ExitCode}",
             combinedResponse,
-            content));
+            content,
+            requestSummaryJson,
+            requestBodyJson,
+            requestPrompt));
 
         _logger.LogInformation(
             "BidOps structured Codex CLI response. exitCode={ExitCode}, elapsedMs={ElapsedMs}, stdoutChars={StdoutChars}, stderrChars={StderrChars}, assistantChars={AssistantChars}.",

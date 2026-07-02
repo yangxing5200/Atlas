@@ -1,5 +1,313 @@
 # Implementation Log
 
+## 2026-07-01 BidOps Lifecycle Count Refresh Fix
+
+Completed:
+
+- Reproduced the refreshed closure page for RawNotice `328250278660935680` and found the page was not simply stuck at 6 rows: the list endpoint had been failing with `Out of range value for column 'AmountValue'` while backfilling amount candidates during read.
+- Guarded `BidOpsAmountCandidateService` so values outside the `decimal(18,6)` storage range are kept as unresolved candidates with raw text/evidence instead of writing an invalid `AmountValue`.
+- Adjusted the closure page route entry behavior so opening `/bidops/outcomes?rawNoticeId=...` clears cached status/match filters. This lets the page show both actionable `Suggested` rows and read-only `StatusOnly` 流标 rows for that announcement.
+- Restarted local WebApi on `http://localhost:5260` and Worker after rebuilding.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsAmountCandidateService_DropsOutOfRangeStoredAmountValue|BidOpsOutcomeSupplierExtractionService_KeepsIndividualBusinessSupplierNames|BidOpsReverseLifecycleClosureService_MapsFailedOutcomeAsStatusOnlyDisplayRow" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 3 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- Chrome verification on `http://localhost:5173/bidops/outcomes?rawNoticeId=328250278660935680` showed `Total 9`: 7 actionable rows and 2 read-only `仅展示` 流标 rows.
+
+## 2026-07-01 BidOps Outcome Count Mismatch Diagnosis
+
+Completed:
+
+- Investigated background job `330633078471004160` for RawNotice `328250278660935680`. The job result showed `extractedCount=8`, `savedCount=8`, and lifecycle refresh `closureCount=6`, while the AI raw body contained 9 public result rows.
+- Found two separate shrink points: the awarded supplier `牡丹江市爱民区华能工程劳务服务部` was filtered before persistence because supplier-name validation did not allow individual-business names such as `服务部`; two `流标` rows were saved as `Failed` outcome records but intentionally skipped by lifecycle closure.
+- Expanded valid supplier-name recognition to include individual-business / shop-style suffixes such as `服务部`, `经营部`, `营业部`, `门市部`, `商行`, and `工作室`.
+- Added read-only `StatusOnly` lifecycle display rows for failed outcome records when the closure page is filtered by a specific RawNoticeId. These rows show public流标/废标状态 but do not persist lifecycle links, refresh amount candidates, or allow confirm/reject actions.
+- Re-ran the affected RawNotice through a new outcome supplier extract job `330633078472004160`. The local database now has 9 `bidops_outcome_supplier_record` rows, 7 persisted lifecycle links for awarded suppliers, and 2 failed outcome rows available as `StatusOnly` display rows.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_KeepsIndividualBusinessSupplierNames|BidOpsReverseLifecycleClosureService_MapsFailedOutcomeAsStatusOnlyDisplayRow|BidOpsReverseLifecycleClosureService_ClearsFailedOutcomeAmountForDisplayEvidence|BidOpsReverseLifecycleClosureService_DoesNotBuildClosureForFailedOutcomeStatus" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 4 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+- `npm run typecheck` succeeded in `frontend\atlas-admin`.
+- Local DB check for RawNotice `328250278660935680`: `outcome_count=9`, `lifecycle_link_count=7`; the two unlinked rows are `Failed` / `流标` and are expected to render as `StatusOnly` display rows.
+
+## 2026-07-01 BidOps AI Request Diagnostics In Background Jobs
+
+Completed:
+
+- Extended BidOps AI diagnostics with request-side fields: `requestSummaryJson`, `requestBodyJson`, and `requestPrompt`.
+- Structured parse, outcome supplier extraction, and lifecycle field enrichment now record the AI request parameters used for HTTP-compatible providers and Codex CLI.
+- HTTP diagnostics persist the JSON request body sent to the AI provider, including model, response format, messages, and prompt content, while redacting authorization/token/cookie/password-style values.
+- Codex CLI diagnostics persist the CLI request shape, model, reasoning effort, sandbox, timeout, output schema, and stdin prompt, while redacting API key values.
+- Lifecycle field enrichment background jobs now include `aiResponses` / `deepSeekResponses` in their job result, matching structured parse and outcome supplier extraction diagnostics.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsStructuredExtractionService_UsesCodexCliProvider|BidOpsOutcomeSupplierAiExtractionService_UsesCodexCliProvider|StructuredParseJobHandler_ReturnsJsonResultSummary|OutcomeSupplierExtractJobHandler_ReturnsJsonResultSummary" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 4 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsStructuredExtractionService_UsesCodexCliProvider|BidOpsOutcomeSupplierAiExtractionService_UsesCodexCliProvider|StructuredParseJobHandler_ReturnsJsonResultSummary|OutcomeSupplierExtractJobHandler_ReturnsJsonResultSummary" --no-build --nologo --verbosity minimal` succeeded after service restart: 4 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded after stopping the local WebApi process that held the old BidOps assembly.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded after stopping the local Worker process that held the old BidOps assembly.
+- Restarted the local frontend, WebApi, and Worker stack check: frontend `5173` responded `200`, WebApi `5260` responded `401`, and `Atlas.Worker.dll` was running.
+- Background job queue check showed no `Status=0` or `Status=1` pending/running jobs after restart.
+
+## 2026-07-01 BidOps State Grid Award Detail Reparse
+
+Completed:
+
+- Investigated review task `328427936724160523` / RawNotice `328250092823908352`. The stored outcome supplier records and lifecycle links had only 3 rows, while the SGCC award HTML snapshot contained a large result table.
+- Found the root cause: award/result notices that say `中标候选人公示活动已经结束` were classified as candidate announcements before award/result signals were checked, so the deterministic award table parser was skipped and the system relied on a small AI result.
+- Changed outcome notice-kind detection to prefer explicit award/result title/type/source-url signals and award-result body phrases before candidate-publicity phrases.
+- Hardened HTML table parsing so SGCC table fragments without a closing `</table>` are still parsed. This covers WCM text snapshots truncated at the raw-text storage limit.
+- Preserved SGCC pipe-delimited table evidence such as `SG2670-9001-13049 | 线路施工 | 包1 | 中标 | ...` as trusted lot-number evidence during outcome supplier persistence, preventing the safety sanitizer from clearing `LotNo`.
+- Re-ran local outcome supplier extraction for RawNotice `328250092823908352` after the parser fix. The local database now has 92 `bidops_outcome_supplier_record` rows, all 92 with `LotNo`, and 92 `bidops_lifecycle_package_link` rows for the award RawNotice.
+- Confirmed the formal notice still has 10 package staging/formal package rows from the original structured package parse. Closure detail rows are sourced from outcome supplier records and lifecycle links, not from package staging.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_PreservesPipeDelimitedLotNoEvidence|BidOpsOutcomeSupplierExtractBuilder_TreatsAwardAnnouncementAsAwardWhenBodyMentionsCandidatePublicityEnded|BidOpsOutcomeSupplierExtractBuilder_ExtractsOpenEndedStateGridHtmlAwardTable" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 3 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+- Local DB recheck: `outcome_records=92`, `outcome_records_with_lot_no=92`, `lifecycle_links=92`, `package_staging=10` for review task `328427936724160523`.
+
+## 2026-07-01 BidOps Formal Notice Search Persistence
+
+Completed:
+
+- Added local query persistence for the “正式公告库” list. After operators click “搜索”, the current keyword, notice type, lifecycle review status, page index, and page size are saved and restored on browser refresh.
+- Reused the shared `useTableQuery` storage mechanism instead of adding a page-specific persistence path. The page “重置” action writes the default formal-notice filters back to the same cache.
+- Fixed the clearable selects to persist an explicit empty-string value, so choosing “全部” for 公告类型 or 闭环审核 is restored instead of falling back to the default result-notice filter.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsModule_RegistersServicesAndBackgroundHandlers|ReviewTasksController_DeclaresReviewAutomationContracts" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsReviewBulkApproveJobTests\"` succeeded: 2 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors after stopping the running WebApi that locked DLLs.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors after stopping the running Worker that locked DLLs.
+- Restarted local WebApi and Worker with the existing scripts. WebApi returned `HTTP 401` at `http://localhost:5260/api/auth/context`, frontend returned `HTTP 200` at `http://localhost:5173`, and Worker logs showed BidOps recurring tasks starting successfully.
+
+## 2026-06-30 BidOps Lifecycle Project Code Edit And Explicit Extraction
+
+Completed:
+
+- Added explicit extraction support for `采购项目编号：SD26-FWSQ-KJ-JN02` style values, including hyphenated project codes and full-width dash/slash variants.
+- Changed lifecycle rematch project-code resolution so an explicit project/procurement code in the award/result notice text or extracted attachment text is checked before historical lifecycle fields, lot numbers, or attachment filenames.
+- Added `POST /api/bidops/lifecycle/debug/links/{linkId}/project-code` to manually update a lifecycle row's project code, optionally syncing related pending rows under the same award/result RawNotice and clearing stale 前置公告 links.
+- Added the closure-page “修改项目编号” action to the “本次闭环公告” header. Applying the dialog updates all pending rows under the same award/result RawNotice by default, then refreshes the list so the project-code column changes together.
+- The “本次闭环公告” header now shows `当前项目编号` next to the announcement label. Project-code edits now update every lifecycle detail row under the same award/result RawNotice, including rows that were already confirmed or rejected, because the code is announcement-level metadata.
+- Manual project-code edits now take precedence over award/result notice auto-extraction during lifecycle list enrichment and 前置公告 rematch. Existing rows with the `项目编号手动改为 ...` audit remark are honored, and new edits also persist `manualProjectCodeOverride` into `EvidenceJson`.
+- Fixed a refresh regression where lifecycle reparse preserved the manual remark but rebuilt `EvidenceJson` / `ProjectCode` from lot-number evidence, causing rows such as `06FA03-...` to display `06FA03` again after the operator had corrected the announcement code to `SD26-FWSQ-KJ-JN02`. Manual remarks are now parsed for the latest corrected code and reapplied after closure refresh.
+- Repaired local lifecycle rows for award RawNotice `328207478753988608`: 17 rows whose manual remark already said `SD26-FWSQ-KJ-JN02` but whose `ProjectCode` was `06FA03` were updated back to `SD26-FWSQ-KJ-JN02`.
+- Investigated dirty lifecycle detail rows for RawNotice `328207478753988608`. The root cause was a second, weak PDF table parse path: the clean `OutcomeSupplierRecord` rows were 17, but `MergeAwardEvidence` appended 11 unmatched attachment rows where the PDF extractor had shifted columns into values like `lotNo=业形象及文化宣传`, `lotName=包`, and truncated supplier names. Reviewer-prompt outcome reparse also kept one deterministic fallback duplicate with evidence `务 包 1 山东资德会计师事务所`.
+- Hardened lifecycle award-evidence merge so unmatched parsed PDF rows are appended only when they have a real explicit lot number or strong standalone amount/package evidence, then pruned same-lot/same-package supplier-name fragments such as `山东资德会计师事务所` when a fuller `山东资德会计师事务所(普通合伙)` row exists. Also hardened outcome supplier merge so short lot-name fragments are pruned when a full explicit-lot row exists for the same package/supplier.
+- Repaired local data for RawNotice `328207478753988608`: deleted 11 weak PDF lifecycle rows plus one stale same-package supplier-fragment lifecycle row from `bidops_lifecycle_package_link`, and deleted one weak duplicate outcome supplier row from `bidops_outcome_supplier_record`.
+- Added a shared non-award outcome policy for `流标状态` / `流标` / `废标` / `采购失败` result rows. Such rows are retained as outcome display records with `OutcomeType=Failed`, but their award/service-fee amounts are cleared, they are excluded from supplier master sync, lifecycle closure construction, lifecycle confirmation, field-enrichment amount writes, and amount-candidate selection.
+- Added the review-page outcome type option “流标/失败” for manual display rows.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsEvidenceText_ExtractsExplicitProcurementProjectCodeWithHyphenSegments|BidOpsReverseLifecycleClosureService_PrefersExplicitProjectCodeBeforeLotNumber|BidOpsReverseLifecycleClosureService_DerivesProjectCodeFromAwardAttachmentFileName|LifecycleDebugController_DeclaresReverseClosureRoutes" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 4 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded after stopping the prior local WebApi process that held `Atlas.Modules.BidOps.dll`.
+- Restarted local WebApi with `dotnet run --project src\Atlas.WebApi\Atlas.WebApi.csproj --launch-profile bidops-local --no-build`; `http://localhost:5173/` returns 200 and the WebApi process is running on the local profile.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded, and the local Worker was restarted on the `bidops-local` profile so background reparse jobs use the same extraction fix.
+- Re-ran `npm run typecheck`, `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "LifecycleDebugController_DeclaresReverseClosureRoutes|BidOpsReverseLifecycleClosureService_PrefersExplicitProjectCodeBeforeLotNumber" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false`, and rebuilt/restarted WebApi + Worker after moving the project-code edit to the announcement-level UI.
+- Re-ran the same frontend typecheck and backend focused tests after making project-code edits apply to all same-award lifecycle detail rows, then rebuilt and restarted WebApi + Worker.
+- Re-ran focused regression tests for manual project-code preservation, frontend typecheck, rebuilt WebApi + Worker, and restarted local services after fixing manual override priority.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReverseLifecycleClosureService_PreservesManualProjectCodeOverrideDuringReadEnrichment|BidOpsReverseLifecycleClosureService_PreservesManualProjectCodeWhenPersistingRefreshedClosure|BidOpsReverseLifecycleClosureService_PrefersExplicitProjectCodeBeforeLotNumber|BidOpsReverseLifecycleClosureService_DerivesSixCharacterProjectCodeFromLotNo" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 4 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReverseLifecycleClosureService_DropsWeakParsedPdfRowsWhenOutcomeRecordsExist|BidOpsReverseLifecycleClosureService_DropsSupplierFragmentDuplicateWithSameLotAndPackage|BidOpsOutcomeSupplierExtractionService_PrunesShortLotNameFragmentsWhenFullPackageRowsExist|BidOpsOutcomeSupplierExtractionService_PrunesWrappedAwardTableFragmentsWhenFullPackageRowsExist|BidOpsReverseLifecycleClosureService_PreservesManualProjectCodeWhenPersistingRefreshedClosure" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 5 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReverseLifecycleClosureService_DoesNotBuildClosureForFailedOutcomeStatus|BidOpsReverseLifecycleClosureService_ClearsFailedOutcomeAmountForDisplayEvidence|BidOpsAmountCandidateService_FiltersFailedOutcomeSupplierCandidatesForDisplay|BidOpsReverseLifecycleClosureService_DropsWeakParsedPdfRowsWhenOutcomeRecordsExist|BidOpsReverseLifecycleClosureService_DropsSupplierFragmentDuplicateWithSameLotAndPackage" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 5 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin` after adding the “流标/失败” manual outcome option.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+- Local DB recheck for RawNotice `328207478753988608` after cleanup: `bidops_lifecycle_package_link` has 16 rows, `bidops_outcome_supplier_record` has 16 rows, weak PDF rows are 0, and the exact weak evidence text `务 包 1 山东资德会计师事务所` is no longer present in lifecycle evidence.
+- Local DB recheck found no existing `流标状态` / `流标` / `废标` outcome rows, lifecycle rows, or amount candidates requiring cleanup.
+
+## 2026-06-30 BidOps Lifecycle Batch Clear Final Amount
+
+Completed:
+
+- Added a lifecycle closure batch action to clear selected rows' `FinalAwardAmount` / `FinalAwardAmountSource` without confirming or rejecting the lifecycle link.
+- Clearing final amount also revokes any selected amount candidate for those links and restores each candidate to its rule-based status. Agency/service-fee candidates return to `Rejected` with the original "不是中标/成交金额" reason.
+- Hardened amount candidate selection so agency fees, budgets, ceilings, deposits, unit prices, and rates cannot be directly selected as final中标/成交金额. Operators must first mark a candidate as an actual winning/deal/quote amount before it can be adopted.
+- Added the closure-page “清空金额” batch button for selected pending review rows with existing final amount/source values.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "LifecycleDebugController_DeclaresReverseClosureRoutes|BidOpsAmountCandidateExtractor_ClassifiesMoneyCandidates" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 8 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+
+## 2026-06-30 BidOps Lifecycle 23FEA1 Rematch Fix
+
+Completed:
+
+- Reproduced the lifecycle candidate endpoint for link `329867278139133957` returning unrelated candidates before the fix; frontend was correctly filtering them as non-current project-code rows.
+- Confirmed the public SGCC request `firstPageMenuId=2018032900295987` with `purOrgCode=23FEA1` returns the single吉林长春前置公告.
+- Found the backend root cause: historical lifecycle rows could store `ProjectCode=包`, and project-code resolution accepted that Chinese package label before checking award attachment evidence such as `23FEA1 成交结果公告`.
+- Hardened project-code normalization so only ASCII project/procurement code forms are valid for rematch, causing invalid stored package labels to fall through to attachment/outcome evidence and resolve `23FEA1`.
+- Added a backend candidate出口过滤 layer so SGCC candidates with a returned `code` different from the current project/procurement code cannot reach the page.
+- Matched the SGCC `noteList` precise-search payload to the public portal request shape used for `purOrgCode` searches.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReverseLifecycleClosureService_DerivesProjectCodeFromAwardAttachmentFileName|BidOpsReverseLifecycleClosureService_FiltersProcurementCandidatesWithDifferentReturnedCode|StateGridEcpCrawler_BuildsNoticeListPayloadWithProjectCodeField" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 3 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+- Restarted local WebApi with `dotnet run --project src\Atlas.WebApi\Atlas.WebApi.csproj --launch-profile bidops-local --no-build`; Vite remained available on `http://localhost:5173`.
+- Authenticated smoke for `GET /api/bidops/lifecycle/debug/links/329867278139133957/procurement-candidates` through both `http://localhost:5260/api` and `http://localhost:5173/api` returned exactly one candidate: `projectCode=23FEA1`, menu `2018032900295987`, notice `2603235010183212`, title `国网吉林电力吉林省长春电力勘测设计院有限公司2026年第一次服务授权竞争性谈判采购`.
+
+## 2026-06-30 BidOps Lifecycle Source Notice Rematch
+
+Completed:
+
+- Added a “重新匹配前置公告” action for lifecycle closure pages where a 前置公告 is already linked but visibly wrong.
+- Reused the existing State Grid candidate search and import/associate endpoint; no duplicate crawler or parser path was added.
+- Added an explicit `ApplyToRelatedLinks` request switch so rematch can replace the same wrong `ProcurementRawNoticeId` across unconfirmed/unrejected rows under the same award/result RawNotice.
+- Renamed the prior source-notice parsing button to “重新解析内容” so operators can distinguish fixing the match from fixing extracted package/amount evidence.
+- Tightened State Grid source-notice search so `purOrgCode` exact project-code lookup runs on the tender and procurement columns first. Lot-number evidence like `23FEA1-9012006-0001` is normalized to `23FEA1`, and keyword fallback now runs only when exact project-code lookup returns no candidates.
+- Added a returned-code guard to the source-notice candidate search: if the current project code is `23FEA1`, candidates whose SGCC `code` is not `23FEA1` are discarded even if the remote endpoint returns a default or unrelated list.
+- Cleared the lifecycle closure candidate table before each new 前置公告 search request, so a failed or stale search cannot keep showing the previous project's candidates under the new project-code banner.
+- Added a frontend cache-buster and second-pass project-code filter for 前置公告 candidate search. Even if the browser receives a cached or stale response, candidates whose displayed `projectCode` does not match the current search code are removed before rendering.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "LifecycleDebugController_DeclaresReverseClosureRoutes" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 1 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "StateGridEcpCrawler_BuildsNoticeListPayloadWithProjectCodeField" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 1 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false -p:IntermediateOutputPath=... -p:OutDir=...` succeeded.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm run typecheck` succeeded again after adding the frontend cache-buster and candidate-code filter.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded after restarting the previously running WebApi process that locked `Atlas.Modules.BidOps.dll`.
+- Local WebApi was restarted with `dotnet run --project src\Atlas.WebApi\Atlas.WebApi.csproj --launch-profile bidops-local --no-build`; `http://localhost:5260/swagger/index.html` returns the expected login redirect and `http://localhost:5173/` returns 200.
+- SGCC public noteList smoke confirmed `purOrgCode=23FEA1` returns 0 rows from `2018032700291334` and 1 exact row from `2018032900295987`: `国网吉林电力吉林省长春电力勘测设计院有限公司2026年第一次服务授权竞争性谈判采购`.
+- Authenticated local API smoke against `rawNoticeId=328160928082300928` returned 14 lifecycle rows with `projectCode=23FEA1`; `GET /api/bidops/lifecycle/debug/links/{linkId}/procurement-candidates` returned exactly one candidate with `projectCode=23FEA1`, menu `2018032900295987`, and the吉林长春 title above.
+- Re-ran the authenticated candidate API after the returned-code guard: `non-23FEA1 candidates=0`, candidate count remains 1, and the only candidate is the吉林长春 `23FEA1` notice.
+
+## 2026-06-29 BidOps Entity Chinese Documentation Comments
+
+Completed:
+
+- Added XML Chinese summaries for BidOps database entity classes and mapped fields under `src/Atlas.Modules.BidOps/Entities`.
+- Added XML Chinese summaries for C# enum members and string-based enum/value classes used by BidOps database fields, including statuses, stages, source kinds, amount candidate types, crawl modes, and lifecycle link types.
+- Kept the change documentation-only: no entity property names, types, EF mappings, indexes, migrations, or runtime behavior were changed.
+
+Verification:
+
+- Coverage scan confirmed all public entity/model fields and enum-like values in scope have XML summaries.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+
+## 2026-06-29 BidOps Lifecycle Source Notice Reparse
+
+Completed:
+
+- Added a closure-page action to reparse the matched 前置公告 RawNotice from the “对应前置公告” context area.
+- Changed 前置公告 “AI提示词辅助解析” to run RawNotice structured reparse with the reviewer prompt, instead of only queuing per-link lifecycle field enrichment.
+- Reused the existing attachment extraction and structured parsing pipeline; no duplicate 前置公告 parser was added.
+- Extended the attachment-process job result with `structuredParseJobId` so the closure page waits for the actual structured-parse child job before refreshing package/amount evidence.
+- Repaired the local BidOps Global DB background-job cancellation columns idempotently, then restarted WebApi and Worker so source-notice reparse jobs can be enqueued and consumed locally.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "AttachmentProcessJobHandler_ReturnsStructuredParseChildJobId|StructuredParseJobHandler_ReturnsJsonResultSummary|LifecycleDebugController_DeclaresReverseClosureRoutes" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 3 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+- `dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -- ensure-background-job-cancellation ...` succeeded.
+- Local WebApi is listening on `http://localhost:5260`, Vite remains on `http://localhost:5173`, and Atlas.Worker is running with `Environment=BidOpsLocal`.
+
+## 2026-06-29 BidOps Lifecycle Project Code And Source Notice Matching Fix
+
+Completed:
+
+- Fixed lifecycle source-notice matching so `SourceNoticeId=url:*` metadata is not treated as a business project code. The previous normalization could collapse this to `URL`, then infer unrelated 前置公告 from broad `url:` matches.
+- Added guarded extraction of 6-character alphanumeric project/batch codes from lot numbers such as `23FEA1-9012006-0001` when explicit `ProjectCode` is blank or only contains metadata.
+- Pre-enriched lifecycle link project codes from link lot number and reviewed outcome supplier evidence before source-notice lookup, so inferred 前置公告 search uses the corrected project code.
+- Removed raw `SourceNoticeId` as a fallback for award-evidence project-code construction and rejected metadata tokens such as `URL`, `SourceUrl`, `ProjectCode`, and `ListPublishTime`.
+- Reused the corrected project-code resolution in single-link source-notice search, import, confirmation, and field-enrichment flows. Award attachment names such as `23FEA1 成交结果公告.pdf` now participate in project-code resolution, so old rows persisted with `ProjectCode=URL` still search State Grid by `23FEA1`.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsJobProjectCode_DoesNotUseMetadataFieldNamesAfterBlankProjectCode|BidOpsReverseLifecycleClosureService_DerivesSixCharacterProjectCodeFromLotNo|BidOpsReverseLifecycleClosureService_KeepsAllVisibleOutcomeAndProcurementCandidates|BidOpsRawNoticeTextFormatter_ConvertsStateGridFieldsToChineseDisplayText" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 4 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReverseLifecycleClosureService_DerivesSixCharacterProjectCodeFromLotNo|BidOpsReverseLifecycleClosureService_DerivesProjectCodeFromAwardAttachmentFileName|BidOpsReverseLifecycleClosureService_KeepsAllVisibleOutcomeAndProcurementCandidates" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 3 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `git diff --check` succeeded.
+
+## 2026-06-29 BidOps P1 Closure Detail Amount Candidate Fix
+
+Completed:
+
+- Fixed closure amount-candidate reads returning an empty pool by registering `BidOpsDataResources.AmountCandidate` in the BidOps authorization catalog.
+- Hardened amount-candidate upsert idempotency by de-duplicating drafts with `TenantId + SourceHash` and ignoring unique-key races as a read-time backfill no-op.
+- Added a deterministic fallback for outcome evidence rows whose source notice table declares `中标服务费（万元）`: values such as `1.7000` are normalized to `17000` CNY and classified as `agency_fee`, not as a final award amount.
+- Cleared stale derived amount candidates for local RawNotice `328250250680733696` only, then regenerated them through the normal lifecycle detail API.
+- Restarted the local WebApi; it is listening on `http://localhost:5260` behind the existing Vite proxy.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded before WebApi restart.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsModule_RegistersAuthorizationCatalog|BidOpsAmountCandidateExtractor|LifecycleDebugController_DeclaresReverseClosureRoutes|BidOpsReverseLifecycleClosureService_KeepsAllVisibleOutcomeAndProcurementCandidates" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 13 passed.
+- Authenticated smoke through `http://localhost:5173` returned 11 lifecycle links and 8 amount candidates for the first detail row of RawNotice `328250250680733696`.
+- Smoke confirmed `1.7000` appears as `AmountValue=17000`, `AmountUnit=万元`, `AmountType=agency_fee`, `Status=Rejected`.
+- `git diff --check` succeeded.
+
+## 2026-06-29 BidOps P1 Local Amount Candidate Migration Repair
+
+Completed:
+
+- Fixed the P1 tenant migration metadata so `20260629093000_v0.2.21-bidops-amount-candidates` is visible to the Atlas tenant migration planner.
+- Added `tools/Atlas.LocalSetup ensure-bidops-amount-candidates` for local BidOps databases that already have legacy tables but no EF migration history.
+- Applied the local helper to `atlas_bidops_runtime`, creating `bidops_amount_candidate` and its indexes idempotently.
+- Re-ran the failing lifecycle closure URL through the Vite proxy with a fresh local login token; it now returns `HTTP 200` with 11 rows.
+
+Verification:
+
+- `dotnet build src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+- `dotnet build tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded.
+- `dotnet run --project tools\Atlas.LocalSetup\Atlas.LocalSetup.csproj --no-build -- ensure-bidops-amount-candidates ...` succeeded.
+
+## 2026-06-29 BidOps P1 Amount Candidate Pool And Evidence Chain
+
+Completed:
+
+- Added the tenant-scoped `bidops_amount_candidate` table and `AmountCandidate` entity for formal amount candidates, including raw/source notice, attachment, source location, context/evidence text, amount type, normalized value, status, reject reason, selection audit fields, and tenant-scoped `SourceHash` idempotency.
+- Added rule-based amount candidate extraction for money, percentages, and Chinese discount expressions such as `八五折`; normalization covers `元`, `万元`, `亿/亿元`, `￥/¥`, `%/％`, and discount/rate values.
+- Added amount type recognition for winning/deal/quote/budget/ceiling/agency fee/deposit/unit/rate/discount/reduction/unknown. Budget, ceiling, agency fee, deposit, unit price, rate, discount, and reduction candidates are preserved but not treated as final award amounts by default.
+- Wired public review detail and lifecycle closure detail to the same `amount_candidate` pool. Public review now returns/displays `AmountCandidates`, and closure rows display all related candidates grouped by `Selected`, `Recommended`, `Candidate`, `Unresolved`, and `Rejected`.
+- Added lifecycle debug/operation endpoints for amount candidates: list, debug, select as final amount, mark type, reject, and restore. Selecting a candidate updates the existing `LifecyclePackageLink.FinalAwardAmount` / `FinalAwardAmountSource` fields while keeping only one selected candidate per lifecycle link.
+- Replaced the closure detail's split outcome/procurement candidate tables with a unified evidence-chain table showing source file/title, source location, amount type/status, context snippet, and operations.
+- Updated product-facing UI wording from generic “采购公告” to “前置公告” in BidOps frontend surfaces touched by this flow. Matching keywords still retain “采购公告” where needed to recognize real public notice text.
+- Confirmed no second ZIP parser was added: ZIP-in-ZIP Word/Excel parsing is already implemented in `BidOpsTextExtractor.ExtractZipTextAsync`, which recursively extracts supported inner files into the parent attachment text with `Archive:` / `File:` headers and `ParseError:` diagnostics.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "AmountCandidate|BidOpsAmountCandidateExtractor|LifecycleDebugController_DeclaresReverseClosureRoutes|BidOpsModule_RegistersServicesAndBackgroundHandlers" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsP1Tests\"` succeeded: 13 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsP1WebApi\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsP1Worker\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Data.Tenant.Migrations\Atlas.Data.Tenant.Migrations.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsP1TenantMigrations\"` succeeded with 0 warnings and 0 errors.
+
+## 2026-06-29 BidOps P0 Source Notice And Candidate Consistency
+
+Completed:
+
+- Added a rule-based source-notice classifier for award/result notices. Public bidding results now prefer 招标公告 then 投标邀请书 before procurement columns; negotiated/deal results prefer procurement columns first.
+- Updated State Grid lifecycle source-notice search to pass classified menu order and sort candidates by exact project-code match plus preferred source-notice type.
+- Changed lifecycle closure UI wording from “采购公告” as the generic corresponding notice to “前置公告”, including missing-state and search-dialog copy.
+- Extended lifecycle link DTO/read enrichment with project process type, procurement method, source notice type/column, searched-column candidate counts, outcome amount candidates, candidate-notice rows, procurement detail candidates, and existing attachment lists.
+- Updated the closure detail drawer to show “中标金额：未确认” when final amount is empty and to display unbound/unconfirmed candidate amount rows instead of hiding them.
+- Increased ZIP recursion depth to 5 and kept nested ZIP Word/Excel parsing in the existing text extractor. Inner archive entries now emit file path headers and `ParseError:` lines for broken or unsafe entries instead of being silently ignored.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsP0BuildFinal\"` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsSourceNoticeClassifier_ClassifiesPublicTenderAwardAsBidding|BidOpsSourceNoticeClassifier_ClassifiesNegotiatedDealAsNonBidding|BidOpsTextExtractor_ExtractsNestedZipExcelEntries|BidOpsTextExtractor_RecordsNestedZipParseErrors|BidOpsReverseLifecycleClosureService_KeepsAllVisibleOutcomeAndProcurementCandidates" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsP0Tests\"` succeeded: 5 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsReverseClosureTests|BidOpsTextExtractor_ExtractsHtmlText|BidOpsTextExtractor_ExtractsXlsxWorksheetText|BidOpsTextExtractor_ExtractsGbkZipEntryNames|BidOpsTextExtractor_ExtractsDocxTablesAsMarkdown|BidOpsTextExtractor_ExtractsNestedZipExcelEntries|BidOpsTextExtractor_RecordsNestedZipParseErrors" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsP0BroadTests\"` succeeded: 57 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsP0WebApiBuild\"` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsP0WorkerBuild\"` succeeded with 0 warnings and 0 errors.
+
 ## 2026-06-29 BidOps Review Page Top/Bottom Jump Controls
 
 Completed:
@@ -2933,3 +3241,74 @@ Completed:
 Verification:
 
 - `npm run typecheck` succeeded in `frontend/atlas-admin`.
+
+## 2026-07-01 BidOps Award Collection Auto Procurement Closure
+
+Completed:
+
+- Added lifecycle closure service support for auto-collecting the corresponding 前置公告 when an award/result notice is parsed. The flow reuses the closure page's State Grid project-code candidate search and only auto-imports when an exact candidate can be selected unambiguously.
+- Wired `StructuredParseJobHandler` and `OutcomeSupplierExtractJobHandler` to refresh lifecycle links and then auto-collect/auto-review procurement notices for result notices.
+- Updated outcome supplier extraction enqueue sites after review approval, review AI reparse, and supplier backfill to set `RefreshLifecycleLinks=true`.
+- Added backend lifecycle batch review and award-level auto-review endpoints. Auto-review skips failed/status-only rows, rows without a linked procurement notice, low-score links, and rows whose final amount source looks like a service fee.
+- Updated the lifecycle closure page to call the backend batch-review API and added an `自动补采集/审核` action for the current award notice.
+
+Verification:
+
+- `dotnet build Atlas.sln --no-restore` succeeded with 0 warnings and 0 errors after stopping the running WebApi/Worker that locked BidOps DLLs.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-build --filter "FullyQualifiedName~BidOpsReverseClosureTests"` succeeded: 78 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --no-build --filter "FullyQualifiedName~StructuredParseJobHandler|FullyQualifiedName~OutcomeSupplierExtractJobHandler"` succeeded: 4 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- Restarted WebApi with the `bidops-local` launch profile and Worker with `DOTNET_ENVIRONMENT=BidOpsLocal`.
+- WebApi probe returned `HTTP 401` at `http://localhost:5260/api/auth/context`; frontend probe returned `HTTP 200` at `http://localhost:5173`; Worker PID `21440` started and completed BidOps scheduled scan/recovery startup tasks.
+
+## 2026-07-01 BidOps Queue Health UTC Clock Fix
+
+Completed:
+
+- Investigated the operations page `超期未成功` status after restarting/continuing a BidOps crawl queue. Local Worker had completed channel `330104` backfill jobs successfully, and `bidops_crawl_channel.LastSuccessTime` had been refreshed in UTC.
+- Fixed channel health calculation to compare `LastSuccessTime` with `DateTime.UtcNow` instead of local `DateTime.Now`, preventing freshly successful UTC crawl timestamps from being misread as hours older.
+- Added regression coverage for `BidOpsOperationsQueryService.GetChannelHealthAsync` so a recently successful UTC crawl channel remains `Healthy`.
+
+Verification:
+
+- `dotnet build Atlas.sln --no-restore` succeeded with 0 warnings and 0 errors after stopping running WebApi/Worker processes that locked BidOps DLLs.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsOperationsQueryService_ChannelHealthUsesUtcClock"` succeeded: 1 passed.
+
+## 2026-07-02 BidOps Review Pool Bulk Approve Timeout
+
+Completed:
+
+- Investigated review-pool bulk approval timeout: WebApi logs showed `/api/bidops/review-tasks/bulk-approve` eventually returned `200` after about 70 seconds, while the frontend Axios timeout is 30 seconds.
+- Confirmed the current review-pool button was submitting all selected review task IDs in one request. The backend endpoint was a synchronous batch wrapper that still approved items one by one and each approved notice synchronously performed formal notice persistence plus organization master-data synchronization, so a 100-item request could exceed the browser request window.
+- Added a real background bulk-approval path: `POST /api/bidops/review-tasks/bulk-approve/job` enqueues one `bidops.review.bulk-approve` job carrying the selected review task IDs. The Worker reuses the existing per-item approval rules and records the merged result in the background-job result payload.
+- Updated `ReviewTaskListPage.vue` so selections larger than 10 create one background bulk-approval job, while smaller batches still use the synchronous endpoint for immediate feedback.
+- Updated the background bulk-approval enqueue path to pre-reserve eligible pending review tasks as `InReview` before the Worker consumes the job. This removes queued items from the `待审核` filter immediately and prevents duplicate selection while the background job is running.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsReviewService_EnqueueBulkApproveReservesEligiblePendingTasks|ReviewTasksController_DeclaresReviewAutomationContracts" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsBulkApproveReserveTests\"` succeeded: 2 passed.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors after a transient lock from a .NET host process cleared.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- Restarted local WebApi and Worker. WebApi returned `HTTP 401` at `http://localhost:5260/api/auth/context`, frontend returned `HTTP 200` at `http://localhost:5173`, and Worker logs showed BidOps recurring tasks starting successfully.
+
+## 2026-07-02 BidOps Review Detail Row Numbers And AI/Persistence Diagnosis
+
+Completed:
+
+- Added explicit `序号` columns to the review detail page's amount candidate, award/result supplier, candidate supplier, and procurement package tables so operators can reference problematic rows in large 100+ row notices.
+- Investigated review task `328124621658394627`: the latest `bidops.outcome.supplier-extract` job returned 166 AI rows, all with empty `lotNo` but complete `lotName/packageNo/supplierName`. The persisted table contained 169 rows; the extra 3 rows were weaker duplicate fallback rows for the same supplier/package/evidence with empty `lotName/packageName`.
+- Verified existing extraction merge tests already cover pruning weak wrapped-table fragments when full package rows exist, so newly re-run outcome extraction should not reintroduce the 3 weak duplicate rows.
+- Fixed amount candidate cache invalidation for outcome reparse: candidates derived from deleted/replaced `OutcomeSupplierRecord` rows are now removed before the raw notice or lifecycle candidate pool is rebuilt.
+- Filtered low-context `unknown` candidates produced by raw notice/attachment full-text scanning when they have no lot/package/supplier context, and stopped generating those text-scan noise candidates going forward.
+- Updated the review detail amount candidate table to display 分标名称 and 包名 first, with 分标编号/包号 as fallbacks.
+- Repaired local data for `RawNoticeId=327970754287243264`: removed 128 stale outcome-derived amount candidates, 3 weak duplicate outcome rows, and 61 no-context text-scan amount candidates. The local outcome detail now has 166 rows with 0 missing `LotName`; amount candidates now have 47 rows with 0 missing `LotName`.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_PrunesWrappedAwardTableFragmentsWhenFullPackageRowsExist|BidOpsOutcomeSupplierExtractionService_PrunesShortLotNameFragmentsWhenFullPackageRowsExist" --no-restore --logger "console;verbosity=minimal"` succeeded: 2 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsAmountCandidateService_DetectsStaleOutcomeRecordCandidate|BidOpsAmountCandidateService_FiltersFailedOutcomeSupplierCandidatesForDisplay|BidOpsAmountCandidateService_FiltersLowContextUnknownTextNoise|BidOpsOutcomeSupplierExtractionService_PrunesWrappedAwardTableFragmentsWhenFullPackageRowsExist" --no-restore --logger "console;verbosity=minimal"` succeeded: 4 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors.
+- Restarted local WebApi and Worker. WebApi returned `HTTP 401` at `http://localhost:5260/api/auth/context`, frontend returned `HTTP 200` at `http://localhost:5173`, and Worker process is running.

@@ -21,6 +21,7 @@ import JobStatusTag from '@/modules/operations/components/JobStatusTag.vue'
 import type { BackgroundJobListItemDto } from '@/modules/operations/types'
 import { formatDuration, formatJobType } from '@/modules/operations/utils/display'
 import type {
+  AmountCandidateDto,
   OutcomeSupplierRecordDto,
   PackageStagingDto,
   RequirementStagingDto,
@@ -30,6 +31,7 @@ import type {
 } from '../../types'
 import {
   formatCategory,
+  formatAmountCandidateType,
   formatCommonStatus,
   formatNoticeType,
   formatPackageNo,
@@ -82,6 +84,7 @@ const rawNotice = computed(() => detail.value?.rawNotice)
 const rawText = computed(() => rawNotice.value?.textContent || rawNotice.value?.textPreview || '')
 const buyer = computed(() => detail.value?.buyer)
 const outcomeSuppliers = computed(() => detail.value?.outcomeSuppliers || [])
+const amountCandidates = computed(() => detail.value?.amountCandidates || [])
 const packages = computed(() => detail.value?.packages || [])
 const attachments = computed(() => detail.value?.attachments || [])
 const qualityIssues = computed(() => detail.value?.qualityIssues || [])
@@ -129,7 +132,14 @@ const outcomeTypeOptions = [
   { label: '中标/成交', value: 'Awarded' },
   { label: '候选', value: 'Candidate' },
   { label: '入围', value: 'Shortlisted' },
+  { label: '流标/失败', value: 'Failed' },
 ]
+const amountCandidateGroups = computed(() => {
+  const order = ['Selected', 'Recommended', 'Candidate', 'Unresolved', 'Rejected']
+  return order
+    .map((status) => ({ status, rows: amountCandidates.value.filter((row) => row.status === status) }))
+    .filter((group) => group.rows.length > 0)
+})
 
 async function loadData() {
   loading.value = true
@@ -376,6 +386,47 @@ function displayText(...values: Array<string | null | undefined>) {
   }
 
   return '-'
+}
+
+function amountCandidateAmountText(row: AmountCandidateDto) {
+  if (row.amountValue === null || row.amountValue === undefined) return row.amountRaw || '-'
+  if (row.amountUnit === 'rate') return `${(Number(row.amountValue) * 100).toFixed(2)}%`
+  if (row.amountUnit === 'discount') return `${(Number(row.amountValue) * 10).toFixed(2)}折`
+  return formatMoney(row.amountValue)
+}
+
+function amountCandidateStatusType(status?: string | null) {
+  if (status === 'Selected') return 'success'
+  if (status === 'Recommended') return 'primary'
+  if (status === 'Rejected') return 'danger'
+  if (status === 'Unresolved') return 'warning'
+  return 'info'
+}
+
+function amountCandidateSourceText(row: AmountCandidateDto) {
+  return displayText(row.evidenceSource, row.sourceFileName, row.sourceTitle, row.sourceKind)
+}
+
+function amountCandidateLocationText(row: AmountCandidateDto) {
+  return displayText(row.sourceLocation, row.rawAttachmentId ? `附件 ${row.rawAttachmentId}` : '', row.rawNoticeId ? `Raw ${row.rawNoticeId}` : '')
+}
+
+function amountCandidateEvidenceRowText(row: AmountCandidateDto) {
+  return displayText(row.evidenceRowText, row.evidenceText, row.contextText, row.rejectReason)
+}
+
+function amountCandidatePackageContextText(row: AmountCandidateDto) {
+  const lot = displayText(row.lotName, row.lotNo)
+  const pkg = displayText(row.packageName, row.packageNo)
+  return `${lot} / ${pkg} / ${displayText(row.supplierName)}`
+}
+
+function amountCandidateUnitBasisText(row: AmountCandidateDto) {
+  const header = displayText(row.evidenceHeaderText)
+  const unit = displayText(row.evidenceUnitText, row.amountUnit)
+  const scale = row.evidenceUnitScale ? `换算系数 ${Number(row.evidenceUnitScale).toLocaleString('zh-CN')}` : ''
+  const tenThousand = row.evidenceHasTenThousandYuanUnit ? '表头/上下文含万元' : '未见万元表头'
+  return [header ? `表头：${header}` : '', unit ? `单位：${unit}` : '', scale, tenThousand].filter(Boolean).join('；') || '-'
 }
 
 function createEmptyOutcomeForm(): OutcomeEditForm {
@@ -849,7 +900,7 @@ onUnmounted(() => {
             <div class="ai-reparse-heading">
               <div>
                 <h2>AI 解析调整</h2>
-                <p>通过补充提示词重跑当前采购公告的公告字段、包件、金额和资格要求。</p>
+                <p>通过补充提示词重跑当前前置公告的公告字段、包件、金额和资格要求。</p>
               </div>
               <el-link v-if="rawReparseJobId" type="primary" @click="openJob(rawReparseJobId)">
                 任务 {{ rawReparseJobId }}
@@ -871,6 +922,51 @@ onUnmounted(() => {
             </div>
           </section>
 
+          <section class="amount-candidate-panel">
+            <div class="section-heading compact">
+              <h2 class="section-title">金额候选池</h2>
+              <el-tag effect="light">{{ amountCandidates.length }} 条</el-tag>
+            </div>
+            <el-empty v-if="amountCandidates.length === 0" description="未识别到金额候选" />
+            <template v-for="group in amountCandidateGroups" :key="group.status">
+              <div class="candidate-group-heading">
+                <h3>{{ formatCommonStatus(group.status) }}</h3>
+                <el-tag effect="light">{{ group.rows.length }} 条</el-tag>
+              </div>
+              <el-table :data="group.rows" border size="small" empty-text="未识别到金额候选">
+                <el-table-column type="index" label="序号" width="70" fixed="left" />
+                <el-table-column label="金额" width="140" align="right">
+                  <template #default="{ row }">{{ amountCandidateAmountText(row) }}</template>
+                </el-table-column>
+                <el-table-column label="类型" width="120">
+                  <template #default="{ row }">{{ formatAmountCandidateType(row.amountType) }}</template>
+                </el-table-column>
+                <el-table-column label="状态" width="105">
+                  <template #default="{ row }">
+                    <el-tag :type="amountCandidateStatusType(row.status)" effect="light">{{ formatCommonStatus(row.status) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="来源" min-width="170" show-overflow-tooltip>
+                  <template #default="{ row }">{{ amountCandidateSourceText(row) }}</template>
+                </el-table-column>
+                <el-table-column label="位置" min-width="190" show-overflow-tooltip>
+                  <template #default="{ row }">{{ amountCandidateLocationText(row) }}</template>
+                </el-table-column>
+                <el-table-column label="表头/单位" min-width="240" show-overflow-tooltip>
+                  <template #default="{ row }">{{ amountCandidateUnitBasisText(row) }}</template>
+                </el-table-column>
+                <el-table-column label="分标/包/供应商" min-width="260" show-overflow-tooltip>
+                  <template #default="{ row }">
+                    {{ amountCandidatePackageContextText(row) }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="原始行" min-width="300" show-overflow-tooltip>
+                  <template #default="{ row }">{{ amountCandidateEvidenceRowText(row) }}</template>
+                </el-table-column>
+              </el-table>
+            </template>
+          </section>
+
           <template v-if="noticeKind === 'award'">
             <div class="section-heading">
               <h2 class="section-title">中标/成交明细</h2>
@@ -887,6 +983,7 @@ onUnmounted(() => {
               </PermissionButton>
             </div>
             <el-table :data="awardRows" border size="small" empty-text="未识别到中标/成交明细">
+              <el-table-column type="index" label="序号" width="70" fixed="left" />
               <el-table-column v-if="awardColumnVisible.projectCode" label="采购编号" min-width="150" show-overflow-tooltip>
                 <template #default="{ row }">{{ outcomeProjectCode(row) }}</template>
               </el-table-column>
@@ -949,6 +1046,7 @@ onUnmounted(() => {
               </PermissionButton>
             </div>
             <el-table :data="candidateRows" border size="small" empty-text="未识别到候选人明细">
+              <el-table-column type="index" label="序号" width="70" fixed="left" />
               <el-table-column v-if="candidateColumnVisible.projectCode" label="采购编号" min-width="150" show-overflow-tooltip>
                 <template #default="{ row }">{{ outcomeProjectCode(row) }}</template>
               </el-table-column>
@@ -1049,10 +1147,11 @@ onUnmounted(() => {
           </template>
 
           <template v-else-if="noticeKind === 'procurement'">
-            <h2 class="section-title">采购公告明细</h2>
+            <h2 class="section-title">前置公告明细</h2>
             <el-empty v-if="procurementPackages.length === 0" description="没有解析到采购包件" />
             <template v-else>
               <el-table :data="procurementPackages" border size="small" empty-text="没有解析到采购包件">
+                <el-table-column type="index" label="序号" width="70" fixed="left" />
                 <el-table-column label="分标编号" min-width="130" show-overflow-tooltip>
                   <template #default="{ row }">{{ row.lotNo || '-' }}</template>
                 </el-table-column>
@@ -1506,8 +1605,29 @@ onUnmounted(() => {
   margin-bottom: 10px;
 }
 
+.section-heading.compact {
+  margin-top: 0;
+}
+
 .section-heading .section-title {
   margin: 0;
+}
+
+.amount-candidate-panel {
+  margin-top: 18px;
+}
+
+.candidate-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 8px;
+}
+
+.candidate-group-heading h3 {
+  margin: 0;
+  color: #17202a;
+  font-size: 14px;
 }
 
 .org-review {

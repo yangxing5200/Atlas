@@ -156,6 +156,59 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         return result;
     }
 
+    public async Task<EnqueueJobDto> EnqueueBulkApproveAsync(
+        BulkApproveReviewTasksRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var ids = NormalizeReviewTaskIds(request.ReviewTaskIds);
+        if (ids.Count == 0)
+            throw new AtlasException("请选择需要批量确认的审核任务。");
+        if (!TryParseEnum<ReviewQualityRiskLevel>(request.ExpectedRiskLevel, out var expectedRiskLevel))
+            expectedRiskLevel = ReviewQualityRiskLevel.Low;
+
+        var tenant = RequireTenant();
+        var userId = RequireUser();
+        var eligibleIds = await FindPendingBulkApproveEligibleTaskIdsAsync(
+            tenant,
+            ids,
+            expectedRiskLevel,
+            request.MaxHighRiskIssueCount,
+            ct);
+        if (eligibleIds.Count == 0)
+            throw new AtlasException("没有符合低风险批量确认条件的待审核任务。");
+
+        var runId = Guid.NewGuid().ToString("N");
+        var result = await _jobs.EnqueueAsync(
+            new EnqueueBackgroundJobRequest<ReviewBulkApproveJobPayload>
+            {
+                JobType = BidOpsBackgroundJobTypes.ReviewBulkApprove,
+                Queue = BidOpsBackgroundJobQueues.BidOps,
+                JobName = $"BidOps review bulk approve ({eligibleIds.Count})",
+                TenantId = tenant,
+                StoreId = _identity.StoreId,
+                DeduplicationKey = $"bidops:review-bulk-approve:{tenant}:{runId}",
+                Priority = BidOpsBackgroundJobPriorities.Manual,
+                // 先让 API 预占任务状态，避免 Worker 抢先执行后列表仍短暂显示为“待审核”。
+                AvailableAtUtc = DateTime.Now.AddSeconds(5),
+                MaxAttempts = 1,
+                Payload = new ReviewBulkApproveJobPayload(
+                    tenant,
+                    _identity.StoreId,
+                    userId,
+                    _identity.UserName,
+                    eligibleIds,
+                    request.Remark,
+                    expectedRiskLevel.ToString(),
+                    request.MaxHighRiskIssueCount)
+            },
+            ct);
+
+        await ReservePendingReviewTasksForBulkApproveAsync(tenant, eligibleIds, result.JobId, userId, ct);
+        return new EnqueueJobDto(result.JobId, result.JobType, result.Queue, result.AlreadyExists);
+    }
+
     public async Task<BulkReviewTaskActionResultDto> BatchReparseAsync(
         BatchReviewTaskReparseRequest request,
         CancellationToken ct = default)
@@ -453,7 +506,8 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
                     _identity.UserName,
                     raw.Id,
                     prompt,
-                    noticeStaging.ProjectCode)
+                    noticeStaging.ProjectCode,
+                    RefreshLifecycleLinks: true)
             },
             ct);
 
@@ -488,7 +542,14 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         if (string.IsNullOrWhiteSpace(supplierNameNormalized))
             throw new AtlasException("厂家名称无效，请重新填写。");
 
+        var evidenceText = Truncate(request.EvidenceText, 2000);
         var outcomeType = NormalizeOutcomeType(request.OutcomeType, context.NoticeStaging.NoticeType);
+        outcomeType = BidOpsOutcomeRecordPolicy.NormalizeOutcomeTypeForPersistence(
+            outcomeType,
+            supplierName,
+            evidenceText,
+            outcomeType);
+        var isNonAwardOutcome = outcomeType == BidOpsOutcomeTypes.Failed;
         var record = new OutcomeSupplierRecord
         {
             Id = _idGenerator.NextId(),
@@ -511,11 +572,11 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
             SupplierNameNormalized = supplierNameNormalized,
             OutcomeType = outcomeType,
             Rank = NormalizeRank(request.Rank),
-            AwardAmount = NormalizeAmount(request.AwardAmount, "成交/报价金额"),
-            ProcurementAgencyServiceFeeAmount = NormalizeAmount(request.ProcurementAgencyServiceFeeAmount, "代理服务费"),
+            AwardAmount = isNonAwardOutcome ? null : NormalizeAmount(request.AwardAmount, "成交/报价金额"),
+            ProcurementAgencyServiceFeeAmount = isNonAwardOutcome ? null : NormalizeAmount(request.ProcurementAgencyServiceFeeAmount, "代理服务费"),
             ExtractionOrder = await GetNextOutcomeExtractionOrderAsync(context.Raw.TenantId, context.Raw.Id, ct),
             Currency = "CNY",
-            EvidenceText = Truncate(request.EvidenceText, 2000),
+            EvidenceText = evidenceText,
             ExtractionConfidence = 1m
         };
         record.SourceHash = ComputeManualSourceHash(record);
@@ -573,12 +634,20 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         record.Category = Truncate(request.Category, 128);
         record.SupplierName = Truncate(supplierName, 300);
         record.SupplierNameNormalized = supplierNameNormalized;
-        record.OutcomeType = NormalizeOutcomeType(request.OutcomeType, context.NoticeStaging.NoticeType);
+        var evidenceText = Truncate(request.EvidenceText, 2000);
+        var outcomeType = NormalizeOutcomeType(request.OutcomeType, context.NoticeStaging.NoticeType);
+        outcomeType = BidOpsOutcomeRecordPolicy.NormalizeOutcomeTypeForPersistence(
+            outcomeType,
+            supplierName,
+            evidenceText,
+            outcomeType);
+        var isNonAwardOutcome = outcomeType == BidOpsOutcomeTypes.Failed;
+        record.OutcomeType = outcomeType;
         record.Rank = NormalizeRank(request.Rank);
-        record.AwardAmount = NormalizeAmount(request.AwardAmount, "成交/报价金额");
-        record.ProcurementAgencyServiceFeeAmount = NormalizeAmount(request.ProcurementAgencyServiceFeeAmount, "代理服务费");
+        record.AwardAmount = isNonAwardOutcome ? null : NormalizeAmount(request.AwardAmount, "成交/报价金额");
+        record.ProcurementAgencyServiceFeeAmount = isNonAwardOutcome ? null : NormalizeAmount(request.ProcurementAgencyServiceFeeAmount, "代理服务费");
         record.Currency = "CNY";
-        record.EvidenceText = Truncate(request.EvidenceText, 2000);
+        record.EvidenceText = evidenceText;
         record.ExtractionConfidence = 1m;
         record.SourceHash = ComputeManualSourceHash(record);
 
@@ -730,6 +799,56 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
             .Distinct()
             .Take(100)
             .ToList();
+    }
+
+    private async Task<List<long>> FindPendingBulkApproveEligibleTaskIdsAsync(
+        long tenantId,
+        IReadOnlyList<long> ids,
+        ReviewQualityRiskLevel expectedRiskLevel,
+        int maxHighRiskIssueCount,
+        CancellationToken ct)
+    {
+        var query = await _reviewTasks.QueryAsync(tenantId, ct);
+        var eligibleIds = await query
+            .Where(x =>
+                ids.Contains(x.Id) &&
+                x.Status == ReviewTaskStatus.Pending &&
+                x.RiskLevel == expectedRiskLevel &&
+                x.HighRiskIssueCount <= maxHighRiskIssueCount)
+            .SelectToListAsync(x => x.Id, ct);
+        var eligibleSet = eligibleIds.ToHashSet();
+        return ids.Where(eligibleSet.Contains).ToList();
+    }
+
+    private async Task ReservePendingReviewTasksForBulkApproveAsync(
+        long tenantId,
+        IReadOnlyList<long> ids,
+        long jobId,
+        long userId,
+        CancellationToken ct)
+    {
+        if (ids.Count == 0)
+            return;
+
+        var query = await _reviewTasks.QueryTrackingAsync(tenantId, ct);
+        var tasks = await query
+            .Where(x => ids.Contains(x.Id) && x.Status == ReviewTaskStatus.Pending)
+            .ToListAsync(ct);
+        if (tasks.Count == 0)
+            return;
+
+        foreach (var task in tasks)
+        {
+            task.Status = ReviewTaskStatus.InReview;
+            task.AssignedTo = userId;
+            task.Remark = Truncate($"低风险批量确认后台任务已入队：{jobId}", 1000);
+        }
+
+        await _unitOfWork.SaveChangesAsync(ct);
+        _logger.LogInformation(
+            "BidOps reserved {ReservedCount} review tasks for background bulk approval job {JobId}.",
+            tasks.Count,
+            jobId);
     }
 
     private static void AddBulkItem(
@@ -1000,7 +1119,8 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
                         ProjectCode: BidOpsJobProjectCode.FirstMeaningful(
                             approvedNotice.ProjectCode,
                             noticeStaging.ProjectCode,
-                            BidOpsJobProjectCode.FromRawNotice(raw)))
+                            BidOpsJobProjectCode.FromRawNotice(raw)),
+                        RefreshLifecycleLinks: true)
                 },
                 ct);
 
@@ -1133,7 +1253,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
             SupplierName = record.SupplierName,
             OutcomeType = record.OutcomeType,
             Rank = record.Rank,
-            AwardAmount = record.AwardAmount,
+            AwardAmount = BidOpsOutcomeRecordPolicy.DisplayAwardAmount(record),
             ProcurementAgencyServiceFeeAmount = record.ProcurementAgencyServiceFeeAmount,
             ExtractionOrder = record.ExtractionOrder,
             Currency = record.Currency,
@@ -1151,6 +1271,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
             BidOpsOutcomeTypes.Awarded => BidOpsOutcomeTypes.Awarded,
             BidOpsOutcomeTypes.Shortlisted => BidOpsOutcomeTypes.Shortlisted,
             BidOpsOutcomeTypes.Candidate => BidOpsOutcomeTypes.Candidate,
+            BidOpsOutcomeTypes.Failed => BidOpsOutcomeTypes.Failed,
             _ when string.Equals(noticeType, "AwardAnnouncement", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(noticeType, "ResultAnnouncement", StringComparison.OrdinalIgnoreCase) => BidOpsOutcomeTypes.Awarded,
             _ => BidOpsOutcomeTypes.Candidate
