@@ -10,4 +10,9 @@ public interface IBidOpsOutcomeSupplierExtractionService
         long rawNoticeId,
         string? reviewerPrompt,
         CancellationToken ct = default);
+
+    Task<OutcomeSupplierRebuildDryRunResultDto> DryRunRawNoticeAsync(
+        long rawNoticeId,
+        string? reviewerPrompt,
+        CancellationToken ct = default);
 }

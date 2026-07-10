@@ -124,6 +124,16 @@ public sealed record OutcomeSupplierExtractJobPayload(
     bool RefreshLifecycleLinks = false)
     : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
 
+public sealed record OutcomeSupplierRebuildDryRunJobPayload(
+    long TenantId,
+    long? StoreId,
+    long UserId,
+    string UserName,
+    long RawNoticeId,
+    string? ReviewerPrompt = null,
+    string? ProjectCode = null)
+    : BidOpsTenantJobPayload(TenantId, StoreId, UserId, UserName);
+
 public sealed record ReviewBulkApproveJobPayload(
     long TenantId,
     long? StoreId,

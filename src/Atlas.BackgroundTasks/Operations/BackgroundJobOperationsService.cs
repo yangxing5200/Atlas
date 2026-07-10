@@ -17,7 +17,6 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
     private const int CancellationRequestedByMaxLength = 200;
     private const string BidOpsQueue = "bidops";
     private const string BidOpsJobTypePrefix = "bidops.";
-    private const string BidOpsModuleName = "BidOps";
     private const string BidOpsStructuredParseJobType = "bidops.ai.structured-parse";
     private const string BidOpsOutcomeSupplierExtractJobType = "bidops.outcome.supplier-extract";
     private const int BidOpsManualRetryPriority = 100;
@@ -51,6 +50,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
 
         var (pageIndex, pageSize) = NormalizePaging(query);
         var now = DateTime.Now;
+
         var builder = BuildQuery(query, bidOpsOnly, now).AsNoTracking();
 
         var total = await builder.CountAsync(ct);
@@ -109,6 +109,7 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
         ArgumentNullException.ThrowIfNull(query);
 
         var now = DateTime.Now;
+
         var builder = BuildQuery(query, bidOpsOnly, now).AsNoTracking();
         var staleThresholdUtc = GetStaleThresholdUtc(now);
 
@@ -237,6 +238,10 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             DeduplicationKey = BuildRetryDeduplicationKey(original, now),
             TenantId = original.TenantId,
             StoreId = original.StoreId,
+            SourceModule = original.SourceModule,
+            BusinessType = original.BusinessType,
+            BusinessId = original.BusinessId,
+            CorrelationId = original.CorrelationId,
             Payload = original.Payload,
             Status = BackgroundJobStatus.Pending,
             Priority = bidOpsOnly ? Math.Max(original.Priority, BidOpsManualRetryPriority) : original.Priority,
@@ -405,31 +410,33 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
                 (x.Result != null && x.Result.Contains(projectCode)));
         }
 
+        if (query.RawNoticeId.HasValue)
+        {
+            builder = ApplyRawNoticeIdFilter(builder, query.RawNoticeId.Value);
+        }
+
         if (!string.IsNullOrWhiteSpace(query.SourceModule))
         {
             var sourceModule = query.SourceModule.Trim();
-            builder = sourceModule.Equals(BidOpsModuleName, StringComparison.OrdinalIgnoreCase)
-                ? ApplyBidOpsScope(builder)
-                : builder.Where(x => x.Payload.Contains(sourceModule));
+            builder = builder.Where(x => x.SourceModule == sourceModule);
         }
 
         if (!string.IsNullOrWhiteSpace(query.BusinessType))
         {
             var businessType = query.BusinessType.Trim();
-            builder = builder.Where(x => x.Payload.Contains(businessType));
+            builder = builder.Where(x => x.BusinessType == businessType);
         }
 
         if (query.BusinessId.HasValue)
         {
-            var businessId = query.BusinessId.Value.ToString();
-            builder = builder.Where(x => x.Payload.Contains(businessId));
+            builder = builder.Where(x => x.BusinessId == query.BusinessId.Value);
         }
 
         if (!string.IsNullOrWhiteSpace(query.CorrelationId))
         {
             var correlationId = query.CorrelationId.Trim();
             builder = builder.Where(x =>
-                x.Payload.Contains(correlationId) ||
+                x.CorrelationId == correlationId ||
                 (x.DeduplicationKey != null && x.DeduplicationKey.Contains(correlationId)));
         }
 
@@ -536,6 +543,19 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             x.JobType.StartsWith(BidOpsJobTypePrefix));
     }
 
+    private static IQueryable<BackgroundJob> ApplyRawNoticeIdFilter(
+        IQueryable<BackgroundJob> query,
+        long rawNoticeId)
+    {
+        if (rawNoticeId <= 0)
+            return query;
+
+        return query.Where(x =>
+            x.SourceModule == BackgroundJobBusinessConstants.BidOpsSourceModule &&
+            x.BusinessType == BackgroundJobBusinessConstants.RawNoticeBusinessType &&
+            x.BusinessId == rawNoticeId);
+    }
+
     private BackgroundJobListItemDto MapListItem(BackgroundJob job, DateTime now)
     {
         var maskedPayload = _masker.MaskJson(job.Payload);
@@ -554,6 +574,10 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             JobName = job.JobName,
             ProjectCode = ExtractProjectCode(job),
             DeduplicationKey = job.DeduplicationKey,
+            SourceModule = job.SourceModule,
+            BusinessType = job.BusinessType,
+            BusinessId = job.BusinessId,
+            CorrelationId = job.CorrelationId,
             TenantId = job.TenantId,
             StoreId = job.StoreId,
             Status = job.Status,
@@ -600,6 +624,10 @@ public sealed class BackgroundJobOperationsService : IBackgroundJobOperationsSer
             JobName = item.JobName,
             ProjectCode = item.ProjectCode,
             DeduplicationKey = item.DeduplicationKey,
+            SourceModule = item.SourceModule,
+            BusinessType = item.BusinessType,
+            BusinessId = item.BusinessId,
+            CorrelationId = item.CorrelationId,
             TenantId = item.TenantId,
             StoreId = item.StoreId,
             Status = item.Status,

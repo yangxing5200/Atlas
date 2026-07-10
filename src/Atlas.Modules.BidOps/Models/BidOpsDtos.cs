@@ -1057,10 +1057,34 @@ public sealed class OutcomeSupplierExtractionResultDto
     public bool IsOutcomeNotice { get; set; }
     public int ExtractedCount { get; set; }
     public int SavedCount { get; set; }
+    public int CandidateCount { get; set; }
+    public int MergeGroupCount { get; set; }
+    public int MergedCandidateCount { get; set; }
     public int BuyerCreatedCount { get; set; }
     public int BuyerUpdatedCount { get; set; }
     public int SupplierCreatedCount { get; set; }
     public int SupplierUpdatedCount { get; set; }
+    public Dictionary<string, int> SourceCounts { get; set; } = [];
+    public Dictionary<string, int> LotNoValidationCounts { get; set; } = [];
+    public Dictionary<string, int> StrengthCounts { get; set; } = [];
+    public string Message { get; set; } = string.Empty;
+}
+
+public sealed class OutcomeSupplierRebuildDryRunResultDto
+{
+    public long RawNoticeId { get; set; }
+    public bool DryRun { get; set; } = true;
+    public bool IsOutcomeNotice { get; set; }
+    public int ExistingCount { get; set; }
+    public int PreviewExtractedCount { get; set; }
+    public int PreviewSavedCount { get; set; }
+    public int CandidateCount { get; set; }
+    public int MergeGroupCount { get; set; }
+    public int MergedCandidateCount { get; set; }
+    public int DeltaCount { get; set; }
+    public Dictionary<string, int> SourceCounts { get; set; } = [];
+    public Dictionary<string, int> LotNoValidationCounts { get; set; } = [];
+    public Dictionary<string, int> StrengthCounts { get; set; } = [];
     public string Message { get; set; } = string.Empty;
 }
 

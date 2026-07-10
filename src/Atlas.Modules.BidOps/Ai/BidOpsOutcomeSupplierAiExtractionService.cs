@@ -38,7 +38,12 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "sourceSequenceNo": { "type": "string" },
+          "sourcePageNo": { "type": ["integer", "null"] },
+          "sourceTableTitle": { "type": "string" },
+          "sourceRowText": { "type": "string" },
           "supplierName": { "type": "string" },
+          "supplierNameRaw": { "type": "string" },
           "outcomeType": { "type": "string" },
           "rank": { "type": ["integer", "null"] },
           "awardAmount": { "type": ["number", "string", "null"] },
@@ -46,15 +51,26 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
           "projectName": { "type": "string" },
           "projectCode": { "type": "string" },
           "buyerName": { "type": "string" },
+          "rawLotNo": { "type": "string" },
           "lotNo": { "type": "string" },
+          "rawLotName": { "type": "string" },
           "lotName": { "type": "string" },
+          "rawPackageNo": { "type": "string" },
           "packageNo": { "type": "string" },
           "packageName": { "type": "string" },
           "category": { "type": "string" },
           "evidenceText": { "type": "string" },
+          "fieldEvidence": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "warnings": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "confidence": { "type": "number" }
         },
-        "required": ["supplierName", "outcomeType", "rank", "awardAmount", "procurementAgencyServiceFeeAmount", "projectName", "projectCode", "buyerName", "lotNo", "lotName", "packageNo", "packageName", "category", "evidenceText", "confidence"]
+        "required": ["sourceSequenceNo", "sourcePageNo", "sourceTableTitle", "sourceRowText", "supplierName", "supplierNameRaw", "outcomeType", "rank", "awardAmount", "procurementAgencyServiceFeeAmount", "projectName", "projectCode", "buyerName", "rawLotNo", "lotNo", "rawLotName", "lotName", "rawPackageNo", "packageNo", "packageName", "category", "evidenceText", "fieldEvidence", "warnings", "confidence"]
       }
     }
   },
@@ -480,7 +496,12 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
 {
   "records": [
     {
+      "sourceSequenceNo": "",
+      "sourcePageNo": null,
+      "sourceTableTitle": "",
+      "sourceRowText": "",
       "supplierName": "",
+      "supplierNameRaw": "",
       "outcomeType": "Awarded|Candidate|Shortlisted|Failed",
       "rank": null,
       "awardAmount": null,
@@ -488,12 +509,22 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
       "projectName": "",
       "projectCode": "",
       "buyerName": "",
+      "rawLotNo": "",
       "lotNo": "",
+      "rawLotName": "",
       "lotName": "",
+      "rawPackageNo": "",
       "packageNo": "",
       "packageName": "",
       "category": "",
       "evidenceText": "",
+      "fieldEvidence": {
+        "supplierName": "",
+        "lotNo": "",
+        "lotName": "",
+        "packageNo": ""
+      },
+      "warnings": [],
       "confidence": 0.0
     }
   ]
@@ -502,6 +533,12 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
 规则：
 - 只提取公开公告中的中标/成交结果、入围、推荐候选人或成交候选人厂家明细。
 - 中文组织名称必须保持公告原文写法，不要改写、翻译或补全。
+- 每条 record 必须对应一个原始业务行；不要把同一业务行的换行片段、列片段或表头片段拆成多条 record。
+- sourceRowText 必须尽量填写完整原始业务行，包含序号、分标编号、分标名称、包号、供应商等可定位信息；如果只能定位到普通正文片段，也要放入最短可解释原文。
+- sourceSequenceNo 放原文行序号/序列号；没有则空字符串。sourcePageNo 放 PDF 页码；没有则 null。sourceTableTitle 放表格标题/附件标题；没有则空字符串。
+- rawLotNo/rawLotName/rawPackageNo/supplierNameRaw 放原文中未清洗的字段值；lotNo/lotName/packageNo/supplierName 放清洗后的字段值。若没有换行、拆分或归一化，raw 字段可以与清洗字段相同。
+- fieldEvidence 用于记录关键字段对应的原文短证据，至少尽量包含 supplierName、lotNo、lotName、packageNo；没有证据的字段填空字符串，不要臆造。
+- warnings 用于记录不确定性，例如“lotNo_split_from_wrapped_text”“missing_amount”“row_boundary_uncertain”；确定无警告时返回空数组。
 - 必填/重点字段取决于公告类型：
 {{expectedFields}}
 - 推荐候选人公示必须提取：采购编号 -> projectCode，分标名称 -> lotName，包号 -> packageNo，包名称 -> packageName，排名 -> rank，推荐的成交候选人/推荐中标候选人 -> supplierName，公开的最终报价 -> awardAmount。lotNo 只有原文表头/上下文明确出现“分标编号/标段编号/分标号/标段号”及对应值时才能填写。
@@ -520,6 +557,7 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
 - “采购代理服务费”“代理服务费”“服务费金额”放到 procurementAgencyServiceFeeAmount，不能放到 awardAmount。
 - 金额统一返回人民币“元”。只有公告单元格、同列表头或紧邻上下文明确标识“万元/万”时，才在返回 JSON 前乘以 10000；没有明确单位或表头未标识万元时，按“元”处理。未知金额、折扣率、费率、百分比返回 null。
 - evidenceText 必须是公告正文或附件文本中的简短原文片段。候选人公示优先包含公开的评审情况、排名或推荐上下文。
+- evidenceText 和 sourceRowText 都不能是模型总结；必须来自公告正文、HTML 表格或附件提取文本。
 - 优先返回完整可信的记录，不要为了凑数量返回大量不确定碎片。如果没有厂家，返回空 records 数组。
 - 下方“规则解析参考结果”只作为参考；如果它漏掉 PDF/表格行，或把正文公共字段混错，你需要根据原文纠正。
 - 如果“审核人员修正提示”和规则解析参考结果冲突，并且公告原文支持审核人员修正提示，则优先按审核人员修正提示提取。
@@ -785,11 +823,13 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
         var extractionOrder = 0;
         foreach (var item in recordsElement.EnumerateArray())
         {
-            var supplierName = Trim(GetString(item, "supplierName"), 300);
+            var sourceRowText = Trim(GetString(item, "sourceRowText"), 2000);
+            var supplierNameRaw = Trim(GetString(item, "supplierNameRaw"), 300);
+            var supplierName = Trim(FirstMeaningful(GetString(item, "supplierName"), supplierNameRaw), 300);
             if (string.IsNullOrWhiteSpace(supplierName) || LooksLikeNonSupplierName(supplierName))
                 continue;
 
-            var evidenceText = Trim(GetString(item, "evidenceText"), 2000);
+            var evidenceText = Trim(FirstMeaningful(GetString(item, "evidenceText"), sourceRowText), 2000);
             var outcomeType = NormalizeOutcomeType(GetString(item, "outcomeType"));
             outcomeType = BidOpsOutcomeRecordPolicy.NormalizeOutcomeTypeForPersistence(
                 outcomeType,
@@ -797,28 +837,54 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
                 evidenceText,
                 outcomeType);
             var isNonAwardOutcome = outcomeType == BidOpsOutcomeTypes.Failed;
+            var rawLotNo = Trim(GetString(item, "rawLotNo"), 300);
+            var rawLotName = Trim(GetString(item, "rawLotName"), 500);
+            var rawPackageNo = Trim(GetString(item, "rawPackageNo"), 300);
             records.Add(new BidOpsOutcomeSupplierExtract
             {
+                SourceSequenceNo = Trim(GetString(item, "sourceSequenceNo"), 64),
+                SourcePageNo = GetNullableInt(item, "sourcePageNo"),
+                SourceTableTitle = Trim(GetString(item, "sourceTableTitle"), 300),
+                SourceRowText = string.IsNullOrWhiteSpace(sourceRowText) ? evidenceText : sourceRowText,
                 SupplierName = supplierName,
                 OutcomeType = outcomeType,
                 Rank = GetNullableInt(item, "rank"),
                 AwardAmount = isNonAwardOutcome ? null : GetAmount(item, "awardAmount"),
                 ProcurementAgencyServiceFeeAmount = isNonAwardOutcome ? null : GetAmount(item, "procurementAgencyServiceFeeAmount"),
                 ExtractionOrder = extractionOrder++,
+                SourceType = BidOpsOutcomeSupplierExtractSourceTypes.AiOutcomeSuppliers,
+                SourceParserVersion = BidOpsOutcomeSupplierExtractParserVersions.AiOutcomeSuppliers,
                 ProjectName = Trim(GetString(item, "projectName"), 500),
                 ProjectCode = Trim(GetString(item, "projectCode"), 128),
                 BuyerName = Trim(GetString(item, "buyerName"), 300),
-                LotNo = Trim(GetString(item, "lotNo"), 128),
-                LotName = Trim(GetString(item, "lotName"), 300),
-                PackageNo = RestorePackagePrefix(Trim(GetString(item, "packageNo"), 128), evidenceText),
+                LotNo = Trim(FirstMeaningful(GetString(item, "lotNo"), rawLotNo), 128),
+                RawLotNo = rawLotNo,
+                RawLotName = rawLotName,
+                LotName = Trim(FirstMeaningful(GetString(item, "lotName"), rawLotName), 300),
+                RawPackageNo = rawPackageNo,
+                PackageNo = RestorePackagePrefix(Trim(FirstMeaningful(GetString(item, "packageNo"), rawPackageNo), 128), evidenceText),
                 PackageName = Trim(GetString(item, "packageName"), 500),
                 Category = Trim(GetString(item, "category"), 128),
                 EvidenceText = evidenceText,
+                FieldEvidence = GetStringDictionary(item, "fieldEvidence"),
+                Warnings = GetStringArray(item, "warnings"),
                 Confidence = ClampConfidence(GetDecimal(item, "confidence") ?? 0.72m)
             });
         }
 
         return records;
+    }
+
+    private static string FirstMeaningful(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+            if (!string.IsNullOrWhiteSpace(cleaned))
+                return cleaned;
+        }
+
+        return string.Empty;
     }
 
     private static bool TryGetProperty(JsonElement element, string name, out JsonElement value)
@@ -848,6 +914,37 @@ public sealed class BidOpsOutcomeSupplierAiExtractionService : IBidOpsOutcomeSup
             ? value.GetString() ?? string.Empty
             : value.GetRawText().Trim('"');
         return BidOpsTextQuality.CleanExtractedValue(raw);
+    }
+
+    private static Dictionary<string, string> GetStringDictionary(JsonElement element, string name)
+    {
+        if (!TryGetProperty(element, name, out var value) || value.ValueKind != JsonValueKind.Object)
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in value.EnumerateObject())
+        {
+            var text = property.Value.ValueKind == JsonValueKind.String
+                ? property.Value.GetString() ?? string.Empty
+                : property.Value.GetRawText().Trim('"');
+            result[property.Name] = Trim(BidOpsTextQuality.CleanExtractedValue(text), 500);
+        }
+
+        return result;
+    }
+
+    private static List<string> GetStringArray(JsonElement element, string name)
+    {
+        if (!TryGetProperty(element, name, out var value) || value.ValueKind != JsonValueKind.Array)
+            return [];
+
+        return value
+            .EnumerateArray()
+            .Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() ?? string.Empty : item.GetRawText().Trim('"'))
+            .Select(item => Trim(BidOpsTextQuality.CleanExtractedValue(item), 300))
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static decimal? GetDecimal(JsonElement element, string name)

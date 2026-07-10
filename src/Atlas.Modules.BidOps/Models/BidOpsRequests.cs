@@ -257,6 +257,11 @@ public sealed class ReviewOutcomeAiReparseRequest
     public string? Prompt { get; set; }
 }
 
+public sealed class OutcomeSupplierRebuildDryRunRequest
+{
+    public string? Prompt { get; set; }
+}
+
 public sealed class BulkApproveReviewTasksRequest
 {
     public List<long> ReviewTaskIds { get; set; } = [];

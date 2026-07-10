@@ -54,6 +54,10 @@ public static class BackgroundTaskServiceCollectionExtensions
         services.TryAddScoped<IBackgroundJobClient, BackgroundJobClient>();
         services.TryAddScoped<IBackgroundJobOperationsService, BackgroundJobOperationsService>();
         services.TryAddScoped<IBackgroundWorkerOperationsService, BackgroundWorkerOperationsService>();
+        services.TryAddEnumerable(
+            ServiceDescriptor.Scoped<IBackgroundJobHandler, BackgroundJobBusinessLinkBackfillJobHandler>());
+        services.TryAddEnumerable(
+            ServiceDescriptor.Scoped<IRecurringTask, BackgroundJobBusinessLinkBackfillEnqueueTask>());
         services.TryAddSingleton<IBackgroundJobProgressReporter, BackgroundJobProgressReporter>();
         services.TryAddSingleton<ISensitiveJsonMasker, SensitiveJsonMasker>();
         services.TryAddSingleton<BackgroundWorkerHeartbeatState>();

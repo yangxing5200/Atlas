@@ -6,6 +6,7 @@ export type BackgroundJobDurationValue = number | string
 export interface BackgroundJobSearchQuery {
   keyword?: string
   projectCode?: string | null
+  rawNoticeId?: BidOpsId | number | null
   tenantId?: BidOpsId | number | null
   queue?: string | null
   jobType?: string | null
@@ -35,6 +36,10 @@ export interface BackgroundJobListItemDto {
   jobName: string
   projectCode: string
   deduplicationKey?: string | null
+  sourceModule?: string | null
+  businessType?: string | null
+  businessId?: BidOpsId | null
+  correlationId?: string | null
   tenantId?: BidOpsId | null
   storeId?: BidOpsId | null
   status: BackgroundJobStatus

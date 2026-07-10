@@ -30,6 +30,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
     private readonly IRepository<TenderPackage> _packages;
     private readonly IRepository<RequirementItem> _requirements;
     private readonly IRepository<OutcomeSupplierRecord> _outcomeRecords;
+    private readonly IRepository<ReviewQualityIssue> _reviewQualityIssues;
     private readonly IRepository<ReviewCorrectionSample> _correctionSamples;
     private readonly IBidOpsOrganizationMasterDataService _organizationMasterData;
     private readonly IUnitOfWork _unitOfWork;
@@ -49,6 +50,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         IRepository<TenderPackage> packages,
         IRepository<RequirementItem> requirements,
         IRepository<OutcomeSupplierRecord> outcomeRecords,
+        IRepository<ReviewQualityIssue> reviewQualityIssues,
         IRepository<ReviewCorrectionSample> correctionSamples,
         IBidOpsOrganizationMasterDataService organizationMasterData,
         IUnitOfWork unitOfWork,
@@ -67,6 +69,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
         _packages = packages ?? throw new ArgumentNullException(nameof(packages));
         _requirements = requirements ?? throw new ArgumentNullException(nameof(requirements));
         _outcomeRecords = outcomeRecords ?? throw new ArgumentNullException(nameof(outcomeRecords));
+        _reviewQualityIssues = reviewQualityIssues ?? throw new ArgumentNullException(nameof(reviewQualityIssues));
         _correctionSamples = correctionSamples ?? throw new ArgumentNullException(nameof(correctionSamples));
         _organizationMasterData = organizationMasterData ?? throw new ArgumentNullException(nameof(organizationMasterData));
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
@@ -487,6 +490,8 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
             throw new AtlasException("已入库或已审核通过的公告不能重新调用 DeepSeek 解析，请选择待审核公告或重新导入公开来源。");
         }
 
+        await ClearReviewQualityForReparseAsync(task, ct);
+
         var reparseRunId = Guid.NewGuid().ToString("N");
         var result = await _jobs.EnqueueAsync(
             new EnqueueBackgroundJobRequest<OutcomeSupplierExtractJobPayload>
@@ -525,6 +530,53 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
             "Outcome supplier AI reparse prompt.",
             ct);
         await _unitOfWork.SaveChangesAsync(ct);
+
+        return new EnqueueJobDto(result.JobId, result.JobType, result.Queue, result.AlreadyExists);
+    }
+
+    public async Task<EnqueueJobDto> EnqueueOutcomeSupplierRebuildDryRunAsync(
+        long rawNoticeId,
+        OutcomeSupplierRebuildDryRunRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        await _runtimeControl.EnsureTasksNotPausedAsync(ct);
+
+        var tenant = RequireTenant();
+        var userId = RequireUser();
+        var prompt = NormalizeOptionalReviewerPrompt(request.Prompt);
+        var raw = await GetRawForUpdateAsync(rawNoticeId, ct);
+
+        var stagingQuery = await _noticeStaging.QueryAsync(ct);
+        var staging = await stagingQuery
+            .Where(x => x.RawNoticeId == raw.Id)
+            .OrderByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        var projectCode = BidOpsJobProjectCode.FirstMeaningful(
+            staging?.ProjectCode,
+            BidOpsJobProjectCode.FromRawNotice(raw));
+        var dryRunId = Guid.NewGuid().ToString("N");
+        var result = await _jobs.EnqueueAsync(
+            new EnqueueBackgroundJobRequest<OutcomeSupplierRebuildDryRunJobPayload>
+            {
+                JobType = BidOpsBackgroundJobTypes.OutcomeSupplierRebuildDryRun,
+                Queue = BidOpsBackgroundJobQueues.BidOps,
+                JobName = "BidOps outcome supplier rebuild dry-run",
+                TenantId = tenant,
+                StoreId = _identity.StoreId,
+                DeduplicationKey = $"bidops:outcome-rebuild-dry-run:{tenant}:{raw.Id}:{dryRunId}",
+                Priority = BidOpsBackgroundJobPriorities.Manual,
+                MaxAttempts = 1,
+                Payload = new OutcomeSupplierRebuildDryRunJobPayload(
+                    tenant,
+                    _identity.StoreId,
+                    userId,
+                    _identity.UserName,
+                    raw.Id,
+                    prompt,
+                    projectCode)
+            },
+            ct);
 
         return new EnqueueJobDto(result.JobId, result.JobType, result.Queue, result.AlreadyExists);
     }
@@ -742,6 +794,7 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
                 task.Remark = reason;
                 task.ReviewerId = null;
                 task.ReviewedAt = null;
+                await ClearReviewQualityForReparseAsync(task, ct);
             }
         }
 
@@ -980,6 +1033,23 @@ public sealed class BidOpsReviewService : IBidOpsReviewService
             throw new AtlasException($"BidOps review task does not exist: {reviewTaskId}");
 
         return task;
+    }
+
+    private async Task ClearReviewQualityForReparseAsync(ReviewTask task, CancellationToken ct)
+    {
+        // 重新解析会生成一轮新的质量结论；旧异常如果继续保留，会误导审核人员判断当前 AI 输入/输出。
+        var issueQuery = await _reviewQualityIssues.QueryTrackingAsync(ct);
+        var issues = await issueQuery
+            .Where(x => x.ReviewTaskId == task.Id)
+            .ToListAsync(ct);
+        if (issues.Count > 0)
+            await _reviewQualityIssues.RemoveRangeAsync(issues, ct);
+
+        task.QualityScore = 100;
+        task.RiskLevel = ReviewQualityRiskLevel.Low;
+        task.QualityIssueCount = 0;
+        task.HighRiskIssueCount = 0;
+        task.ReviewRecommendation = ReviewRecommendation.BatchConfirmCandidate;
     }
 
     private async Task<NoticeStaging> GetNoticeStagingForUpdateAsync(long id, CancellationToken ct)

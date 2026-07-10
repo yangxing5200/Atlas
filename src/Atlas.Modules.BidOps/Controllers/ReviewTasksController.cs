@@ -100,6 +100,13 @@ public sealed class ReviewTasksController : ControllerBase
         [FromQuery] BackgroundJobSearchQuery query,
         CancellationToken ct)
     {
+        var rawNoticeId = await _queries.GetReviewTaskRawNoticeIdAsync(id, ct);
+        if (rawNoticeId.HasValue)
+        {
+            query.RawNoticeId = rawNoticeId.Value;
+            return Ok(await _jobs.SearchAsync(query, bidOpsOnly: true, ct));
+        }
+
         var jobIds = await _queries.GetReviewTaskBackgroundJobIdsAsync(id, ct);
         if (jobIds.Count == 0)
             return Ok(new Atlas.Models.Tenant.Responses.PagedResult<BackgroundJobListItemDto>(

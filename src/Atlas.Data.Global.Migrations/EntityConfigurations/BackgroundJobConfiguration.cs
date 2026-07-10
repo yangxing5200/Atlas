@@ -36,6 +36,18 @@ public sealed class BackgroundJobConfiguration : IEntityTypeConfiguration<Backgr
             .HasColumnType("varchar(300)")
             .HasMaxLength(300);
 
+        builder.Property(x => x.SourceModule)
+            .HasColumnType($"varchar({BackgroundJobBusinessConstants.SourceModuleMaxLength})")
+            .HasMaxLength(BackgroundJobBusinessConstants.SourceModuleMaxLength);
+
+        builder.Property(x => x.BusinessType)
+            .HasColumnType($"varchar({BackgroundJobBusinessConstants.BusinessTypeMaxLength})")
+            .HasMaxLength(BackgroundJobBusinessConstants.BusinessTypeMaxLength);
+
+        builder.Property(x => x.CorrelationId)
+            .HasColumnType($"varchar({BackgroundJobBusinessConstants.CorrelationIdMaxLength})")
+            .HasMaxLength(BackgroundJobBusinessConstants.CorrelationIdMaxLength);
+
         builder.Property(x => x.Payload)
             .IsRequired()
             .HasColumnType("longtext");
@@ -105,5 +117,11 @@ public sealed class BackgroundJobConfiguration : IEntityTypeConfiguration<Backgr
 
         builder.HasIndex(x => new { x.TenantId, x.CreatedAt })
             .HasDatabaseName("IX_BackgroundJobs_Tenant_CreatedAt");
+
+        builder.HasIndex(x => new { x.TenantId, x.SourceModule, x.BusinessType, x.BusinessId, x.CreatedAt })
+            .HasDatabaseName("IX_BackgroundJobs_Tenant_BusinessLink");
+
+        builder.HasIndex(x => new { x.TenantId, x.CorrelationId, x.CreatedAt })
+            .HasDatabaseName("IX_BackgroundJobs_Tenant_Correlation");
     }
 }

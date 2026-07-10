@@ -25,6 +25,7 @@ const JOB_QUERY_CACHE_VERSION = 1
 interface JobTableQuery {
   keyword: string
   projectCode: string
+  rawNoticeId: string
   queue: string
   jobType: string
   status: BackgroundJobStatus | ''
@@ -93,6 +94,7 @@ function createDefaultQuery(): JobTableQuery {
   return {
     keyword: '',
     projectCode: '',
+    rawNoticeId: '',
     queue: bidOpsMode.value ? 'bidops' : '',
     jobType: '',
     status: '',
@@ -141,6 +143,7 @@ function getRouteQueryOverrides(): Partial<JobTableQuery> {
   return pickQueryFields({
     keyword: firstRouteValue(route.query.keyword),
     projectCode: firstRouteValue(route.query.projectCode),
+    rawNoticeId: firstRouteValue(route.query.rawNoticeId),
     queue: firstRouteValue(route.query.queue),
     jobType: firstRouteValue(route.query.jobType),
     status: firstRouteValue(route.query.status) as BackgroundJobStatus | '',
@@ -203,6 +206,7 @@ function normalizeQuery(): BackgroundJobSearchQuery {
   return {
     keyword: query.keyword.trim() || undefined,
     projectCode: query.projectCode.trim() || undefined,
+    rawNoticeId: query.rawNoticeId.trim() || undefined,
     queue: query.queue.trim() || undefined,
     jobType: query.jobType.trim() || undefined,
     status: query.status || undefined,
@@ -254,6 +258,7 @@ async function reset() {
   Object.assign(query, {
     keyword: '',
     projectCode: '',
+    rawNoticeId: '',
     queue: bidOpsMode.value ? 'bidops' : '',
     jobType: '',
     status: '',
@@ -410,6 +415,9 @@ onMounted(async () => {
       </el-form-item>
       <el-form-item v-if="bidOpsMode" label="采购编号">
         <el-input v-model="query.projectCode" clearable placeholder="采购编号 / 项目编号" style="width: 210px" />
+      </el-form-item>
+      <el-form-item v-if="bidOpsMode" label="RawNoticeId">
+        <el-input v-model="query.rawNoticeId" clearable placeholder="公告 ID" style="width: 170px" />
       </el-form-item>
       <el-form-item label="队列">
         <el-input v-model="query.queue" clearable :disabled="bidOpsMode" placeholder="default / bidops" />

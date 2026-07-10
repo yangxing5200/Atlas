@@ -1,7 +1,8 @@
 param(
     [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [string]$Profile = "bidops-local",
-    [int]$StartupWaitSeconds = 3
+    [int]$StartupWaitSeconds = 3,
+    [switch]$NoBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,9 +32,14 @@ foreach ($process in $processes) {
 Start-Sleep -Seconds 1
 
 Write-Host "Starting Atlas.WebApi with launch profile '$Profile'..."
+$noBuildArg = ""
+if ($NoBuild) {
+    $noBuildArg = "--no-build "
+}
+
 $command = @"
 Set-Location -LiteralPath '$ProjectRoot'
-dotnet run --project '$projectPath' --launch-profile '$Profile' *> '$logPath'
+dotnet run $noBuildArg--project '$projectPath' --launch-profile '$Profile' *> '$logPath'
 "@
 
 Start-Process powershell.exe `

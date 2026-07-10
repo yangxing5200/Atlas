@@ -1,5 +1,56 @@
 # Decisions
 
+## 2026-07-09 BidOps Local Right-Click Startup Default
+
+- The combined BidOps local restart script defaults to starting the full local stack: WebApi, Worker, and Atlas Admin frontend. This matches right-click execution from Explorer, where passing `-WithWorker` is awkward and users usually expect background jobs to run.
+- `-SkipWorker` remains available for intentional UI-only debugging. The previous opt-in Worker default is superseded by this decision.
+
+## 2026-07-09 BidOps Local Restart Build Ordering
+
+- The combined BidOps local restart script now owns backend build ordering. It stops WebApi/Worker first, shuts down .NET build servers, builds WebApi and Worker while no runtime process is holding shared output DLLs, then launches both services with `dotnet run --no-build`.
+- This avoids the previous failure mode where WebApi started first and then Worker attempted to rebuild shared projects into the same `bin`/`obj` paths, producing file-lock errors and leaving the page available but background jobs offline.
+- Historical note: this section originally made Worker opt-in via `-WithWorker`, but the right-click startup decision above supersedes that default. UI-only debugging now uses explicit `-SkipWorker`.
+- When Worker starts locally, BidOps AI job concurrency is limited to one structured parse and one outcome-supplier extraction at a time, and scheduled scan/recovery no longer run on Worker startup. This keeps local manual review responsive while preserving the ability to process background jobs deliberately.
+
+## 2026-07-07 BidOps Outcome Rebuild DryRun Scope
+
+- The first rebuild capability is intentionally dry-run only. It reuses the current outcome extraction pipeline and reports existing count, preview count, source distribution, and lot-number validation distribution, but it does not delete or insert `OutcomeSupplierRecord` rows and does not refresh quality issues, lifecycle links, amount candidates, or organization master data.
+- Dry-run is exposed as a background job and raw-notice API so historical announcements can be tested one at a time before an apply/rollback model is designed. Apply remains out of scope until the preview output is validated against real待审核公告.
+- The dry-run result is a diagnostic contract, not yet a persisted extraction run. Full runId/active/rollback storage will be introduced after the preview metrics prove stable.
+
+## 2026-07-03 BidOps Outcome LotNo Evidence From Result Rows
+
+- Outcome supplier extraction should preserve a `LotNo` when the public evidence row itself starts with an ordinal plus a structured lot code, followed by lot context, package number, and supplier name. SGCC result tables often appear as `序号 分标编号 分标名称 包号 供应商`, and PDF/text extraction may omit the table header from the AI evidence snippet.
+- SGCC lot numbers may appear either with multiple separators, such as `18FV2F9003001-14-05`, or as a long prefix with one separator, such as `18FV2F9001005-29`. The single-separator form is trusted only when it has a long alphanumeric prefix and the same evidence row contains package context, so short procurement codes are not promoted to `LotNo`.
+- When PDF table extraction loses column boundaries and a row is reduced to a fragment such as `2-02 房屋维修-总承包 包 38 供应商`, BidOps may enrich the row from other complete rows in the same extraction result. This enrichment is allowed only when the current row's leading lot-name fragment maps to exactly one structured lot number in the same notice; long evidence snippets containing multiple table rows must not be scanned globally for a later matching lot name.
+- The parser still clears unsupported AI `LotNo` values when the evidence does not contain the code and the source text does not show a labeled lot-number context. This keeps procurement project codes from being promoted to lot numbers merely because AI placed them in `lotNo`.
+
+## 2026-07-03 BidOps Background Job RawNotice Search Performance
+
+- Review detail must not block the main audit workflow on diagnostic background-job lookups. Announcement-related jobs are useful for troubleshooting AI input/output, but they should load progressively when the operator opens the “后台任务” tab.
+- Background job `Payload` and `Result` can contain large AI diagnostics. Filtering by `RawNoticeId` with database text search over those fields is not acceptable for the review detail path because it can force MySQL to scan large text columns and hit the 30-second command timeout.
+- Background jobs now carry a generic structured business link: `SourceModule`, `BusinessType`, `BusinessId`, and `CorrelationId`. BidOps announcement jobs use `SourceModule=BidOps`, `BusinessType=RawNotice`, and `BusinessId=<RawNoticeId>`.
+- RawNoticeId job search uses the indexed structured columns as the canonical path. Payload/result/deduplication-key parsing is limited to enqueue-time inference and the one-time historical backfill job; do not reintroduce unbounded `LIKE` filters over large diagnostic text.
+- The business-link string columns are intentionally small (`SourceModule`/`BusinessType` 64, `CorrelationId` 128) so the composite indexes remain compatible with MySQL 5.7 utf8mb4 index length limits.
+
+## 2026-07-03 BidOps Reparse Quality Freshness
+
+- A review reparse represents a new AI extraction attempt. Once the reparse job is accepted, quality issues from the previous extraction are stale and should be removed from the active review surface immediately instead of waiting for Worker completion.
+- If the reparse job fails, operators should diagnose the failure from the announcement-related background jobs and AI request/response diagnostics, not from previous-round quality messages that no longer describe the current attempt.
+- Review detail may still encounter historical duplicate quality rows. The detail query and page defensively de-duplicate active issues by issue type, field, and target object for display, while the write path continues to replace issue rows for the task.
+
+## 2026-07-03 BidOps Review Detail Progressive Rendering
+
+- Review detail must prioritize actionable review content: risk summary, current exceptions, core parsed fields, and approve/ignore actions should be visible before large evidence tables.
+- Heavy evidence such as full announcement text, related background jobs, amount candidate pools, outcome supplier rows, and package requirement details should render progressively through tabs, pagination, and one selected package detail at a time.
+- This remains a frontend/read-model optimization for MVP. The detail API still returns the existing DTO shape, avoiding a new paging contract until operators need server-side paging for individual review-detail subresources.
+
+## 2026-07-03 BidOps Review Detail Job Scope
+
+- 审核详情页的后台任务排障范围按公告 `RawNoticeId` 展示，而不是只展示审核动作显式记录的 jobId。这样同一个公告的附件处理、结构化解析、中标/候选厂家抽取、重析和后续闭环刷新任务可以放在同一个排障视图里。
+- 后台任务表仍属于 Global DB 通用任务基础设施。公告关联通过通用 business-link 字段表达：`SourceModule=BidOps`、`BusinessType=RawNotice`、`BusinessId=<RawNoticeId>`，避免审核详情页扫描 payload/result 大文本。
+- AI 请求侧诊断继续保存在任务结果中的 `requestSummaryJson`、`requestBodyJson`、`requestPrompt`，任务详情页直接展示这些字段用于判断“AI 解析错了”还是“传给 AI 的内容已有问题”。
+
 ## 2026-07-01 BidOps Closure Count Display Safety
 
 - Lifecycle list reads may backfill amount candidates, but amount-candidate evidence must not be able to break closure row display. If an extracted amount exceeds the `decimal(18,6)` storage range, BidOps stores the candidate as unresolved with raw text and evidence instead of persisting an invalid numeric value.
@@ -977,3 +1028,60 @@
 - Amount candidates derived from `OutcomeSupplierRecord` are cached review evidence, not independent source facts. When outcome supplier records are re-extracted and replaced, candidates pointing at deleted outcome rows must be removed before loading the review or lifecycle candidate pool.
 - Raw notice and attachment full-text scans may produce `unknown` numeric candidates from package numbers, page numbers, or voltage levels such as `500 千伏`. If such candidates have no lot/package/supplier context, they should not be shown as reviewable amount candidates and should not be generated going forward.
 - Review-detail amount context should prefer business names (`lotName`, `packageName`) and only fall back to codes (`lotNo`, `packageNo`) when names are absent. This matches how operators identify problematic rows in result notices.
+
+## 2026-07-04 BidOps PDF Structure Preservation
+
+- PDF extraction should preserve table structure before AI parsing. Plain content-order text is still kept for readability, but a coordinate-derived Markdown table section is appended when PdfPig word positions expose a likely table.
+- The MVP stores this structured Markdown in the existing extracted text artifact instead of adding a new `StructuredContentStorageKey` column immediately. This keeps the current attachment processing, review detail display, and AI prompt input path compatible while making the change executable today.
+- Header-derived columns are preferred over whitespace splitting. For State Grid style award/result PDFs, this allows wrapped values such as 分标编号 and 成交供应商 to be merged across visual line breaks instead of relying on ambiguous spaces in the extracted text.
+- A future structured sidecar remains useful for page number, cell coordinates, and confidence diagnostics, but it should be added only after the Markdown path has been validated against pending `NeedsReview` / `NeedsReparse` notices.
+
+## 2026-07-04 BidOps Outcome Supplier Source Hygiene
+
+- Appended `PDF 表格结构` Markdown is useful for operator diagnostics and future structured parsing, but the current outcome-supplier extraction path should not consume it as normal evidence. Otherwise the same PDF can be parsed once from plain content-order text and again from the appended Markdown rows, inflating persisted 中标明细.
+- Until the outcome parser has a dedicated Markdown-table reader, outcome-supplier extraction strips `PDF 表格结构` sections before deterministic parsing and before sending attachment text to the outcome-supplier AI prompt.
+- Final result announcements normalize non-failed outcome rows to `Awarded` even when AI returns `Candidate`. Candidate rows are only valid for candidate/publicity notices; on a 成交/中标结果公告 they create duplicate business rows.
+- Persistence must reject evidence that clearly crossed diagnostic boundaries, such as Markdown pipe rows, `PDF 表格结构` markers, or long evidence strings that include service-notice/instruction text.
+
+## 2026-07-04 BidOps PDF Table Outcome Merge
+
+- `PDF 表格结构` Markdown is now a first-class deterministic outcome source. It should be parsed by a dedicated table parser and merged with AI/text extracts, not treated as ordinary prompt text.
+- The AI outcome prompt still receives the original readable text with diagnostic Markdown removed. This keeps AI recall for natural-language evidence while avoiding the previous row explosion from parsing the same attachment twice.
+- PDF table repair heuristics are allowed to fill missing lot context only from same-row evidence or from unique same-notice context. Ambiguous fragments stay empty so operators can see the unresolved problem instead of receiving a guessed 分标编号.
+- Long State Grid lot codes without hyphens are accepted as 分标编号 only when package-style evidence is present. This avoids promoting arbitrary long alphanumeric values from PDF text into business keys.
+- Supplier-name expansion from truncated PDF rows is limited to unique same-notice complete names and evidence that shows a broken company suffix. Legitimate shorter supplier names should not be rewritten solely because a longer name exists elsewhere.
+
+## 2026-07-04 BidOps Embedded Lot Number Cleanup
+
+- Outcome persistence should treat `LotName` values that begin with a structured State Grid lot number as recoverable extraction artifacts, not as valid business names.
+- If the embedded lot number conflicts with the current `LotNo`, the embedded value wins only when row evidence contains that same lot number and package context. This handles PDF/table context bleed while keeping ambiguous rows visible for manual review.
+- State Grid lot numbers may end with a one-character segment, for example `18FV2F9011002-01-1`; validators must allow that format when the rest of the row has package-style evidence.
+
+## 2026-07-09 BidOps Outcome Candidate Scoring And Merge Diagnostics
+
+- Outcome-supplier candidate strength scoring is a diagnostic signal first, not a hard persistence gate. `Strong`, `Weak`, and `Unsupported` counts help operators compare AI, deterministic PDF-table, and fallback sources before deciding whether to reparse or manually correct.
+- Candidate strength combines completeness, evidence support, and source trust. Structured PDF-table and explicit award evidence are trusted more than legacy text fallback, but weak fallback rows are still useful for filling missing fields when they are covered by a stronger survivor.
+- When an AI or deterministic survivor covers a fallback row, the fallback may only fill blank survivor fields such as buyer, lot, package, amount, category, or evidence. It must not replace the survivor's source identity or produce another persisted outcome row.
+- Background-job result JSON remains the audit source of truth, while the operations detail page renders summary counts above it for faster diagnosis. No new persisted schema column is required for this diagnostic display phase.
+
+## 2026-07-09 BidOps OutcomeSuppliers Schema V2 Intake
+
+- OutcomeSuppliers schema v2 should request raw field values and source-row diagnostics from AI, but the first rollout only carries them through candidate/extract diagnostics. Persisted `OutcomeSupplierRecord` columns stay unchanged until the candidate/survivor model and runId migration are ready.
+- `sourceRowText` is treated as row-level evidence, not as a model explanation. If `evidenceText` is empty, the parser may use `sourceRowText` as the evidence fallback because both must come from public notice text or extracted attachment text.
+- Raw fields such as `rawLotNo`, `rawLotName`, and `rawPackageNo` intentionally preserve line breaks and split artifacts. Normalized fields remain the values used by merge, validation, and final display.
+- `fieldEvidence` and `warnings` are diagnostic inputs for scoring and future field-level source selection. They should improve observability and candidate strength scoring, but they must not silently override normalized business fields.
+
+## 2026-07-09 BidOps Pairwise Outcome Merge
+
+- Outcome-supplier merge should now use pairwise compatibility scoring before survivor selection. The first implementation remains in memory and feeds the existing final-record persistence path; it does not introduce candidate tables or runId storage yet.
+- Automatic mode treats supplier, package, outcome type, rank, and incompatible lot names as hard merge conflicts. This protects cases where the same supplier wins the same package number under different lot names.
+- Survivor selection prefers source trust before strength score. A deterministic/PDF candidate may fill missing fields on an AI survivor, but it should not replace the AI row's primary source identity unless the AI row is absent.
+- Reviewer-prompt mode is allowed to merge rows where the supplier name changed, because prompt-assisted reparsing often corrects the supplier. This relaxation still requires compatible package and lot context.
+- Background-job merge counts are diagnostic summaries: `CandidateCount` is the normalized candidate count before final survivor pruning, `MergeGroupCount` is the final survivor group count, and `MergedCandidateCount` is the number of candidates absorbed or pruned.
+
+## 2026-07-10 BidOps Outcome Reparse Source Hygiene
+
+- Review-detail top `重新解析` and outcome-prompt `让 AI 重新解析` intentionally remain separate paths. The top action reparses raw notice/attachments and then runs structured parsing; the lower action reruns only outcome-supplier extraction with reviewer prompt context.
+- Appended `PDF 表格结构` Markdown may be consumed by the dedicated PDF table parser only when row identity is reliable. Rows with shifted fragments such as a previous-row suffix glued to the next 分标编号 must be dropped unless a trustworthy same-notice lot context can repair them.
+- State Grid result notices often split one business row across `序号`, 分标编号, suffix, 分标名称, 包号, and 成交人 lines. The deterministic parser should reconstruct those rows from readable text before trusting appended PDF-table Markdown.
+- Reviewer-prompt relaxed merge thresholds are only valid when the AI provider returns at least one outcome candidate. If AI returns no candidates, the prompt reparse must fall back to automatic deterministic merge rules so repeated package numbers do not collapse different suppliers.

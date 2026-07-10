@@ -8,6 +8,14 @@ namespace Atlas.Modules.BidOps.Ai;
 
 public sealed class BidOpsOutcomeSupplierExtract
 {
+    public string SourceSequenceNo { get; set; } = string.Empty;
+
+    public int? SourcePageNo { get; set; }
+
+    public string SourceTableTitle { get; set; } = string.Empty;
+
+    public string SourceRowText { get; set; } = string.Empty;
+
     public string SupplierName { get; set; } = string.Empty;
 
     public string OutcomeType { get; set; } = BidOpsOutcomeTypes.Candidate;
@@ -20,6 +28,12 @@ public sealed class BidOpsOutcomeSupplierExtract
 
     public int ExtractionOrder { get; set; }
 
+    public string SourceType { get; set; } = BidOpsOutcomeSupplierExtractSourceTypes.Unknown;
+
+    public string SourceParserVersion { get; set; } = string.Empty;
+
+    public string SourceCallId { get; set; } = string.Empty;
+
     public string ProjectName { get; set; } = string.Empty;
 
     public string ProjectCode { get; set; } = string.Empty;
@@ -28,7 +42,17 @@ public sealed class BidOpsOutcomeSupplierExtract
 
     public string LotNo { get; set; } = string.Empty;
 
+    public string RawLotNo { get; set; } = string.Empty;
+
+    public string LotNoValidationStatus { get; set; } = BidOpsLotNoValidationStatuses.NotValidated;
+
+    public string LotNoValidationReason { get; set; } = string.Empty;
+
+    public string RawLotName { get; set; } = string.Empty;
+
     public string LotName { get; set; } = string.Empty;
+
+    public string RawPackageNo { get; set; } = string.Empty;
 
     public string PackageNo { get; set; } = string.Empty;
 
@@ -38,7 +62,58 @@ public sealed class BidOpsOutcomeSupplierExtract
 
     public string EvidenceText { get; set; } = string.Empty;
 
+    public Dictionary<string, string> FieldEvidence { get; set; } = [];
+
+    public List<string> Warnings { get; set; } = [];
+
     public decimal Confidence { get; set; }
+
+    public int CompletenessScore { get; set; }
+
+    public int EvidenceScore { get; set; }
+
+    public int SourceTrustScore { get; set; }
+
+    public int StrengthScore { get; set; }
+
+    public string StrengthClass { get; set; } = BidOpsOutcomeSupplierStrengthClasses.NotScored;
+}
+
+public static class BidOpsOutcomeSupplierExtractSourceTypes
+{
+    public const string Unknown = "Unknown";
+    public const string AiOutcomeSuppliers = "AiOutcomeSuppliers";
+    public const string LegacyTextParser = "LegacyTextParser";
+    public const string WrappedTextParser = "WrappedTextParser";
+    public const string PdfStructuredTable = "PdfStructuredTable";
+    public const string CandidateEvidenceParser = "CandidateEvidenceParser";
+    public const string AwardEvidenceParser = "AwardEvidenceParser";
+}
+
+public static class BidOpsOutcomeSupplierExtractParserVersions
+{
+    public const string AiOutcomeSuppliers = "ai-outcome-suppliers-v1";
+    public const string LegacyTextParser = "legacy-text-v1";
+    public const string WrappedTextParser = "wrapped-text-v1";
+    public const string PdfStructuredTable = "pdf-structured-table-v1";
+    public const string CandidateEvidenceParser = "candidate-evidence-v1";
+    public const string AwardEvidenceParser = "award-evidence-v1";
+}
+
+public static class BidOpsLotNoValidationStatuses
+{
+    public const string NotValidated = "NotValidated";
+    public const string Empty = "Empty";
+    public const string Accepted = "Accepted";
+    public const string Rejected = "Rejected";
+}
+
+public static class BidOpsOutcomeSupplierStrengthClasses
+{
+    public const string NotScored = "NotScored";
+    public const string Strong = "Strong";
+    public const string Weak = "Weak";
+    public const string Unsupported = "Unsupported";
 }
 
 public static class BidOpsOutcomeSupplierTextParser
@@ -217,6 +292,8 @@ public static class BidOpsOutcomeSupplierTextParser
                             OutcomeType = tableOutcomeType,
                             Rank = ExtractRank(line),
                             AwardAmount = ExtractAmount(line, supplierName, outcomeTableContext),
+                            SourceType = BidOpsOutcomeSupplierExtractSourceTypes.LegacyTextParser,
+                            SourceParserVersion = BidOpsOutcomeSupplierExtractParserVersions.LegacyTextParser,
                             ProjectName = projectName,
                             ProjectCode = projectCode,
                             LotNo = current.LotNo,
@@ -258,6 +335,8 @@ public static class BidOpsOutcomeSupplierTextParser
                     OutcomeType = outcomeType,
                     Rank = ExtractRank(line),
                     AwardAmount = ExtractAmount(line, supplierName, OutcomeTableContext.None),
+                    SourceType = BidOpsOutcomeSupplierExtractSourceTypes.LegacyTextParser,
+                    SourceParserVersion = BidOpsOutcomeSupplierExtractParserVersions.LegacyTextParser,
                     ProjectName = projectName,
                     ProjectCode = projectCode,
                     LotNo = current.LotNo,

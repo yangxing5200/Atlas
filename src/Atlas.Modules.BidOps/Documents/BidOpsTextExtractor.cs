@@ -20,6 +20,7 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
     private const int MaxArchiveEntries = 100;
     private const int MaxArchiveEntryBytes = 20 * 1024 * 1024;
     private const int MinLegacyTextRunLength = 4;
+    private const int MaxPdfTableRowsPerPage = 120;
 
     private static readonly XNamespace WordNamespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
     private static readonly XNamespace SpreadsheetNamespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -513,6 +514,7 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
         foreach (var page in document.GetPages())
         {
             var pageText = ExtractPdfPageText(page);
+            var tableMarkdown = ExtractPdfPageTableMarkdown(page);
             if (!LooksLikeHumanText(pageText))
             {
                 var words = page.GetWords(NearestNeighbourWordExtractor.Instance)
@@ -527,6 +529,14 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
                     builder.AppendLine().AppendLine();
 
                 builder.Append(pageText);
+            }
+
+            if (!string.IsNullOrWhiteSpace(tableMarkdown))
+            {
+                if (builder.Length > 0)
+                    builder.AppendLine().AppendLine();
+
+                builder.Append(tableMarkdown);
             }
 
             if (builder.Length >= MaxExtractedTextLength)
@@ -861,6 +871,348 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
         return NormalizePdfWhitespace(ContentOrderTextExtractor.GetText(page, options));
     }
 
+    private static string ExtractPdfPageTableMarkdown(Page page)
+    {
+        var words = page.GetWords(NearestNeighbourWordExtractor.Instance)
+            .Select(PdfWordBox.FromWord)
+            .Where(x => LooksLikePdfTableWord(x.Text))
+            .ToList();
+        if (words.Count < 4)
+            return string.Empty;
+
+        var tableRows = BuildPdfTableRows(BuildPdfRows(words))
+            .Take(MaxPdfTableRowsPerPage)
+            .ToList();
+        if (tableRows.Count < 2)
+            return string.Empty;
+
+        var builder = new StringBuilder();
+        builder.AppendLine($"PDF 表格结构 Page {page.Number}");
+
+        var header = tableRows.FirstOrDefault(x => LooksLikePdfTableHeader(x));
+        var columnCount = Math.Max(3, tableRows.Max(x => x.Cells.Count));
+        var headers = header?.Cells.Count >= 3
+            ? NormalizeHeaderCells(header.Cells, columnCount)
+            : Enumerable.Range(1, columnCount).Select(x => $"列{x.ToString(CultureInfo.InvariantCulture)}").ToList();
+
+        AppendMarkdownRow(builder, headers);
+        AppendMarkdownRow(builder, headers.Select(_ => "---"));
+
+        foreach (var row in tableRows.Where(x => !ReferenceEquals(x, header)))
+        {
+            AppendMarkdownRow(builder, PadCells(row.Cells, columnCount));
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static IReadOnlyList<PdfTableRow> BuildPdfTableRows(IReadOnlyList<IReadOnlyList<PdfWordBox>> wordRows)
+    {
+        var physicalRows = wordRows
+            .Select(BuildPdfTableRow)
+            .Where(x => x.Cells.Count > 0)
+            .ToList();
+        if (physicalRows.Count == 0)
+            return [];
+
+        var headerIndex = physicalRows.FindIndex(LooksLikePdfTableHeader);
+        if (headerIndex < 0)
+        {
+            return physicalRows
+                .Where(x => x.Cells.Count >= 3 && LooksLikePdfTableRow(x))
+                .ToList();
+        }
+
+        var header = physicalRows[headerIndex];
+        var columnCount = header.CellBoxes.Count;
+        var normalizedHeaders = NormalizeHeaderCells(header.Cells, columnCount);
+        var logicalRows = new List<string[]> { normalizedHeaders.ToArray() };
+        string[]? current = null;
+
+        foreach (var row in physicalRows.Skip(headerIndex + 1))
+        {
+            var assigned = AssignToPdfColumns(row, header.CellBoxes);
+            if (assigned.All(string.IsNullOrWhiteSpace))
+                continue;
+
+            if (IsRepeatedHeaderRow(assigned, normalizedHeaders))
+                continue;
+
+            var startsNewRecord = StartsNewPdfTableRecord(assigned, normalizedHeaders, current == null);
+            if (startsNewRecord || current == null)
+            {
+                current = assigned.ToArray();
+                logicalRows.Add(current);
+                continue;
+            }
+
+            for (var i = 0; i < current.Length; i++)
+            {
+                current[i] = MergePdfContinuationCell(current[i], assigned[i]);
+            }
+        }
+
+        return logicalRows
+            .Select(x => CreatePdfTableRow(x, header.CellBoxes))
+            .Where((x, index) => index == 0 || LooksLikePdfTableRow(x))
+            .ToList();
+    }
+
+    private static IReadOnlyList<IReadOnlyList<PdfWordBox>> BuildPdfRows(IReadOnlyList<PdfWordBox> words)
+    {
+        var medianHeight = Median(words.Select(x => x.Height).Where(x => x > 0));
+        var rowTolerance = Math.Max(3d, medianHeight * 0.55d);
+        var rows = new List<List<PdfWordBox>>();
+
+        foreach (var word in words.OrderByDescending(x => x.CenterY).ThenBy(x => x.Left))
+        {
+            var row = rows.FirstOrDefault(x => Math.Abs(x.Average(item => item.CenterY) - word.CenterY) <= rowTolerance);
+            if (row == null)
+            {
+                row = [];
+                rows.Add(row);
+            }
+
+            row.Add(word);
+        }
+
+        return rows
+            .Select(x => (IReadOnlyList<PdfWordBox>)x.OrderBy(item => item.Left).ToList())
+            .ToList();
+    }
+
+    private static PdfTableRow BuildPdfTableRow(IReadOnlyList<PdfWordBox> row)
+    {
+        var medianHeight = Median(row.Select(x => x.Height).Where(x => x > 0));
+        var gapThreshold = Math.Max(10d, medianHeight * 0.85d);
+        var cells = new List<PdfTableCell>();
+        var current = new StringBuilder();
+        PdfWordBox? previous = null;
+        double currentLeft = 0;
+        double currentRight = 0;
+
+        foreach (var word in row)
+        {
+            if (previous != null && word.Left - previous.Right >= gapThreshold)
+            {
+                AddCell(cells, current, currentLeft, currentRight);
+            }
+
+            if (current.Length == 0)
+                currentLeft = word.Left;
+
+            if (current.Length > 0)
+                current.Append(' ');
+            current.Append(word.Text);
+            currentRight = word.Right;
+            previous = word;
+        }
+
+        AddCell(cells, current, currentLeft, currentRight);
+        return new PdfTableRow(cells.Select(x => x.Text).ToList(), cells);
+    }
+
+    private static void AddCell(
+        List<PdfTableCell> cells,
+        StringBuilder current,
+        double left,
+        double right)
+    {
+        var value = NormalizePdfTableCell(current.ToString());
+        if (!string.IsNullOrWhiteSpace(value))
+            cells.Add(new PdfTableCell(value, left, right));
+        current.Clear();
+    }
+
+    private static string[] AssignToPdfColumns(PdfTableRow row, IReadOnlyList<PdfTableCell> columns)
+    {
+        var assigned = Enumerable.Repeat(string.Empty, columns.Count).ToArray();
+        foreach (var cell in row.CellBoxes)
+        {
+            var index = FindPdfColumnIndex(cell.Center, columns);
+            assigned[index] = MergePdfContinuationCell(assigned[index], cell.Text);
+        }
+
+        return assigned.Select(NormalizePdfTableCell).ToArray();
+    }
+
+    private static int FindPdfColumnIndex(double center, IReadOnlyList<PdfTableCell> columns)
+    {
+        for (var i = 0; i < columns.Count - 1; i++)
+        {
+            var boundary = (columns[i].Center + columns[i + 1].Center) / 2d;
+            if (center < boundary)
+                return i;
+        }
+
+        return columns.Count - 1;
+    }
+
+    private static bool StartsNewPdfTableRecord(
+        IReadOnlyList<string> cells,
+        IReadOnlyList<string> headers,
+        bool isFirstDataRow)
+    {
+        var nonEmptyCount = cells.Count(x => !string.IsNullOrWhiteSpace(x));
+        if (isFirstDataRow)
+            return nonEmptyCount >= 2;
+
+        var sequenceIndex = FindPdfHeaderIndex(headers, "序号", "no", "row");
+        if (sequenceIndex >= 0 &&
+            Regex.IsMatch(cells[sequenceIndex], @"^\d{1,4}$", RegexOptions.CultureInvariant))
+        {
+            return true;
+        }
+
+        var row = CreatePdfTableRow(cells);
+        return nonEmptyCount >= 3 && LooksLikePdfTableRow(row);
+    }
+
+    private static int FindPdfHeaderIndex(IReadOnlyList<string> headers, params string[] tokens)
+    {
+        for (var i = 0; i < headers.Count; i++)
+        {
+            if (ContainsAny(headers[i], tokens))
+                return i;
+        }
+
+        return -1;
+    }
+
+    private static PdfTableRow CreatePdfTableRow(IReadOnlyList<string> cells)
+    {
+        var boxes = cells
+            .Select((x, index) => new PdfTableCell(NormalizePdfTableCell(x), index, index + 1d))
+            .ToList();
+        return new PdfTableRow(boxes.Select(x => x.Text).ToList(), boxes);
+    }
+
+    private static PdfTableRow CreatePdfTableRow(
+        IReadOnlyList<string> cells,
+        IReadOnlyList<PdfTableCell> columns)
+    {
+        var boxes = cells
+            .Select((x, index) =>
+            {
+                var column = index < columns.Count
+                    ? columns[index]
+                    : new PdfTableCell(string.Empty, index, index + 1d);
+                return new PdfTableCell(NormalizePdfTableCell(x), column.Left, column.Right);
+            })
+            .ToList();
+        return new PdfTableRow(boxes.Select(x => x.Text).ToList(), boxes);
+    }
+
+    private static string MergePdfContinuationCell(string existing, string addition)
+    {
+        existing = NormalizePdfTableCell(existing);
+        addition = NormalizePdfTableCell(addition);
+        if (string.IsNullOrWhiteSpace(existing))
+            return addition;
+        if (string.IsNullOrWhiteSpace(addition))
+            return existing;
+
+        return ShouldJoinPdfContinuationWithoutSpace(existing, addition)
+            ? existing + addition
+            : $"{existing} {addition}";
+    }
+
+    private static bool ShouldJoinPdfContinuationWithoutSpace(string left, string right)
+    {
+        if (ContainsCjk(left[^1]) || ContainsCjk(right[0]))
+            return true;
+
+        return LooksLikePdfCodeFragment(left) || LooksLikePdfCodeFragment(right);
+    }
+
+    private static bool LooksLikePdfCodeFragment(string value)
+    {
+        var text = value.Trim();
+        if (text.Contains(' '))
+            return false;
+
+        var hasDigit = text.Any(char.IsDigit);
+        if (!hasDigit)
+            return false;
+
+        return text.Contains('-') ||
+               text.Contains('_') ||
+               text.Any(char.IsLetter) && text.Any(char.IsDigit);
+    }
+
+    private static bool ContainsCjk(char value)
+    {
+        return value >= '\u4e00' && value <= '\u9fff';
+    }
+
+    private static bool LooksLikePdfTableWord(string value)
+    {
+        var trimmed = value.Trim();
+        return trimmed.Length > 0 &&
+               (trimmed.Any(char.IsLetterOrDigit) ||
+                trimmed.Any(ch => ch >= '\u4e00' && ch <= '\u9fff'));
+    }
+
+    private static bool LooksLikePdfTableRow(PdfTableRow row)
+    {
+        var text = string.Join(' ', row.Cells);
+        if (LooksLikePdfTableHeader(row))
+            return true;
+
+        return ContainsAny(text, "包", "分标", "标段", "中标", "成交", "供应商", "中标人", "成交人", "投标人", "lot", "package", "supplier", "winner") ||
+               Regex.IsMatch(text, @"[A-Za-z0-9]{3,}(?:[-_/][A-Za-z0-9]{2,}){1,}", RegexOptions.CultureInvariant);
+    }
+
+    private static bool LooksLikePdfTableHeader(PdfTableRow row)
+    {
+        var text = string.Join(' ', row.Cells);
+        return ContainsAny(text, "分标编号", "标段编号", "分标名称", "标段名称", "lot no", "lot name", "lotno", "lotname") &&
+               ContainsAny(text, "包号", "包件", "分包", "标包", "package no", "packageno", "package") &&
+               ContainsAny(text, "中标人", "成交人", "供应商", "投标人", "supplier", "winner", "bidder");
+    }
+
+    private static IReadOnlyList<string> NormalizeHeaderCells(IReadOnlyList<string> cells, int columnCount)
+    {
+        return PadCells(cells.Select(x => x switch
+        {
+            var value when ContainsAny(value, "分标编号", "标段编号", "lot no", "lotno") => "分标编号",
+            var value when ContainsAny(value, "分标名称", "标段名称", "lot name", "lotname") => "分标名称",
+            var value when ContainsAny(value, "包号", "包件", "分包", "标包", "package no", "packageno", "package") => "包号",
+            var value when ContainsAny(value, "中标人", "成交人", "供应商", "投标人", "supplier", "winner", "bidder") => "成交供应商",
+            _ => x
+        }).ToList(), columnCount);
+    }
+
+    private static IReadOnlyList<string> PadCells(IEnumerable<string> cells, int columnCount)
+    {
+        var result = cells.Select(NormalizePdfTableCell).ToList();
+        while (result.Count < columnCount)
+            result.Add(string.Empty);
+        return result.Count <= columnCount ? result : result.Take(columnCount).ToList();
+    }
+
+    private static string NormalizePdfTableCell(string value)
+    {
+        return NormalizeWhitespace(value).Trim();
+    }
+
+    private static double Median(IEnumerable<double> values)
+    {
+        var ordered = values.Where(x => !double.IsNaN(x) && !double.IsInfinity(x) && x > 0).OrderBy(x => x).ToArray();
+        if (ordered.Length == 0)
+            return 10d;
+
+        var middle = ordered.Length / 2;
+        return ordered.Length % 2 == 1
+            ? ordered[middle]
+            : (ordered[middle - 1] + ordered[middle]) / 2d;
+    }
+
+    private static bool ContainsAny(string value, params string[] tokens)
+    {
+        return tokens.Any(token => value.Contains(token, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static bool LooksLikeHumanText(string value)
     {
         var trimmed = value.Trim();
@@ -1030,6 +1382,37 @@ public sealed partial class BidOpsTextExtractor : IBidOpsTextExtractor
 
         target.Position = 0;
         return target;
+    }
+
+    private sealed record PdfTableRow(
+        IReadOnlyList<string> Cells,
+        IReadOnlyList<PdfTableCell> CellBoxes);
+
+    private sealed record PdfTableCell(
+        string Text,
+        double Left,
+        double Right)
+    {
+        public double Center => (Left + Right) / 2d;
+    }
+
+    private sealed record PdfWordBox(
+        string Text,
+        double Left,
+        double Right,
+        double CenterY,
+        double Height)
+    {
+        public static PdfWordBox FromWord(Word word)
+        {
+            var box = word.BoundingBox;
+            return new PdfWordBox(
+                word.Text,
+                box.Left,
+                box.Right,
+                (box.Bottom + box.Top) / 2d,
+                Math.Abs(box.Top - box.Bottom));
+        }
     }
 
     [GeneratedRegex("<script\\b[^>]*>.*?</script>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Atlas.Modules.BidOps.Ai.Evidence;
 using Atlas.Modules.BidOps.Entities.Outcomes;
 using Atlas.Modules.BidOps.Services;
@@ -14,9 +15,14 @@ public static class BidOpsOutcomeSupplierExtractBuilder
         string text,
         long? rawNoticeId = null)
     {
-        var noticeKind = DetermineNoticeKind(title, noticeType, sourceUrl, text);
-        var textExtracts = BidOpsOutcomeSupplierTextParser.Extract(title, noticeType, text);
-        var wrappedExtracts = BidOpsWrappedOutcomeTableParser.Extract(title, noticeType, text);
+        var sourceText = text ?? string.Empty;
+        var noticeKind = DetermineNoticeKind(title, noticeType, sourceUrl, sourceText);
+        var textExtracts = BidOpsOutcomeSupplierTextParser
+            .Extract(title, noticeType, sourceText)
+            .Select(EnrichDeterministicDiagnostics);
+        var wrappedExtracts = BidOpsWrappedOutcomeTableParser
+            .Extract(title, noticeType, sourceText)
+            .Select(EnrichDeterministicDiagnostics);
         var awardDocuments = new[]
         {
             new BidOpsEvidenceDocument(
@@ -24,47 +30,20 @@ public static class BidOpsOutcomeSupplierExtractBuilder
                 title,
                 noticeType,
                 publishTime,
-                text)
+                sourceText)
         };
         IEnumerable<BidOpsOutcomeSupplierExtract> candidateExtracts = noticeKind == NoticeOutcomeKind.Candidate
-            ? BidOpsCandidateEvidenceParser.Extract(awardDocuments).Select(x => new BidOpsOutcomeSupplierExtract
-            {
-                SupplierName = x.SupplierName,
-                OutcomeType = BidOpsOutcomeTypes.Candidate,
-                Rank = x.Rank,
-                AwardAmount = x.FinalQuoteAmount,
-                ProjectName = x.ProjectName ?? string.Empty,
-                ProjectCode = x.ProjectCode ?? string.Empty,
-                LotNo = x.LotNo ?? string.Empty,
-                PackageNo = x.PackageNo ?? string.Empty,
-                PackageName = x.PackageName ?? string.Empty,
-                EvidenceText = x.Evidence.EvidenceText ?? string.Empty,
-                Confidence = (decimal)Math.Clamp(x.Confidence, 0d, 1d)
-            })
+            ? BidOpsCandidateEvidenceParser.Extract(awardDocuments).Select(ToOutcomeExtract)
             : Enumerable.Empty<BidOpsOutcomeSupplierExtract>();
         IEnumerable<BidOpsOutcomeSupplierExtract> awardExtracts = noticeKind == NoticeOutcomeKind.Award
-            ? BidOpsAwardEvidenceParser.Extract(awardDocuments)
-            .Select(x => new BidOpsOutcomeSupplierExtract
-            {
-                SupplierName = x.AwardedSupplierName,
-                OutcomeType = BidOpsOutcomeTypes.Awarded,
-                AwardAmount = x.AwardAmount,
-                ProjectName = x.ProjectName ?? string.Empty,
-                ProjectCode = x.ProjectCode ?? string.Empty,
-                BuyerName = x.ProjectUnit ?? string.Empty,
-                LotNo = x.LotNo ?? string.Empty,
-                LotName = x.LotName ?? string.Empty,
-                PackageNo = x.PackageNo ?? string.Empty,
-                PackageName = x.PackageName ?? string.Empty,
-                EvidenceText = x.Evidence.EvidenceText ?? string.Empty,
-                Confidence = (decimal)Math.Clamp(x.Confidence, 0d, 1d)
-            })
+            ? BidOpsAwardEvidenceParser.Extract(awardDocuments).Select(ToOutcomeExtract)
             : Enumerable.Empty<BidOpsOutcomeSupplierExtract>();
 
         var extracts = textExtracts
             .Concat(wrappedExtracts)
             .Concat(candidateExtracts)
             .Concat(awardExtracts)
+            .Select(EnrichDeterministicDiagnostics)
             .Select(NormalizeNonAwardStatusExtract)
             .Where(x => !string.IsNullOrWhiteSpace(x.SupplierName))
             .ToList();
@@ -82,6 +61,111 @@ public static class BidOpsOutcomeSupplierExtractBuilder
                 .ThenByDescending(item => item.AwardAmount.HasValue)
                 .First())
             .ToList();
+    }
+
+    private static BidOpsOutcomeSupplierExtract ToOutcomeExtract(CandidateEvidence evidence)
+    {
+        var sourceRowText = Truncate(evidence.Evidence.EvidenceText ?? string.Empty, 2000);
+        return new BidOpsOutcomeSupplierExtract
+        {
+            SourceSequenceNo = ToSequenceNo(evidence.Evidence.RowIndex),
+            SourceRowText = sourceRowText,
+            SupplierName = evidence.SupplierName,
+            OutcomeType = BidOpsOutcomeTypes.Candidate,
+            Rank = evidence.Rank,
+            AwardAmount = evidence.FinalQuoteAmount,
+            SourceType = BidOpsOutcomeSupplierExtractSourceTypes.CandidateEvidenceParser,
+            SourceParserVersion = BidOpsOutcomeSupplierExtractParserVersions.CandidateEvidenceParser,
+            ProjectName = evidence.ProjectName ?? string.Empty,
+            ProjectCode = evidence.ProjectCode ?? string.Empty,
+            LotNo = evidence.LotNo ?? string.Empty,
+            RawLotNo = evidence.LotNo ?? string.Empty,
+            PackageNo = evidence.PackageNo ?? string.Empty,
+            RawPackageNo = evidence.PackageNo ?? string.Empty,
+            PackageName = evidence.PackageName ?? string.Empty,
+            EvidenceText = sourceRowText,
+            FieldEvidence = BuildFieldEvidence(
+                ("supplierName", evidence.SupplierName),
+                ("lotNo", evidence.LotNo),
+                ("packageNo", evidence.PackageNo),
+                ("packageName", evidence.PackageName),
+                ("projectCode", evidence.ProjectCode),
+                ("projectName", evidence.ProjectName),
+                ("awardAmount", evidence.FinalQuoteAmount?.ToString(CultureInfo.InvariantCulture))),
+            Confidence = ClampConfidence(evidence.Confidence)
+        };
+    }
+
+    private static BidOpsOutcomeSupplierExtract ToOutcomeExtract(AwardEvidence evidence)
+    {
+        var sourceRowText = Truncate(evidence.Evidence.EvidenceText ?? string.Empty, 2000);
+        return new BidOpsOutcomeSupplierExtract
+        {
+            SourceSequenceNo = ToSequenceNo(evidence.Evidence.RowIndex),
+            SourceRowText = sourceRowText,
+            SupplierName = evidence.AwardedSupplierName,
+            OutcomeType = BidOpsOutcomeTypes.Awarded,
+            AwardAmount = evidence.AwardAmount,
+            SourceType = BidOpsOutcomeSupplierExtractSourceTypes.AwardEvidenceParser,
+            SourceParserVersion = BidOpsOutcomeSupplierExtractParserVersions.AwardEvidenceParser,
+            ProjectName = evidence.ProjectName ?? string.Empty,
+            ProjectCode = evidence.ProjectCode ?? string.Empty,
+            BuyerName = evidence.ProjectUnit ?? string.Empty,
+            LotNo = evidence.LotNo ?? string.Empty,
+            RawLotNo = evidence.LotNo ?? string.Empty,
+            LotName = evidence.LotName ?? string.Empty,
+            RawLotName = evidence.LotName ?? string.Empty,
+            PackageNo = evidence.PackageNo ?? string.Empty,
+            RawPackageNo = evidence.PackageNo ?? string.Empty,
+            PackageName = evidence.PackageName ?? string.Empty,
+            EvidenceText = sourceRowText,
+            FieldEvidence = BuildFieldEvidence(
+                ("supplierName", evidence.AwardedSupplierName),
+                ("lotNo", evidence.LotNo),
+                ("lotName", evidence.LotName),
+                ("packageNo", evidence.PackageNo),
+                ("packageName", evidence.PackageName),
+                ("projectCode", evidence.ProjectCode),
+                ("projectName", evidence.ProjectName),
+                ("buyerName", evidence.ProjectUnit),
+                ("awardAmount", evidence.AwardAmount?.ToString(CultureInfo.InvariantCulture))),
+            Confidence = ClampConfidence(evidence.Confidence)
+        };
+    }
+
+    private static BidOpsOutcomeSupplierExtract EnrichDeterministicDiagnostics(BidOpsOutcomeSupplierExtract extract)
+    {
+        if (extract.FieldEvidence is null)
+            extract.FieldEvidence = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (extract.Warnings is null)
+            extract.Warnings = [];
+
+        if (string.IsNullOrWhiteSpace(extract.SourceRowText))
+            extract.SourceRowText = Truncate(extract.EvidenceText, 2000);
+
+        if (string.IsNullOrWhiteSpace(extract.EvidenceText))
+            extract.EvidenceText = Truncate(extract.SourceRowText, 2000);
+
+        if (string.IsNullOrWhiteSpace(extract.RawLotNo))
+            extract.RawLotNo = extract.LotNo;
+
+        if (string.IsNullOrWhiteSpace(extract.RawLotName))
+            extract.RawLotName = extract.LotName;
+
+        if (string.IsNullOrWhiteSpace(extract.RawPackageNo))
+            extract.RawPackageNo = extract.PackageNo;
+
+        AddFieldEvidence(extract.FieldEvidence, "supplierName", extract.SupplierName);
+        AddFieldEvidence(extract.FieldEvidence, "lotNo", extract.LotNo);
+        AddFieldEvidence(extract.FieldEvidence, "lotName", extract.LotName);
+        AddFieldEvidence(extract.FieldEvidence, "packageNo", extract.PackageNo);
+        AddFieldEvidence(extract.FieldEvidence, "packageName", extract.PackageName);
+        AddFieldEvidence(extract.FieldEvidence, "projectCode", extract.ProjectCode);
+        AddFieldEvidence(extract.FieldEvidence, "projectName", extract.ProjectName);
+        AddFieldEvidence(extract.FieldEvidence, "buyerName", extract.BuyerName);
+
+        return extract;
     }
 
     private static IReadOnlyList<BidOpsOutcomeSupplierExtract> RemoveLessSpecificPackageContextDuplicates(
@@ -105,21 +189,35 @@ public static class BidOpsOutcomeSupplierExtractBuilder
         // “流标状态”是公告状态展示行，不是可闭环的中标供应商；金额字段不能跟随表格误入。
         return new BidOpsOutcomeSupplierExtract
         {
+            SourceSequenceNo = extract.SourceSequenceNo,
+            SourcePageNo = extract.SourcePageNo,
+            SourceTableTitle = extract.SourceTableTitle,
+            SourceRowText = extract.SourceRowText,
             SupplierName = extract.SupplierName,
             OutcomeType = BidOpsOutcomeTypes.Failed,
             Rank = extract.Rank,
             AwardAmount = null,
             ProcurementAgencyServiceFeeAmount = null,
             ExtractionOrder = extract.ExtractionOrder,
+            SourceType = extract.SourceType,
+            SourceParserVersion = extract.SourceParserVersion,
+            SourceCallId = extract.SourceCallId,
             ProjectName = extract.ProjectName,
             ProjectCode = extract.ProjectCode,
             BuyerName = extract.BuyerName,
             LotNo = extract.LotNo,
+            RawLotNo = extract.RawLotNo,
+            LotNoValidationStatus = extract.LotNoValidationStatus,
+            LotNoValidationReason = extract.LotNoValidationReason,
+            RawLotName = extract.RawLotName,
             LotName = extract.LotName,
+            RawPackageNo = extract.RawPackageNo,
             PackageNo = extract.PackageNo,
             PackageName = extract.PackageName,
             Category = extract.Category,
             EvidenceText = extract.EvidenceText,
+            FieldEvidence = new Dictionary<string, string>(extract.FieldEvidence, StringComparer.OrdinalIgnoreCase),
+            Warnings = [.. extract.Warnings],
             Confidence = Math.Min(extract.Confidence, 0.72m)
         };
     }
@@ -187,6 +285,42 @@ public static class BidOpsOutcomeSupplierExtractBuilder
             return NoticeOutcomeKind.Award;
 
         return NoticeOutcomeKind.Unknown;
+    }
+
+    private static Dictionary<string, string> BuildFieldEvidence(params (string Name, string? Value)[] items)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in items)
+            AddFieldEvidence(result, item.Name, item.Value);
+
+        return result;
+    }
+
+    private static void AddFieldEvidence(Dictionary<string, string> fieldEvidence, string name, string? value)
+    {
+        var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+        if (string.IsNullOrWhiteSpace(cleaned) || fieldEvidence.ContainsKey(name))
+            return;
+
+        fieldEvidence[name] = cleaned;
+    }
+
+    private static decimal ClampConfidence(double value)
+    {
+        return (decimal)Math.Clamp(value, 0d, 1d);
+    }
+
+    private static string ToSequenceNo(int? rowIndex)
+    {
+        return rowIndex.HasValue
+            ? rowIndex.Value.ToString(CultureInfo.InvariantCulture)
+            : string.Empty;
+    }
+
+    private static string Truncate(string? value, int maxLength)
+    {
+        var cleaned = value ?? string.Empty;
+        return cleaned.Length <= maxLength ? cleaned : cleaned[..maxLength];
     }
 
     private static string NormalizeOutcomeType(string value)

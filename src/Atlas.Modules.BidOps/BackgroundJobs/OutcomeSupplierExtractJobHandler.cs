@@ -73,9 +73,11 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
         }
 
         _logger.LogInformation(
-            "BidOps outcome supplier extract job saved {SavedCount} records for raw notice {RawNoticeId}; reviewerPrompt={HasReviewerPrompt}; lifecycleRefresh={RefreshLifecycleLinks}.",
+            "BidOps outcome supplier extract job saved {SavedCount} records for raw notice {RawNoticeId}; candidateCount={CandidateCount}; mergeGroups={MergeGroupCount}; reviewerPrompt={HasReviewerPrompt}; lifecycleRefresh={RefreshLifecycleLinks}.",
             result.SavedCount,
             payload.RawNoticeId,
+            result.CandidateCount,
+            result.MergeGroupCount,
             !string.IsNullOrWhiteSpace(payload.ReviewerPrompt),
             payload.RefreshLifecycleLinks);
 
@@ -86,10 +88,16 @@ public sealed class OutcomeSupplierExtractJobHandler : IBackgroundJobHandler
             result.IsOutcomeNotice,
             result.ExtractedCount,
             result.SavedCount,
+            result.CandidateCount,
+            result.MergeGroupCount,
+            result.MergedCandidateCount,
             result.BuyerCreatedCount,
             result.BuyerUpdatedCount,
             result.SupplierCreatedCount,
             result.SupplierUpdatedCount,
+            result.SourceCounts,
+            result.LotNoValidationCounts,
+            result.StrengthCounts,
             result.Message,
             reviewerPrompt = !string.IsNullOrWhiteSpace(payload.ReviewerPrompt),
             refreshLifecycleLinks = payload.RefreshLifecycleLinks,

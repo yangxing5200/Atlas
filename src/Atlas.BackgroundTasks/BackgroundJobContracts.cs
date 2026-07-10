@@ -52,6 +52,10 @@ public sealed class EnqueueBackgroundJobRequest<TPayload>
     public string? DeduplicationKey { get; init; }
     public long? TenantId { get; init; }
     public long? StoreId { get; init; }
+    public string? SourceModule { get; init; }
+    public string? BusinessType { get; init; }
+    public long? BusinessId { get; init; }
+    public string? CorrelationId { get; init; }
     public int Priority { get; init; }
     public DateTime? AvailableAtUtc { get; init; }
     public int? MaxAttempts { get; init; }
