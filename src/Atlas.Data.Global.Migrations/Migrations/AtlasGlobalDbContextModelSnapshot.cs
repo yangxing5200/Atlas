@@ -58,6 +58,21 @@ namespace Atlas.Data.Global.Migrations.Migrations
 
                     MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("DeduplicationKey"), "utf8mb4");
 
+                    b.Property<long?>("BusinessId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("BusinessType")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("BusinessType"), "utf8mb4");
+
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(128)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("CorrelationId"), "utf8mb4");
+
                     b.Property<string>("JobName")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -130,6 +145,12 @@ namespace Atlas.Data.Global.Migrations.Migrations
                         .HasColumnType("int")
                         .HasDefaultValue(0);
 
+                    b.Property<string>("SourceModule")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    MySqlPropertyBuilderExtensions.HasCharSet(b.Property<string>("SourceModule"), "utf8mb4");
+
                     b.Property<long?>("StoreId")
                         .HasColumnType("bigint");
 
@@ -154,9 +175,15 @@ namespace Atlas.Data.Global.Migrations.Migrations
                     b.HasIndex("TenantId", "CreatedAt")
                         .HasDatabaseName("IX_BackgroundJobs_Tenant_CreatedAt");
 
+                    b.HasIndex("TenantId", "CorrelationId", "CreatedAt")
+                        .HasDatabaseName("IX_BackgroundJobs_Tenant_Correlation");
+
                     b.HasIndex("TenantId", "DeduplicationKey")
                         .IsUnique()
                         .HasDatabaseName("UX_BackgroundJobs_Tenant_DeduplicationKey");
+
+                    b.HasIndex("TenantId", "SourceModule", "BusinessType", "BusinessId", "CreatedAt")
+                        .HasDatabaseName("IX_BackgroundJobs_Tenant_BusinessLink");
 
                     b.HasIndex("Queue", "Status", "LockedAtUtc")
                         .HasDatabaseName("IX_BackgroundJobs_RunningLocks");

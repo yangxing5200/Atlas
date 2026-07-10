@@ -432,6 +432,10 @@ public static class BidOpsBackgroundJobTypes
     /// </summary>
     public const string OutcomeSupplierExtract = "bidops.outcome.supplier-extract";
     /// <summary>
+    /// 结果公告供应商重建 dry-run 任务。
+    /// </summary>
+    public const string OutcomeSupplierRebuildDryRun = "bidops.outcome.supplier-rebuild-dry-run";
+    /// <summary>
     /// 审核质量回填任务。
     /// </summary>
     public const string ReviewQualityBackfill = "bidops.review.quality-backfill";

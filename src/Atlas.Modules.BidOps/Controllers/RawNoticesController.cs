@@ -58,6 +58,19 @@ public sealed class RawNoticesController : ControllerBase
         return Accepted(await _review.EnqueueRawNoticeReparseAsync(id, request ?? new ReparseRawNoticeRequest(), ct));
     }
 
+    [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.ReviewApprove)]
+    [HttpPost("{id:long}/outcome-suppliers/rebuild-dry-run")]
+    public async Task<ActionResult<EnqueueJobDto>> OutcomeSupplierRebuildDryRunAsync(
+        long id,
+        [FromBody] OutcomeSupplierRebuildDryRunRequest? request,
+        CancellationToken ct)
+    {
+        return Accepted(await _review.EnqueueOutcomeSupplierRebuildDryRunAsync(
+            id,
+            request ?? new OutcomeSupplierRebuildDryRunRequest(),
+            ct));
+    }
+
     [Authorize(Policy = AuthorizationPolicies.PermissionPrefix + BidOpsPermissionCodes.CrawlRead)]
     [HttpGet("{id:long}/attachments")]
     public async Task<ActionResult<IReadOnlyList<RawAttachmentDto>>> ListAttachmentsAsync(long id, CancellationToken ct)

@@ -647,6 +647,22 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         return new PagedResult<ProcessingFailureDto>(total, items, pageIndex, pageSize);
     }
 
+    public async Task<long?> GetReviewTaskRawNoticeIdAsync(long id, CancellationToken ct = default)
+    {
+        var task = await _reviewTasks.GetByIdAsync(id, ct);
+        if (task == null)
+            return null;
+
+        if (task.RawNoticeId is > 0)
+            return task.RawNoticeId.Value;
+
+        if (task.BizType != "NoticeStaging")
+            return null;
+
+        var notice = await _noticeStaging.GetByIdAsync(task.BizId, ct);
+        return notice?.RawNoticeId;
+    }
+
     public async Task<IReadOnlyList<long>> GetReviewTaskBackgroundJobIdsAsync(long id, CancellationToken ct = default)
     {
         var task = await _reviewTasks.GetByIdAsync(id, ct);
@@ -767,6 +783,7 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         var taskDto = Map(task);
         if (notice != null)
             ApplyReviewTaskSummary(taskDto, notice, packageDtos);
+        ApplyEffectiveReviewQualitySummary(taskDto, qualityIssues);
 
         return new ReviewTaskDetailDto
         {
@@ -790,6 +807,11 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
             .Where(x => x.ReviewTaskId == reviewTaskId)
             .ToListAsync(ct);
         return issues
+            .GroupBy(BuildReviewQualityIssueDisplayKey)
+            .Select(x => x
+                .OrderByDescending(issue => issue.CreatedAt)
+                .ThenByDescending(issue => issue.Id)
+                .First())
             .OrderBy(x => x.IsResolved)
             .ThenByDescending(x => x.Severity)
             .ThenBy(x => x.CreatedAt)
@@ -929,6 +951,27 @@ public sealed class BidOpsQueryService : IBidOpsQueryService
         task.PackageCount = packages.Count;
         task.RequirementCount = packages.Sum(x => x.Requirements.Count);
         task.RejectRiskCount = packages.Sum(x => x.Requirements.Count(requirement => requirement.IsRejectRisk));
+    }
+
+    private static void ApplyEffectiveReviewQualitySummary(
+        ReviewTaskDto task,
+        IReadOnlyCollection<ReviewQualityIssue> issues)
+    {
+        var activeIssues = issues.Where(x => !x.IsResolved).ToList();
+        task.QualityIssueCount = activeIssues.Count;
+        task.HighRiskIssueCount = activeIssues.Count(x => x.Severity == ReviewQualityRiskLevel.High);
+    }
+
+    private static string BuildReviewQualityIssueDisplayKey(ReviewQualityIssue issue)
+    {
+        return string.Join(
+            "|",
+            issue.IsResolved ? "resolved" : "active",
+            issue.IssueType.Trim(),
+            issue.FieldName.Trim(),
+            issue.PackageStagingId?.ToString() ?? string.Empty,
+            issue.OutcomeSupplierRecordId?.ToString() ?? string.Empty,
+            issue.ProcurementDetailStagingId?.ToString() ?? string.Empty);
     }
 
     private static bool TryParseEnum<TEnum>(string? value, out TEnum result)

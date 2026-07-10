@@ -121,6 +121,8 @@ public sealed class BidOpsModule : AtlasModule
         context.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IBackgroundJobHandler, OutcomeSupplierExtractJobHandler>());
         context.Services.TryAddEnumerable(
+            ServiceDescriptor.Scoped<IBackgroundJobHandler, OutcomeSupplierRebuildDryRunJobHandler>());
+        context.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IBackgroundJobHandler, ReviewBulkApproveJobHandler>());
         context.Services.TryAddEnumerable(
             ServiceDescriptor.Scoped<IBackgroundJobHandler, ReviewQualityBackfillJobHandler>());

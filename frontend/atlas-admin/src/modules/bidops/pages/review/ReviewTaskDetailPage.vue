@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Edit, Plus, RefreshRight, View } from '@element-plus/icons-vue'
+import { Delete, Edit, Link, Plus, RefreshRight, View } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { rawNoticesApi } from '@/api/bidops/rawNotices.api'
 import { reviewTasksApi } from '@/api/bidops/reviewTasks.api'
@@ -71,24 +71,41 @@ const outcomeAiJobId = ref('')
 const rawReparseJobId = ref('')
 const backgroundJobs = ref<BackgroundJobListItemDto[]>([])
 const backgroundJobTotal = ref(0)
+const backgroundJobsLoaded = ref(false)
 const outcomeEditVisible = ref(false)
 const outcomeEditMode = ref<'create' | 'edit'>('create')
 const editingOutcomeId = ref('')
 const outcomeEditForm = ref<OutcomeEditForm>(createEmptyOutcomeForm())
 const detailRefreshAttempts = ref(0)
+const activeDetailPane = ref('compare')
+const qualityIssuePage = ref(1)
+const amountGroupPages = ref<Record<string, number>>({})
+const candidatePage = ref(1)
+const procurementPackagePage = ref(1)
+const genericOutcomePage = ref(1)
+const otherPackagePage = ref(1)
+const selectedPackageId = ref('')
 let detailRefreshTimer: number | undefined
+const tablePageSize = 20
+const visibleAmountCandidateStatuses = ['Selected', 'Recommended', 'Candidate']
+const visibleAmountCandidateStatusSet = new Set(visibleAmountCandidateStatuses)
 const taskId = computed(() => String(route.params.id || ''))
 const task = computed(() => detail.value?.task)
 const notice = computed(() => detail.value?.notice)
 const rawNotice = computed(() => detail.value?.rawNotice)
+const currentRawNoticeId = computed(() => rawNotice.value?.id || task.value?.rawNoticeId || notice.value?.rawNoticeId || '')
 const rawText = computed(() => rawNotice.value?.textContent || rawNotice.value?.textPreview || '')
 const buyer = computed(() => detail.value?.buyer)
 const outcomeSuppliers = computed(() => detail.value?.outcomeSuppliers || [])
 const amountCandidates = computed(() => detail.value?.amountCandidates || [])
+const visibleAmountCandidates = computed(() =>
+  amountCandidates.value.filter((row) => visibleAmountCandidateStatusSet.has(String(row.status || ''))),
+)
 const packages = computed(() => detail.value?.packages || [])
 const attachments = computed(() => detail.value?.attachments || [])
 const qualityIssues = computed(() => detail.value?.qualityIssues || [])
-const activeQualityIssues = computed(() => qualityIssues.value.filter((item) => !item.isResolved))
+const activeQualityIssues = computed(() => dedupeQualityIssues(qualityIssues.value.filter((item) => !item.isResolved)))
+const pagedActiveQualityIssues = computed(() => paginate(activeQualityIssues.value, qualityIssuePage.value))
 const allRequirements = computed(() => packages.value.flatMap((pkg) => pkg.requirements || []))
 const rejectRiskCount = computed(() => allRequirements.value.filter((item) => item.isRejectRisk).length)
 const mandatoryCount = computed(() => allRequirements.value.filter((item) => item.isMandatory).length)
@@ -101,6 +118,11 @@ const awardColumnVisible = computed(() => ({
   lotNo: hasAnyOutcomeColumnValue(awardRows.value, outcomeLotNo),
   lotName: hasAnyOutcomeColumnValue(awardRows.value, outcomeLotName),
   packageNo: hasAnyOutcomeColumnValue(awardRows.value, outcomePackageNo),
+  awardAmount: hasAnyOutcomeColumnValue(awardRows.value, (row) => formatMoney(row.awardAmount)),
+  procurementAgencyServiceFeeAmount: hasAnyOutcomeColumnValue(
+    awardRows.value,
+    (row) => formatMoney(row.procurementAgencyServiceFeeAmount),
+  ),
   outcomeType: hasAnyOutcomeColumnValue(awardRows.value, (row) => formatCommonStatus(row.outcomeType)),
 }))
 const candidateColumnVisible = computed(() => ({
@@ -119,6 +141,12 @@ const procurementPackages = computed(() =>
     .slice()
     .sort((left, right) => compareText(packageSortKey(left), packageSortKey(right))),
 )
+const pagedCandidateRows = computed(() => paginate(candidateRows.value, candidatePage.value))
+const pagedProcurementPackages = computed(() => paginate(procurementPackages.value, procurementPackagePage.value))
+const pagedGenericOutcomeRows = computed(() => paginate(outcomeSuppliers.value, genericOutcomePage.value))
+const pagedOtherPackages = computed(() => paginate(packages.value, otherPackagePage.value))
+const selectedProcurementPackage = computed(() => selectedPackage(procurementPackages.value))
+const selectedOtherPackage = computed(() => selectedPackage(packages.value))
 const canReparseRawNotice = computed(() =>
   Boolean(rawNotice.value && !isApprovedRawNoticeStatus(rawNotice.value.status) && isEditableReviewTaskStatus(task.value?.status)),
 )
@@ -135,25 +163,75 @@ const outcomeTypeOptions = [
   { label: '流标/失败', value: 'Failed' },
 ]
 const amountCandidateGroups = computed(() => {
-  const order = ['Selected', 'Recommended', 'Candidate', 'Unresolved', 'Rejected']
-  return order
-    .map((status) => ({ status, rows: amountCandidates.value.filter((row) => row.status === status) }))
+  return visibleAmountCandidateStatuses
+    .map((status) => ({ status, rows: visibleAmountCandidates.value.filter((row) => row.status === status) }))
     .filter((group) => group.rows.length > 0)
 })
+
+function paginate<T>(rows: T[], page: number) {
+  const safePage = Math.min(Math.max(Number(page) || 1, 1), Math.max(1, Math.ceil(rows.length / tablePageSize)))
+  return rows.slice((safePage - 1) * tablePageSize, safePage * tablePageSize)
+}
+
+function amountGroupPage(status: string) {
+  return amountGroupPages.value[status] || 1
+}
+
+function amountGroupRows(group: { status: string; rows: AmountCandidateDto[] }) {
+  return paginate(group.rows, amountGroupPage(group.status))
+}
+
+function setAmountGroupPage(status: string, page: number) {
+  amountGroupPages.value = {
+    ...amountGroupPages.value,
+    [status]: page,
+  }
+}
+
+function selectPackage(pkg: PackageStagingDto) {
+  selectedPackageId.value = String(pkg.id || '')
+}
+
+function selectedPackage(rows: PackageStagingDto[]) {
+  if (rows.length === 0) return undefined
+  const selected = selectedPackageId.value
+  return rows.find((row) => String(row.id || '') === selected) || rows[0]
+}
+
+function dedupeQualityIssues(rows: ReviewQualityIssueDto[]) {
+  const seen = new Set<string>()
+  const result: ReviewQualityIssueDto[] = []
+  for (const row of rows) {
+    const key = [
+      row.issueType || '',
+      row.fieldName || '',
+      row.packageStagingId || '',
+      row.outcomeSupplierRecordId || '',
+      row.procurementDetailStagingId || '',
+    ].join('|')
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(row)
+  }
+
+  return result
+}
 
 async function loadData() {
   loading.value = true
   try {
     detail.value = await reviewTasksApi.get(taskId.value)
+    backgroundJobsLoaded.value = false
   } catch {
     detail.value = null
     backgroundJobs.value = []
     backgroundJobTotal.value = 0
+    backgroundJobsLoaded.value = false
   } finally {
     loading.value = false
   }
 
-  if (detail.value) {
+  if (detail.value && activeDetailPane.value === 'jobs') {
     await loadBackgroundJobs()
   }
 }
@@ -170,10 +248,21 @@ async function loadBackgroundJobs() {
     )
     backgroundJobs.value = result.items || []
     backgroundJobTotal.value = Number(result.total || 0)
+    backgroundJobsLoaded.value = true
   } catch {
     backgroundJobs.value = []
     backgroundJobTotal.value = 0
+    backgroundJobsLoaded.value = true
   }
+}
+
+async function refreshBackgroundJobsIfVisible() {
+  if (activeDetailPane.value === 'jobs') {
+    await loadBackgroundJobs()
+    return
+  }
+
+  backgroundJobsLoaded.value = false
 }
 
 function confidencePercent(value?: number | null) {
@@ -453,6 +542,17 @@ function openJob(jobId: string) {
   void router.push(`/bidops/operations/jobs/${jobId}`)
 }
 
+function openBackgroundJobCenter() {
+  if (!currentRawNoticeId.value) return
+  void router.push({
+    path: '/bidops/operations/jobs',
+    query: {
+      rawNoticeId: String(currentRawNoticeId.value),
+      queue: 'bidops',
+    },
+  })
+}
+
 function jobDiagnosticPreview(row: BackgroundJobListItemDto) {
   return row.lastErrorPreview || row.resultPreview || '-'
 }
@@ -564,7 +664,7 @@ async function submitOutcomeAiReparse() {
   )
   outcomeAiJobId.value = String(job.jobId || '')
   ElMessage.success(`已提交 AI 重新解析任务：${outcomeAiJobId.value}`)
-  await loadBackgroundJobs()
+  await refreshBackgroundJobsIfVisible()
   scheduleDetailRefresh()
 }
 
@@ -588,7 +688,7 @@ async function submitProcurementAiReparse() {
   )
   rawReparseJobId.value = String(job.jobId || '')
   ElMessage.success(job.alreadyExists ? `重解析任务已存在：${rawReparseJobId.value}` : `已提交 AI 重新解析任务：${rawReparseJobId.value}`)
-  await loadBackgroundJobs()
+  await refreshBackgroundJobsIfVisible()
   scheduleDetailRefresh()
 }
 
@@ -603,7 +703,7 @@ async function reparseRawNotice() {
   )
   rawReparseJobId.value = String(job.jobId || '')
   ElMessage.success(job.alreadyExists ? `重解析任务已存在：${rawReparseJobId.value}` : `已提交重解析任务：${rawReparseJobId.value}`)
-  await loadBackgroundJobs()
+  await refreshBackgroundJobsIfVisible()
   scheduleDetailRefresh()
 }
 
@@ -655,6 +755,12 @@ async function ignore(remark: string) {
     return
   }
 }
+
+watch(activeDetailPane, (pane) => {
+  if (pane === 'jobs' && detail.value && !backgroundJobsLoaded.value) {
+    void loadBackgroundJobs()
+  }
+})
 
 onMounted(loadData)
 
@@ -720,58 +826,272 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section class="quality-review-panel">
-        <div class="panel-heading">
-          <h2>异常复核</h2>
-          <span>{{ activeQualityIssues.length > 0 ? '按风险优先处理异常项' : '未发现未解决异常' }}</span>
-        </div>
-        <div class="quality-summary-grid">
-          <div>
-            <span>质量分</span>
-            <strong>{{ qualityScoreValue() }}</strong>
-          </div>
-          <div>
-            <span>风险等级</span>
+      <section class="quality-review-strip">
+        <div class="quality-strip-main">
+          <div class="quality-strip-title">
+            <h2>异常复核</h2>
             <RiskLevelTag :value="task?.riskLevel" />
           </div>
-          <div>
-            <span>异常项</span>
-            <strong>{{ task?.qualityIssueCount || 0 }} / 高风险 {{ task?.highRiskIssueCount || 0 }}</strong>
-          </div>
-          <div>
-            <span>推荐动作</span>
-            <strong>{{ formatReviewRecommendation(task?.reviewRecommendation) }}</strong>
+          <div class="quality-strip-meta">
+            <span>质量分 {{ qualityScoreValue() }}</span>
+            <span>异常 {{ task?.qualityIssueCount || 0 }} / 高风险 {{ task?.highRiskIssueCount || 0 }}</span>
+            <span>{{ formatReviewRecommendation(task?.reviewRecommendation) }}</span>
           </div>
         </div>
-        <el-alert
-          v-if="activeQualityIssues.length === 0"
-          type="success"
-          show-icon
-          :closable="false"
-          title="当前解析结果是低风险复核候选；仍需人工确认后才能写入正式业务表。"
-        />
-        <el-table v-else :data="activeQualityIssues" border size="small" empty-text="没有未解决异常">
-          <el-table-column label="等级" width="90">
-            <template #default="{ row }"><RiskLevelTag :value="row.severity" /></template>
-          </el-table-column>
-          <el-table-column label="异常类型" min-width="150" show-overflow-tooltip>
-            <template #default="{ row }">{{ formatQualityIssueType(row.issueType) }}</template>
-          </el-table-column>
-          <el-table-column prop="fieldName" label="字段" min-width="120" show-overflow-tooltip />
-          <el-table-column label="对象" min-width="220" show-overflow-tooltip>
-            <template #default="{ row }">{{ issueTarget(row) }}</template>
-          </el-table-column>
-          <el-table-column prop="message" label="复核说明" min-width="320" show-overflow-tooltip />
-        </el-table>
+        <el-tag :type="activeQualityIssues.length > 0 ? 'warning' : 'success'" effect="light">
+          {{ activeQualityIssues.length > 0 ? `${activeQualityIssues.length} 条待看` : '无未解决异常' }}
+        </el-tag>
+        <el-collapse v-if="activeQualityIssues.length > 0" class="quality-issues-collapse">
+          <el-collapse-item name="issues">
+            <template #title>
+              <span class="quality-collapse-title">展开异常明细</span>
+            </template>
+            <el-table :data="pagedActiveQualityIssues" border size="small" empty-text="没有未解决异常">
+              <el-table-column label="等级" width="90">
+                <template #default="{ row }"><RiskLevelTag :value="row.severity" /></template>
+              </el-table-column>
+              <el-table-column label="异常类型" min-width="150" show-overflow-tooltip>
+                <template #default="{ row }">{{ formatQualityIssueType(row.issueType) }}</template>
+              </el-table-column>
+              <el-table-column prop="fieldName" label="字段" min-width="120" show-overflow-tooltip />
+              <el-table-column label="对象" min-width="220" show-overflow-tooltip>
+                <template #default="{ row }">{{ issueTarget(row) }}</template>
+              </el-table-column>
+              <el-table-column prop="message" label="复核说明" min-width="320" show-overflow-tooltip />
+            </el-table>
+            <el-pagination
+              v-if="activeQualityIssues.length > tablePageSize"
+              v-model:current-page="qualityIssuePage"
+              class="table-pagination"
+              background
+              small
+              layout="prev, pager, next, total"
+              :page-size="tablePageSize"
+              :total="activeQualityIssues.length"
+            />
+          </el-collapse-item>
+        </el-collapse>
       </section>
 
-      <section class="background-jobs-panel">
+      <el-tabs v-model="activeDetailPane" class="review-detail-tabs">
+        <el-tab-pane label="公告对照" name="compare">
+          <section class="comparison-grid">
+            <section class="content-panel comparison-panel">
+              <div class="panel-heading">
+                <h2>原公告</h2>
+                <el-link v-if="rawNotice?.detailUrl" :href="rawNotice.detailUrl" target="_blank" type="primary">打开原公告</el-link>
+              </div>
+              <el-descriptions class="comparison-meta" :column="1" border>
+                <el-descriptions-item label="标题">{{ rawNotice?.title || projectTitle() }}</el-descriptions-item>
+                <el-descriptions-item label="公告类型">{{ formatNoticeType(rawNotice?.noticeType || notice?.noticeType) }}</el-descriptions-item>
+                <el-descriptions-item label="发布时间">{{ formatDateTime(rawNotice?.publishTime || notice?.publishTime) }}</el-descriptions-item>
+              </el-descriptions>
+
+              <h2 class="section-title">公开附件</h2>
+              <RawAttachmentTable class="comparison-attachments" :attachments="attachments" :raw-notice-id="rawNotice?.id" />
+
+              <h2 class="section-title">公告全文</h2>
+              <RawNoticePreview class="comparison-raw-text" :text="rawText" />
+            </section>
+
+            <section class="content-panel comparison-panel">
+              <section v-if="canAdjustOutcomeAi" class="ai-reparse-panel comparison-ai-reparse">
+                <div class="ai-reparse-heading">
+                  <div>
+                    <h2>AI 解析调整</h2>
+                    <p>通过补充提示词重跑当前公告的中标/候选明细。</p>
+                  </div>
+                  <el-link v-if="outcomeAiJobId" type="primary" @click="openJob(outcomeAiJobId)">
+                    任务 {{ outcomeAiJobId }}
+                  </el-link>
+                </div>
+                <el-input
+                  v-model="outcomeAiPrompt"
+                  type="textarea"
+                  :rows="4"
+                  maxlength="4000"
+                  show-word-limit
+                  placeholder="例如：采购编号在正文“采购编号：XXXX”中；表格第一列是包号，第二列是推荐的成交候选人；最终报价只有表头明确写万元才换算，未标单位按元；不要把分标编号当采购编号。"
+                />
+                <div class="ai-reparse-actions">
+                  <el-button type="primary" :loading="outcomeAiReparseRequest.loading" @click="submitOutcomeAiReparse">
+                    让 AI 重新解析
+                  </el-button>
+                  <el-button :disabled="loading" @click="loadData">刷新数据</el-button>
+                </div>
+              </section>
+
+              <div class="section-heading compact">
+                <h2 class="section-title">
+                  {{ noticeKind === 'candidate' ? '候选人明细' : '中标/成交明细' }}
+                </h2>
+                <PermissionButton
+                  v-if="canEditOutcomeRows"
+                  size="small"
+                  type="primary"
+                  plain
+                  :icon="Plus"
+                  :permission="BIDOPS_PERMISSIONS.REVIEW_APPROVE"
+                  @click="openCreateOutcome"
+                >
+                  新增明细
+                </PermissionButton>
+              </div>
+
+              <template v-if="noticeKind === 'award'">
+                <el-table :data="awardRows" border size="small" empty-text="未识别到中标/成交明细">
+                  <el-table-column type="index" label="序号" width="64" fixed="left" />
+                  <el-table-column v-if="awardColumnVisible.projectCode" label="采购编号" min-width="140" show-overflow-tooltip>
+                    <template #default="{ row }">{{ outcomeProjectCode(row) }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="awardColumnVisible.projectName" label="项目名称" min-width="190" show-overflow-tooltip>
+                    <template #default="{ row }">{{ outcomeProjectName(row) }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="awardColumnVisible.lotNo" label="分标编号" min-width="130" show-overflow-tooltip>
+                    <template #default="{ row }">{{ outcomeLotNo(row) }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="awardColumnVisible.lotName" label="分标名称" min-width="150" show-overflow-tooltip>
+                    <template #default="{ row }">{{ outcomeLotName(row) }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="awardColumnVisible.packageNo" label="包号" width="96" show-overflow-tooltip>
+                    <template #default="{ row }">{{ outcomePackageNo(row) }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="awardColumnVisible.outcomeType" label="中标状态" width="104">
+                    <template #default="{ row }">{{ formatCommonStatus(row.outcomeType) }}</template>
+                  </el-table-column>
+                  <el-table-column prop="supplierName" label="成交供应商" min-width="210" show-overflow-tooltip />
+                  <el-table-column v-if="awardColumnVisible.awardAmount" label="成交金额（元）" width="150" align="right">
+                    <template #default="{ row }">{{ formatMoney(row.awardAmount) }}</template>
+                  </el-table-column>
+                  <el-table-column
+                    v-if="awardColumnVisible.procurementAgencyServiceFeeAmount"
+                    label="代理服务费（元）"
+                    width="150"
+                    align="right"
+                  >
+                    <template #default="{ row }">{{ formatMoney(row.procurementAgencyServiceFeeAmount) }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="canEditOutcomeRows" label="操作" width="88" fixed="right">
+                    <template #default="{ row }">
+                      <PermissionButton
+                        text
+                        size="small"
+                        :icon="Edit"
+                        :permission="BIDOPS_PERMISSIONS.REVIEW_APPROVE"
+                        @click="openEditOutcome(row)"
+                      >
+                        编辑
+                      </PermissionButton>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </template>
+
+              <template v-else-if="noticeKind === 'candidate'">
+                <el-table :data="candidateRows" border size="small" empty-text="未识别到候选人明细">
+                  <el-table-column type="index" label="序号" width="64" fixed="left" />
+                  <el-table-column v-if="candidateColumnVisible.projectCode" label="采购编号" min-width="140" show-overflow-tooltip>
+                    <template #default="{ row }">{{ outcomeProjectCode(row) }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="candidateColumnVisible.projectName" label="项目名称" min-width="190" show-overflow-tooltip>
+                    <template #default="{ row }">{{ outcomeProjectName(row) }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="candidateColumnVisible.lotNo" label="分标编号" min-width="130" show-overflow-tooltip>
+                    <template #default="{ row }">{{ outcomeLotNo(row) }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="candidateColumnVisible.lotName" label="分标名称" min-width="150" show-overflow-tooltip>
+                    <template #default="{ row }">{{ outcomeLotName(row) }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="candidateColumnVisible.packageNo" label="包号" width="96" show-overflow-tooltip>
+                    <template #default="{ row }">{{ outcomePackageNo(row) }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="candidateColumnVisible.packageName" label="包名称" min-width="170" show-overflow-tooltip>
+                    <template #default="{ row }">{{ outcomePackageName(row) }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="candidateColumnVisible.rank" label="排名" width="76">
+                    <template #default="{ row }">{{ formatRank(row.rank) }}</template>
+                  </el-table-column>
+                  <el-table-column prop="supplierName" label="推荐候选人" min-width="210" show-overflow-tooltip />
+                  <el-table-column v-if="candidateColumnVisible.awardAmount" label="最终报价（元）" width="150" align="right">
+                    <template #default="{ row }">{{ formatMoney(row.awardAmount) }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="candidateColumnVisible.evidenceText" label="评审情况" min-width="220" show-overflow-tooltip>
+                    <template #default="{ row }">{{ outcomeReviewSummary(row) }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="canEditOutcomeRows" label="操作" width="88" fixed="right">
+                    <template #default="{ row }">
+                      <PermissionButton
+                        text
+                        size="small"
+                        :icon="Edit"
+                        :permission="BIDOPS_PERMISSIONS.REVIEW_APPROVE"
+                        @click="openEditOutcome(row)"
+                      >
+                        编辑
+                      </PermissionButton>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </template>
+
+              <el-empty v-else description="当前公告没有中标/候选明细" />
+
+              <ReviewDecisionPanel class="decision-panel" :submitting="decisionRequest.loading" @approve="approve" @ignore="ignore" />
+            </section>
+          </section>
+        </el-tab-pane>
+
+        <el-tab-pane label="解析审核" name="review">
+          <section class="content-panel">
+            <div class="panel-heading">
+              <h2>解析结果</h2>
+              <el-link v-if="rawReparseJobId" type="primary" @click="openJob(rawReparseJobId)">
+                重解析任务 {{ rawReparseJobId }}
+              </el-link>
+              <span v-else>审核后写入正式公告、包件、要求项，并同步采购方/厂家关联</span>
+            </div>
+            <el-alert
+              v-if="!notice"
+              type="warning"
+              show-icon
+              :closable="false"
+              title="该任务没有关联到暂存公告，不能直接审核入库。"
+            />
+            <el-descriptions v-else :column="2" border>
+              <el-descriptions-item label="项目名称" :span="2">{{ notice.projectName || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="采购编号">{{ notice.projectCode || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="地区">{{ notice.region || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="采购人">{{ notice.buyerName || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="代理机构">{{ notice.agencyName || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="预算金额">{{ formatMoney(notice.budgetAmount) }}</el-descriptions-item>
+              <el-descriptions-item label="发布时间">{{ formatDateTime(notice.publishTime) }}</el-descriptions-item>
+              <el-descriptions-item label="报名截止">{{ formatDateTime(notice.signupDeadline) }}</el-descriptions-item>
+              <el-descriptions-item label="投标截止">{{ formatDateTime(notice.bidDeadline) }}</el-descriptions-item>
+              <el-descriptions-item label="开标时间">{{ formatDateTime(notice.openBidTime) }}</el-descriptions-item>
+              <el-descriptions-item label="置信度">{{ confidencePercent(notice.aiConfidence) }}</el-descriptions-item>
+              <el-descriptions-item label="复核状态"><BidOpsStatusTag :value="notice.reviewStatus" kind="review" /></el-descriptions-item>
+            </el-descriptions>
+
+            <ReviewDecisionPanel class="decision-panel" :submitting="decisionRequest.loading" @approve="approve" @ignore="ignore" />
+          </section>
+        </el-tab-pane>
+
+        <el-tab-pane label="后台任务" name="jobs" lazy>
+          <section v-if="activeDetailPane === 'jobs'" class="background-jobs-panel">
         <div class="panel-heading">
-          <h2>本审核发起的后台任务</h2>
+          <h2>公告相关后台任务</h2>
           <div class="background-job-actions">
-            <span>共 {{ backgroundJobTotal }} 个</span>
+            <span>RawNoticeId {{ currentRawNoticeId || '-' }}，共 {{ backgroundJobTotal }} 个</span>
             <el-button size="small" :icon="RefreshRight" :loading="backgroundJobsRequest.loading" @click="loadBackgroundJobs">
               刷新任务
+            </el-button>
+            <el-button
+              v-if="currentRawNoticeId"
+              size="small"
+              :icon="Link"
+              @click="openBackgroundJobCenter"
+            >
+              任务中心
             </el-button>
           </div>
         </div>
@@ -780,7 +1100,7 @@ onUnmounted(() => {
           :data="backgroundJobs"
           border
           size="small"
-          empty-text="当前审核页还没有发起过后台任务"
+          empty-text="当前公告还没有相关后台任务"
         >
           <el-table-column prop="id" label="任务ID" width="150" />
           <el-table-column label="任务类型" min-width="190" show-overflow-tooltip>
@@ -815,10 +1135,11 @@ onUnmounted(() => {
             </template>
           </el-table-column>
         </el-table>
-      </section>
+          </section>
+        </el-tab-pane>
 
-      <div class="split-grid">
-        <section class="content-panel">
+        <el-tab-pane label="公告证据" name="evidence" lazy>
+          <section v-if="activeDetailPane === 'evidence'" class="content-panel">
           <div class="panel-heading">
             <h2>公告证据</h2>
             <el-link v-if="rawNotice?.detailUrl" :href="rawNotice.detailUrl" target="_blank" type="primary">打开原公告</el-link>
@@ -838,38 +1159,11 @@ onUnmounted(() => {
 
           <h2 class="section-title">公告全文</h2>
           <RawNoticePreview :text="rawText" />
-        </section>
+          </section>
+        </el-tab-pane>
 
-        <section class="content-panel">
-          <div class="panel-heading">
-            <h2>解析结果</h2>
-            <el-link v-if="rawReparseJobId" type="primary" @click="openJob(rawReparseJobId)">
-              重解析任务 {{ rawReparseJobId }}
-            </el-link>
-            <span v-else>审核后写入正式公告、包件、要求项，并同步采购方/厂家关联</span>
-          </div>
-          <el-alert
-            v-if="!notice"
-            type="warning"
-            show-icon
-            :closable="false"
-            title="该任务没有关联到暂存公告，不能直接审核入库。"
-          />
-          <el-descriptions v-else :column="2" border>
-            <el-descriptions-item label="项目名称" :span="2">{{ notice.projectName || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="采购编号">{{ notice.projectCode || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="地区">{{ notice.region || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="采购人">{{ notice.buyerName || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="代理机构">{{ notice.agencyName || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="预算金额">{{ formatMoney(notice.budgetAmount) }}</el-descriptions-item>
-            <el-descriptions-item label="发布时间">{{ formatDateTime(notice.publishTime) }}</el-descriptions-item>
-            <el-descriptions-item label="报名截止">{{ formatDateTime(notice.signupDeadline) }}</el-descriptions-item>
-            <el-descriptions-item label="投标截止">{{ formatDateTime(notice.bidDeadline) }}</el-descriptions-item>
-            <el-descriptions-item label="开标时间">{{ formatDateTime(notice.openBidTime) }}</el-descriptions-item>
-            <el-descriptions-item label="置信度">{{ confidencePercent(notice.aiConfidence) }}</el-descriptions-item>
-            <el-descriptions-item label="复核状态"><BidOpsStatusTag :value="notice.reviewStatus" kind="review" /></el-descriptions-item>
-          </el-descriptions>
-
+        <el-tab-pane label="明细复核" name="details" lazy>
+          <section v-if="activeDetailPane === 'details'" class="content-panel">
           <section v-if="canAdjustOutcomeAi" class="ai-reparse-panel">
             <div class="ai-reparse-heading">
               <div>
@@ -925,15 +1219,15 @@ onUnmounted(() => {
           <section class="amount-candidate-panel">
             <div class="section-heading compact">
               <h2 class="section-title">金额候选池</h2>
-              <el-tag effect="light">{{ amountCandidates.length }} 条</el-tag>
+              <el-tag effect="light">{{ visibleAmountCandidates.length }} 条</el-tag>
             </div>
-            <el-empty v-if="amountCandidates.length === 0" description="未识别到金额候选" />
+            <el-empty v-if="visibleAmountCandidates.length === 0" description="暂无可展示金额候选" />
             <template v-for="group in amountCandidateGroups" :key="group.status">
               <div class="candidate-group-heading">
                 <h3>{{ formatCommonStatus(group.status) }}</h3>
                 <el-tag effect="light">{{ group.rows.length }} 条</el-tag>
               </div>
-              <el-table :data="group.rows" border size="small" empty-text="未识别到金额候选">
+              <el-table :data="amountGroupRows(group)" border size="small" empty-text="未识别到金额候选">
                 <el-table-column type="index" label="序号" width="70" fixed="left" />
                 <el-table-column label="金额" width="140" align="right">
                   <template #default="{ row }">{{ amountCandidateAmountText(row) }}</template>
@@ -964,6 +1258,17 @@ onUnmounted(() => {
                   <template #default="{ row }">{{ amountCandidateEvidenceRowText(row) }}</template>
                 </el-table-column>
               </el-table>
+              <el-pagination
+                v-if="group.rows.length > tablePageSize"
+                class="table-pagination"
+                background
+                small
+                layout="prev, pager, next, total"
+                :current-page="amountGroupPage(group.status)"
+                :page-size="tablePageSize"
+                :total="group.rows.length"
+                @current-change="setAmountGroupPage(group.status, $event)"
+              />
             </template>
           </section>
 
@@ -1003,6 +1308,17 @@ onUnmounted(() => {
                 <template #default="{ row }">{{ formatCommonStatus(row.outcomeType) }}</template>
               </el-table-column>
               <el-table-column prop="supplierName" label="成交供应商" min-width="210" show-overflow-tooltip />
+              <el-table-column v-if="awardColumnVisible.awardAmount" label="成交金额（元）" width="150" align="right">
+                <template #default="{ row }">{{ formatMoney(row.awardAmount) }}</template>
+              </el-table-column>
+              <el-table-column
+                v-if="awardColumnVisible.procurementAgencyServiceFeeAmount"
+                label="代理服务费（元）"
+                width="150"
+                align="right"
+              >
+                <template #default="{ row }">{{ formatMoney(row.procurementAgencyServiceFeeAmount) }}</template>
+              </el-table-column>
               <el-table-column v-if="canEditOutcomeRows" label="操作" width="140" fixed="right">
                 <template #default="{ row }">
                   <PermissionButton
@@ -1045,7 +1361,7 @@ onUnmounted(() => {
                 新增明细
               </PermissionButton>
             </div>
-            <el-table :data="candidateRows" border size="small" empty-text="未识别到候选人明细">
+            <el-table :data="pagedCandidateRows" border size="small" empty-text="未识别到候选人明细">
               <el-table-column type="index" label="序号" width="70" fixed="left" />
               <el-table-column v-if="candidateColumnVisible.projectCode" label="采购编号" min-width="150" show-overflow-tooltip>
                 <template #default="{ row }">{{ outcomeProjectCode(row) }}</template>
@@ -1100,11 +1416,28 @@ onUnmounted(() => {
                 </template>
               </el-table-column>
             </el-table>
+            <el-pagination
+              v-if="candidateRows.length > tablePageSize"
+              v-model:current-page="candidatePage"
+              class="table-pagination"
+              background
+              small
+              layout="prev, pager, next, total"
+              :page-size="tablePageSize"
+              :total="candidateRows.length"
+            />
 
             <h2 class="section-title">对应包件明细</h2>
             <el-empty v-if="procurementPackages.length === 0" description="没有解析到对应包件" />
             <template v-else>
-              <el-table :data="procurementPackages" border size="small" empty-text="没有解析到对应包件">
+              <el-table
+                :data="pagedProcurementPackages"
+                border
+                highlight-current-row
+                size="small"
+                empty-text="没有解析到对应包件"
+                @row-click="selectPackage"
+              >
                 <el-table-column label="分标编号" min-width="130" show-overflow-tooltip>
                   <template #default="{ row }">{{ row.lotNo || '-' }}</template>
                 </el-table-column>
@@ -1123,25 +1456,35 @@ onUnmounted(() => {
                   <template #default="{ row }">{{ row.requirements?.length || 0 }}</template>
                 </el-table-column>
               </el-table>
-              <section v-for="pkg in procurementPackages" :key="pkg.id" class="detail-module">
+              <el-pagination
+                v-if="procurementPackages.length > tablePageSize"
+                v-model:current-page="procurementPackagePage"
+                class="table-pagination"
+                background
+                small
+                layout="prev, pager, next, total"
+                :page-size="tablePageSize"
+                :total="procurementPackages.length"
+              />
+              <section v-if="selectedProcurementPackage" :key="selectedProcurementPackage.id" class="detail-module">
                 <div class="module-heading">
                   <div>
-                    <h3>{{ packageTitle(pkg) }}</h3>
-                    <p>{{ packageSubtitle(pkg) }}</p>
+                    <h3>{{ packageTitle(selectedProcurementPackage) }}</h3>
+                    <p>{{ packageSubtitle(selectedProcurementPackage) }}</p>
                   </div>
-                  <el-tag effect="light">置信度 {{ confidencePercent(pkg.aiConfidence) }}</el-tag>
+                  <el-tag effect="light">置信度 {{ confidencePercent(selectedProcurementPackage.aiConfidence) }}</el-tag>
                 </div>
                 <el-descriptions :column="2" border>
-                  <el-descriptions-item label="分标编号">{{ pkg.lotNo || '-' }}</el-descriptions-item>
-                  <el-descriptions-item label="分标名称">{{ pkg.lotName || '-' }}</el-descriptions-item>
-                  <el-descriptions-item label="包号">{{ formatPackageNo(pkg.packageNo) }}</el-descriptions-item>
-                  <el-descriptions-item label="包名称">{{ pkg.packageName || '-' }}</el-descriptions-item>
-                  <el-descriptions-item label="品类">{{ formatCategory(pkg.category) }}</el-descriptions-item>
-                  <el-descriptions-item label="预算">{{ formatMoney(pkg.budgetAmount) }}</el-descriptions-item>
-                  <el-descriptions-item label="复核状态"><BidOpsStatusTag :value="pkg.reviewStatus" kind="review" /></el-descriptions-item>
+                  <el-descriptions-item label="分标编号">{{ selectedProcurementPackage.lotNo || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="分标名称">{{ selectedProcurementPackage.lotName || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="包号">{{ formatPackageNo(selectedProcurementPackage.packageNo) }}</el-descriptions-item>
+                  <el-descriptions-item label="包名称">{{ selectedProcurementPackage.packageName || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="品类">{{ formatCategory(selectedProcurementPackage.category) }}</el-descriptions-item>
+                  <el-descriptions-item label="预算">{{ formatMoney(selectedProcurementPackage.budgetAmount) }}</el-descriptions-item>
+                  <el-descriptions-item label="复核状态"><BidOpsStatusTag :value="selectedProcurementPackage.reviewStatus" kind="review" /></el-descriptions-item>
                 </el-descriptions>
                 <h3 class="requirements-title">资格 / 商务 / 风险要求</h3>
-                <RequirementTable :requirements="packageRequirements(pkg)" class="requirements" />
+                <RequirementTable :requirements="packageRequirements(selectedProcurementPackage)" class="requirements" />
               </section>
             </template>
           </template>
@@ -1150,7 +1493,14 @@ onUnmounted(() => {
             <h2 class="section-title">前置公告明细</h2>
             <el-empty v-if="procurementPackages.length === 0" description="没有解析到采购包件" />
             <template v-else>
-              <el-table :data="procurementPackages" border size="small" empty-text="没有解析到采购包件">
+              <el-table
+                :data="pagedProcurementPackages"
+                border
+                highlight-current-row
+                size="small"
+                empty-text="没有解析到采购包件"
+                @row-click="selectPackage"
+              >
                 <el-table-column type="index" label="序号" width="70" fixed="left" />
                 <el-table-column label="分标编号" min-width="130" show-overflow-tooltip>
                   <template #default="{ row }">{{ row.lotNo || '-' }}</template>
@@ -1170,25 +1520,35 @@ onUnmounted(() => {
                   <template #default="{ row }">{{ row.requirements?.length || 0 }}</template>
                 </el-table-column>
               </el-table>
-              <section v-for="pkg in procurementPackages" :key="pkg.id" class="detail-module">
+              <el-pagination
+                v-if="procurementPackages.length > tablePageSize"
+                v-model:current-page="procurementPackagePage"
+                class="table-pagination"
+                background
+                small
+                layout="prev, pager, next, total"
+                :page-size="tablePageSize"
+                :total="procurementPackages.length"
+              />
+              <section v-if="selectedProcurementPackage" :key="selectedProcurementPackage.id" class="detail-module">
                 <div class="module-heading">
                   <div>
-                    <h3>{{ packageTitle(pkg) }}</h3>
-                    <p>{{ packageSubtitle(pkg) }}</p>
+                    <h3>{{ packageTitle(selectedProcurementPackage) }}</h3>
+                    <p>{{ packageSubtitle(selectedProcurementPackage) }}</p>
                   </div>
-                  <el-tag effect="light">置信度 {{ confidencePercent(pkg.aiConfidence) }}</el-tag>
+                  <el-tag effect="light">置信度 {{ confidencePercent(selectedProcurementPackage.aiConfidence) }}</el-tag>
                 </div>
                 <el-descriptions :column="2" border>
-                  <el-descriptions-item label="分标编号">{{ pkg.lotNo || '-' }}</el-descriptions-item>
-                  <el-descriptions-item label="分标名称">{{ pkg.lotName || '-' }}</el-descriptions-item>
-                  <el-descriptions-item label="包号">{{ formatPackageNo(pkg.packageNo) }}</el-descriptions-item>
-                  <el-descriptions-item label="包名称">{{ pkg.packageName || '-' }}</el-descriptions-item>
-                  <el-descriptions-item label="品类">{{ formatCategory(pkg.category) }}</el-descriptions-item>
-                  <el-descriptions-item label="预算">{{ formatMoney(pkg.budgetAmount) }}</el-descriptions-item>
-                  <el-descriptions-item label="复核状态"><BidOpsStatusTag :value="pkg.reviewStatus" kind="review" /></el-descriptions-item>
+                  <el-descriptions-item label="分标编号">{{ selectedProcurementPackage.lotNo || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="分标名称">{{ selectedProcurementPackage.lotName || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="包号">{{ formatPackageNo(selectedProcurementPackage.packageNo) }}</el-descriptions-item>
+                  <el-descriptions-item label="包名称">{{ selectedProcurementPackage.packageName || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="品类">{{ formatCategory(selectedProcurementPackage.category) }}</el-descriptions-item>
+                  <el-descriptions-item label="预算">{{ formatMoney(selectedProcurementPackage.budgetAmount) }}</el-descriptions-item>
+                  <el-descriptions-item label="复核状态"><BidOpsStatusTag :value="selectedProcurementPackage.reviewStatus" kind="review" /></el-descriptions-item>
                 </el-descriptions>
                 <h3 class="requirements-title">资格 / 商务 / 风险要求</h3>
-                <RequirementTable :requirements="packageRequirements(pkg)" class="requirements" />
+                <RequirementTable :requirements="packageRequirements(selectedProcurementPackage)" class="requirements" />
               </section>
             </template>
           </template>
@@ -1231,7 +1591,7 @@ onUnmounted(() => {
                   </PermissionButton>
                 </div>
               </div>
-              <el-table :data="outcomeSuppliers" border size="small" empty-text="未识别到中标/候选厂家">
+              <el-table :data="pagedGenericOutcomeRows" border size="small" empty-text="未识别到中标/候选厂家">
                 <el-table-column prop="supplierName" label="厂家" min-width="180" show-overflow-tooltip />
                 <el-table-column label="关联状态" width="150">
                   <template #default="{ row }">
@@ -1273,35 +1633,80 @@ onUnmounted(() => {
                     >
                       删除
                     </PermissionButton>
-                  </template>
-                </el-table-column>
-              </el-table>
+                </template>
+              </el-table-column>
+            </el-table>
+              <el-pagination
+                v-if="outcomeSuppliers.length > tablePageSize"
+                v-model:current-page="genericOutcomePage"
+                class="table-pagination"
+                background
+                small
+                layout="prev, pager, next, total"
+                :page-size="tablePageSize"
+                :total="outcomeSuppliers.length"
+              />
             </section>
           </div>
 
           <div v-if="noticeKind === 'other'" class="package-list">
             <el-empty v-if="packages.length === 0" description="没有解析到包件" />
-            <section v-for="pkg in packages" :key="pkg.id" class="package-block">
+            <template v-else>
+              <el-table
+                :data="pagedOtherPackages"
+                border
+                highlight-current-row
+                size="small"
+                empty-text="没有解析到包件"
+                @row-click="selectPackage"
+              >
+                <el-table-column label="标段号" min-width="130" show-overflow-tooltip>
+                  <template #default="{ row }">{{ row.lotNo || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="包件号" width="110">
+                  <template #default="{ row }">{{ formatPackageNo(row.packageNo) }}</template>
+                </el-table-column>
+                <el-table-column prop="packageName" label="包件名称" min-width="220" show-overflow-tooltip />
+                <el-table-column label="预算" width="130" align="right">
+                  <template #default="{ row }">{{ formatMoney(row.budgetAmount) }}</template>
+                </el-table-column>
+                <el-table-column label="要求项" width="90">
+                  <template #default="{ row }">{{ row.requirements?.length || 0 }}</template>
+                </el-table-column>
+              </el-table>
+              <el-pagination
+                v-if="packages.length > tablePageSize"
+                v-model:current-page="otherPackagePage"
+                class="table-pagination"
+                background
+                small
+                layout="prev, pager, next, total"
+                :page-size="tablePageSize"
+                :total="packages.length"
+              />
+            <section v-if="selectedOtherPackage" :key="selectedOtherPackage.id" class="package-block">
               <div class="package-heading">
                 <div>
-                  <h3>{{ packageTitle(pkg) }}</h3>
-                  <p>{{ packageSubtitle(pkg) }}</p>
+                  <h3>{{ packageTitle(selectedOtherPackage) }}</h3>
+                  <p>{{ packageSubtitle(selectedOtherPackage) }}</p>
                 </div>
-                <el-tag effect="light">置信度 {{ confidencePercent(pkg.aiConfidence) }}</el-tag>
+                <el-tag effect="light">置信度 {{ confidencePercent(selectedOtherPackage.aiConfidence) }}</el-tag>
               </div>
               <el-descriptions :column="2" border>
-                <el-descriptions-item label="标段号">{{ pkg.lotNo || '-' }}</el-descriptions-item>
-                <el-descriptions-item label="包件号">{{ formatPackageNo(pkg.packageNo) }}</el-descriptions-item>
-                <el-descriptions-item label="包件名称">{{ pkg.packageName || '-' }}</el-descriptions-item>
-                <el-descriptions-item label="预算金额">{{ formatMoney(pkg.budgetAmount) }}</el-descriptions-item>
-                <el-descriptions-item label="复核状态"><BidOpsStatusTag :value="pkg.reviewStatus" kind="review" /></el-descriptions-item>
+                <el-descriptions-item label="标段号">{{ selectedOtherPackage.lotNo || '-' }}</el-descriptions-item>
+                <el-descriptions-item label="包件号">{{ formatPackageNo(selectedOtherPackage.packageNo) }}</el-descriptions-item>
+                <el-descriptions-item label="包件名称">{{ selectedOtherPackage.packageName || '-' }}</el-descriptions-item>
+                <el-descriptions-item label="预算金额">{{ formatMoney(selectedOtherPackage.budgetAmount) }}</el-descriptions-item>
+                <el-descriptions-item label="复核状态"><BidOpsStatusTag :value="selectedOtherPackage.reviewStatus" kind="review" /></el-descriptions-item>
               </el-descriptions>
               <h3 class="requirements-title">资格 / 商务 / 风险要求</h3>
-              <RequirementTable :requirements="packageRequirements(pkg)" class="requirements" />
+              <RequirementTable :requirements="packageRequirements(selectedOtherPackage)" class="requirements" />
             </section>
+            </template>
           </div>
-        </section>
-      </div>
+          </section>
+        </el-tab-pane>
+      </el-tabs>
 
       <el-dialog
         v-model="outcomeEditVisible"
@@ -1384,7 +1789,6 @@ onUnmounted(() => {
         </template>
       </el-dialog>
 
-      <ReviewDecisionPanel class="decision-panel" :submitting="decisionRequest.loading" @approve="approve" @ignore="ignore" />
     </template>
   </PageContainer>
 </template>
@@ -1465,7 +1869,7 @@ onUnmounted(() => {
   background: #fff;
 }
 
-.quality-review-panel,
+.quality-review-strip,
 .background-jobs-panel {
   display: grid;
   gap: 12px;
@@ -1477,6 +1881,50 @@ onUnmounted(() => {
   background: #fff;
 }
 
+.quality-review-strip {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 10px 14px;
+}
+
+.quality-strip-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.quality-strip-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.quality-strip-title h2 {
+  margin: 0;
+  color: #17202a;
+  font-size: 15px;
+}
+
+.quality-strip-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: #687385;
+  font-size: 12px;
+}
+
+.quality-issues-collapse {
+  grid-column: 1 / -1;
+  border-top: 1px solid #e7edf5;
+  border-bottom: 0;
+}
+
+.quality-collapse-title {
+  color: #2f6fd6;
+  font-size: 13px;
+}
+
 .background-job-actions {
   display: flex;
   align-items: center;
@@ -1484,6 +1932,51 @@ onUnmounted(() => {
   gap: 8px;
   color: #687385;
   font-size: 12px;
+}
+
+.review-detail-tabs {
+  margin-top: 16px;
+}
+
+.review-detail-tabs :deep(.el-tabs__content) {
+  overflow: visible;
+}
+
+.comparison-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(480px, 1.1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.comparison-panel {
+  min-height: 520px;
+}
+
+.comparison-meta {
+  margin-bottom: 12px;
+}
+
+.comparison-attachments {
+  margin-bottom: 14px;
+}
+
+.comparison-raw-text {
+  max-height: calc(100vh - 360px);
+  min-height: 360px;
+  overflow: auto;
+}
+
+.comparison-ai-reparse {
+  padding-top: 0;
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.table-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
 }
 
 .quality-summary-grid {
@@ -1721,6 +2214,10 @@ onUnmounted(() => {
   .split-grid {
     grid-template-columns: 1fr;
   }
+
+  .comparison-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -1728,6 +2225,7 @@ onUnmounted(() => {
     grid-template-columns: 1fr;
   }
 
+  .quality-review-strip,
   .quality-summary-grid {
     grid-template-columns: 1fr;
   }

@@ -1,5 +1,265 @@
 # Implementation Log
 
+## 2026-07-09 BidOps Local Restart Script Recovery
+
+Completed:
+
+- Investigated `scripts/restart-bidops-local.ps1` startup failure and confirmed the script file had been overwritten with NUL bytes, causing PowerShell to try to execute an invalid command at line 1.
+- Rebuilt the combined local restart script so it starts WebApi, Worker, and Atlas Admin frontend by default, keeps `-SkipBuild`, `-SkipWebApi`, `-SkipWorker`, and `-SkipFrontend` escape hatches, and reuses the existing WebApi/Worker restart scripts.
+- Preserved the local startup safety flow: stop backend processes before backend builds, shut down .NET build servers, build WebApi/Worker, then launch both with `--no-build` to avoid shared output DLL locks.
+- Added frontend restart and health checks for `http://localhost:5173/` and `http://localhost:5260/api/auth/context`.
+
+Verification:
+
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\restart-bidops-local.ps1 -SkipBuild -SkipWebApi -SkipWorker -SkipFrontend -StartupWaitSeconds 0` succeeded after repair.
+- `dotnet --info` confirmed the machine has .NET 9 SDK plus .NET 8 runtime; Atlas still targets `net8.0`.
+- `node --version` returned `v18.16.0`; `npm.cmd --version` returned `9.5.1`.
+- `docker compose config` succeeded, and `Test-NetConnection -ComputerName localhost -Port 3306` confirmed MySQL is reachable.
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\restart-bidops-local.ps1 -StartupWaitSeconds 8` succeeded: WebApi and Worker built with 0 warnings/0 errors, frontend returned HTTP 200, and WebApi auth context returned the expected unauthenticated HTTP 401.
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\restart-bidops-local.ps1 -SkipBuild -StartupWaitSeconds 5` succeeded against already-running services and restarted WebApi, Worker, and frontend cleanly.
+
+## 2026-07-09 BidOps Local Restart Default Worker
+
+Completed:
+
+- Changed `scripts/restart-bidops-local.ps1` so right-click/default execution starts WebApi, Worker, and Atlas Admin frontend together.
+- Kept `-SkipWorker` as the explicit UI-only escape hatch and updated the startup message to show whether Worker is enabled or intentionally skipped.
+
+Verification:
+
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\restart-bidops-local.ps1 -SkipBuild -SkipWebApi -SkipWorker -SkipFrontend -StartupWaitSeconds 0` succeeded. The no-op smoke test returned frontend `200` and expected unauthenticated WebApi auth `401` without stopping running services.
+
+## 2026-07-07 BidOps Outcome Rebuild DryRun P0-5
+
+Completed:
+
+- Added a minimal outcome-supplier rebuild dry-run job: `bidops.outcome.supplier-rebuild-dry-run`.
+- Added `OutcomeSupplierRebuildDryRunJobPayload`, `OutcomeSupplierRebuildDryRunResultDto`, and a Worker handler that returns existing count, preview extracted count, preview saved count, delta count, source counts, lot-number validation counts, and AI diagnostics.
+- Added `IBidOpsOutcomeSupplierExtractionService.DryRunRawNoticeAsync`, reusing the current extraction pipeline while avoiding deletion, insert, quality recomputation, lifecycle refresh, and organization master-data sync.
+- Added an enqueue API at `POST /api/bidops/raw-notices/{id}/outcome-suppliers/rebuild-dry-run`.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "OutcomeSupplierRebuildDryRunJobHandler_ReturnsJsonResultSummaryWithoutApplying|BidOpsModule_RegistersServicesAndBackgroundHandlers|RawNoticesController_DeclaresPipelineAndReparseRoutes" --no-restore --nologo --verbosity minimal` succeeded: 3 passed.
+- `git diff --check` succeeded for the touched P0-5 files.
+- Final combined verification also succeeded:
+  - `npm run typecheck` in `frontend/atlas-admin`.
+  - `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtracts_CarrySourceDiagnostics|OutcomeSupplierExtractJobHandler_ReturnsJsonResultSummary|BidOpsOutcomeSupplierExtractionService_AutomaticMergeDropsLegacyWeakRowCoveredByAi|BidOpsOutcomeSupplierExtractionService_KeepsSameSupplierRowsWithDifferentLotNames|BidOpsOutcomeSupplierExtractionService_AutomaticMergePrioritizesAiAnnouncementOrder|BidOpsOutcomeSupplierExtractionService_ReviewerPromptKeepsDeterministicRowsMissingFromAi|BidOpsOutcomeSupplierExtractionService_PreservesPipeDelimitedLotNoEvidence|BidOpsOutcomeSupplierExtractionService_ClearsUnsupportedAiLotNo|OutcomeSupplierRebuildDryRunJobHandler_ReturnsJsonResultSummaryWithoutApplying|BidOpsModule_RegistersServicesAndBackgroundHandlers|RawNoticesController_DeclaresPipelineAndReparseRoutes" --no-restore --nologo --verbosity minimal` succeeded: 11 passed.
+  - `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal /nodeReuse:false -p:BaseOutputPath="$env:TEMP\AtlasCodexBuild\\"` succeeded with existing unrelated warnings. A normal build to project `bin` failed first because running local `Atlas.Worker` and `Atlas.WebApi` processes locked `Atlas.Modules.BidOps.dll`.
+
+## 2026-07-07 BidOps LotNo Validation Diagnostics P0-4
+
+Completed:
+
+- Changed outcome lot-number sanitization to produce validation status and reason instead of only returning a boolean decision.
+- Added in-memory lot-number diagnostics to outcome extracts: `RawLotNo`, `LotNoValidationStatus`, and `LotNoValidationReason`.
+- Preserved lot-number diagnostics through post-processing clone paths.
+- Added `lotNoValidationCounts` to outcome extraction job summaries so rejected/accepted/empty lot-number decisions are visible without adding database columns yet.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_PreservesPipeDelimitedLotNoEvidence|BidOpsOutcomeSupplierExtractionService_ClearsUnsupportedAiLotNo|OutcomeSupplierExtractJobHandler_ReturnsJsonResultSummary" --no-restore --nologo --verbosity minimal` succeeded: 3 passed.
+- `git diff --check` succeeded for the touched P0-4 files.
+
+## 2026-07-07 BidOps Weak Outcome Candidate Merge P0-3
+
+Completed:
+
+- Changed automatic outcome merging from hard `supplier + lotNo/lotName + package` grouping to an AI-first survivor flow with compatibility checks for deterministic fallback rows.
+- Added weak-candidate pruning inside exact dedupe so higher-trust candidates can cover lower-trust fragmented rows when supplier, outcome, rank, package, and lot context are compatible.
+- Kept reviewer-prompt semantics that allow AI-corrected supplier names to replace deterministic rows when package and lot context match.
+- Protected same-source rows that both have meaningful lot context from being merged solely because supplier and package match.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_AutomaticMergeDropsLegacyWeakRowCoveredByAi|BidOpsOutcomeSupplierExtractionService_KeepsSameSupplierRowsWithDifferentLotNames|BidOpsOutcomeSupplierExtractionService_AutomaticMergePrioritizesAiAnnouncementOrder|BidOpsOutcomeSupplierExtractionService_ReviewerPromptKeepsDeterministicRowsMissingFromAi" --no-restore --nologo --verbosity minimal` succeeded: 4 passed.
+- `git diff --check` succeeded for the touched P0-3 files.
+
+## 2026-07-07 BidOps Outcome Candidate Source Diagnostics P0-2
+
+Completed:
+
+- Added in-memory source diagnostics to `BidOpsOutcomeSupplierExtract`: `SourceType`, `SourceParserVersion`, and `SourceCallId`.
+- Tagged outcome candidates from AI OutcomeSuppliers, legacy text parser, wrapped table parser, PDF structured table parser, candidate evidence parser, and award evidence parser.
+- Preserved source diagnostics when non-award rows and sanitized rows are cloned during post-processing.
+- Added `sourceCounts` to outcome extraction job summaries so operators can see which sources survived into the save flow without adding database columns yet.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtracts_CarrySourceDiagnostics|OutcomeSupplierExtractJobHandler_ReturnsJsonResultSummary" --no-restore --nologo --verbosity minimal` succeeded: 2 passed.
+- `git diff --check` succeeded for the touched P0-2 files.
+
+## 2026-07-07 BidOps AI Call Diagnostics P0-1
+
+Completed:
+
+- Updated the background job AI diagnostics tab to show business labels for AI calls: `NoticeStaging` as 公告结构解析, `OutcomeSuppliers` as 中标成交明细解析, and `LifecycleFieldEnrichment` as 闭环字段补全.
+- Added a compact assistant-content summary for each AI call, including records, packages, requirements, and completeness counts for supplier, lot number, lot name, package number, and evidence text.
+- Added an operator note that AI raw responses are diagnostic evidence and can differ from final persisted review details because deterministic parsing, merge, cleanup, and persistence still run after the model returns.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `git diff --check -- frontend/atlas-admin/src/modules/operations/pages/BackgroundJobDetailPage.vue` succeeded.
+
+## 2026-07-04 BidOps Fragmented PDF Outcome Lot Context
+
+Completed:
+
+- Investigated outcome supplier record `331349894998659075`. Its evidence row was reduced to `2-02 房屋维修-总承包 包 38 中恒诚信建设有限公司`, so the full lot number prefix was no longer present in the row.
+- Added an outcome post-processing enrichment step that builds lot contexts from complete rows in the same extraction result, then fills missing `LotNo` / `LotName` only when the current row's leading lot-name fragment maps to one unique structured lot number.
+- Restricted enrichment to the current row prefix before the first package marker, so a long evidence snippet containing later table rows does not accidentally supply the wrong lot context.
+- Added regression tests for unique fragmented-row enrichment, ambiguous lot-name protection, and long-evidence protection.
+- Backfilled local historical rows with the same conservative rule: short evidence row, structured unique same-notice lot context, and one inferred context per row. Updated 2,513 rows; record `331349894998659075` now has `LotNo=18FV2F9003002-02` and `LotName=房屋维修-总承包`.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_EnrichesFragmentedLotNoFromUniqueOutcomeContext|BidOpsOutcomeSupplierExtractionService_DoesNotEnrichFragmentedLotNoWhenLotNameIsAmbiguous|BidOpsOutcomeSupplierExtractionService_DoesNotUseLaterTableRowsForFragmentedLotContext|BidOpsOutcomeSupplierExtractionService_FillsSingleHyphenLotNoFromInlineOutcomeEvidence|BidOpsOutcomeSupplierExtractionService_KeepsInlineLotNoEvidenceWithLotName|BidOpsOutcomeSupplierExtractionService_ClearsUnsupportedAiLotNo" --no-restore --nologo --verbosity minimal` succeeded: 6 passed.
+- `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded with 0 errors; existing nullable/EF warnings remain in unrelated test projects.
+- `git diff --check` succeeded.
+- Restarted local WebApi and Worker. WebApi returned the expected unauthenticated `HTTP 401` at `http://localhost:5260/api/auth/context`, and the frontend returned `HTTP 200` at `http://localhost:5173`.
+
+## 2026-07-04 BidOps Single-Hyphen Outcome LotNo Fix
+
+Completed:
+
+- Investigated outcome supplier record `331349894168186882`. Its evidence row contained `18FV2F9001005-29`, but the sanitizer only recognized structured lot numbers with at least two separators, so the single-hyphen SGCC lot code was left empty.
+- Extended outcome lot-number parsing to support long-prefix single-separator codes such as `18FV2F9001005-29` when the same evidence row also contains package context.
+- Added regression coverage for the `中国电建集团江西省电力设计院有限公司` evidence row shape.
+- Backfilled local historical outcome supplier records where `LotNo` was empty and the evidence row safely exposed a single-hyphen lot number plus package context. Updated 2,123 rows; record `331349894168186882` now has `LotNo=18FV2F9001005-29`.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_FillsLotNoFromOrdinalPrefixedOutcomeEvidence|BidOpsOutcomeSupplierExtractionService_KeepsInlineLotNoEvidenceWithLotName|BidOpsOutcomeSupplierExtractionService_FillsSingleHyphenLotNoFromInlineOutcomeEvidence|BidOpsOutcomeSupplierExtractionService_ClearsUnsupportedAiLotNo|BidOpsOutcomeSupplierExtractionService_KeepsLotNoWhenSourceHasExplicitLotHeader" --no-restore --nologo --verbosity minimal` succeeded: 5 passed.
+- `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded with 0 errors; existing nullable/EF warnings remain in unrelated test projects.
+- `git diff --check` succeeded.
+- Restarted local WebApi and Worker. WebApi returned the expected unauthenticated `HTTP 401` at `http://localhost:5260/api/auth/context`, and the frontend returned `HTTP 200` at `http://localhost:5173`.
+
+## 2026-07-03 BidOps Review Outcome Dynamic Columns
+
+Completed:
+
+- Restored dynamic column rendering on the review detail comparison table for award/candidate outcome rows, including project, lot name, package name, status, amount, fee, and evidence columns when those fields have data.
+- Removed the remaining award-detail pagination in the parsing review tab so award rows stay visible as a single comparison list.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+
+## 2026-07-03 BidOps Outcome LotNo Preservation Fix
+
+Completed:
+
+- Investigated background job `331347575418523648` and review task `328034536208338949`. The AI response contained `lotNo=18FV2F9003001-14-05` for supplier `巨商控股 （山东） 集团有限公司`, but the persisted `bidops_outcome_supplier_record` row had an empty `LotNo`.
+- Found the cause in outcome extraction sanitization: inline evidence rows shaped like `序号 分标编号 分标名称 包号 供应商` were not accepted as explicit lot-number evidence unless a nearby labeled table header was also detected.
+- Extended the lot-number support check to trust inline public outcome rows that start with an ordinal plus a structured lot code and later contain package/supplier context.
+- Backfilled the affected local RawNotice `327873693386674176`: 11 rows had `LotNo` restored from their evidence text; the `巨商控股 （山东） 集团有限公司` row now has `LotNo=18FV2F9003001-14-05`.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_FillsLotNoFromOrdinalPrefixedOutcomeEvidence|BidOpsOutcomeSupplierExtractionService_KeepsInlineLotNoEvidenceWithLotName|BidOpsOutcomeSupplierExtractionService_ClearsUnsupportedAiLotNo|BidOpsOutcomeSupplierExtractionService_KeepsLotNoWhenSourceHasExplicitLotHeader" --no-restore --nologo --verbosity minimal` succeeded: 4 passed.
+
+## 2026-07-03 BidOps Review Detail Comparison Layout
+
+Completed:
+
+- Changed the review detail default tab to “公告对照”, showing the original announcement text beside the award/candidate detail table.
+- Kept edit/add and review decision actions available on the comparison view so operators can approve while comparing the two primary sources.
+- Compressed “异常复核” into a compact summary strip; unresolved issue rows are now behind a collapsed details panel.
+- Restored the original announcement attachment table on the comparison view, above the announcement text.
+- Moved the AI prompt reparse panel above the award/candidate detail table on the comparison view.
+- Removed pagination from the comparison-view award/candidate detail table so all rows are visible while checking against the announcement.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `git diff --check` succeeded.
+
+## 2026-07-03 BidOps Review Detail Amount Candidate Display
+
+Completed:
+
+- Removed `Unresolved` / `Rejected` amount-candidate groups from the review detail amount candidate pool. The panel now shows only actionable `Selected`, `Recommended`, and `Candidate` rows.
+- Updated the amount-candidate count and empty state to reflect only visible rows, so hidden pending/rejected candidates do not leave a misleading total.
+
+Verification:
+
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+
+## 2026-07-03 BidOps Background Job Business Link Backfill
+
+Completed:
+
+- Added structured business-link fields to `BackgroundJob`: `SourceModule`, `BusinessType`, `BusinessId`, and `CorrelationId`.
+- Added Global DB migration `20260703090000_v0.2.6-background-job-business-link` with indexed lookup by `(TenantId, SourceModule, BusinessType, BusinessId, CreatedAt)` and `(TenantId, CorrelationId, CreatedAt)`.
+- Changed BidOps RawNoticeId job search/summary to use the structured columns instead of scanning `Payload` / `Result` text.
+- Added enqueue-time inference for BidOps background jobs from payload JSON and known deduplication-key formats. Manual URL import and mock crawl jobs update the link after they create the RawNotice.
+- Added a temporary one-time backfill job `atlas.background-jobs.business-link-backfill`, enabled only in local `BidOpsLocal` config with run id `bidops-rawnotice-20260703`.
+- Backfilled the local `atlas_global_bidops.BackgroundJobs` table. The first pass scanned and updated 32,201 historical BidOps jobs; after fixing the handler to avoid clearing the Worker job tracking state, the final pass completed successfully with `scanned=520;updated=0;skipped=520`. The remaining 520 are BidOps jobs without RawNoticeId evidence, such as scan-level jobs.
+- Verified review task `328034536208338949` maps to RawNoticeId `327873693386674176`; the structured business-link query returns 8 related background jobs and `EXPLAIN` uses `IX_BackgroundJobs_Tenant_BusinessLink` with `rows=8`.
+
+Verification:
+
+- `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "SearchAsync_FiltersBidOpsJobsByExactRawNoticeId|AddAtlasBackgroundTaskRuntime_WorkerDefaults_RegisterHostedWorkers|BidOpsModule_RegistersServicesAndBackgroundHandlers" --no-build --nologo --verbosity minimal` succeeded: 3 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- Local Global DB schema now has `SourceModule varchar(64)`, `BusinessType varchar(64)`, `BusinessId bigint`, `CorrelationId varchar(128)`, plus both new indexes. The standard EF update could not be used on this local database because its `__EFMigrationsHistory` table is empty while base tables already exist, so the equivalent DDL was applied manually for `atlas_global_bidops`.
+- Restarted local Worker and WebApi in `BidOpsLocal`; WebApi returned the expected unauthenticated `HTTP 401` at `http://localhost:5260/api/auth/context`, and the frontend returned `HTTP 200` at `http://localhost:5173`.
+
+## 2026-07-03 BidOps Review Detail Timeout Diagnosis And Fix
+
+Completed:
+
+- Inspected local WebApi logs under `src/Atlas.WebApi/logs/application`. The review detail body endpoint was returning successfully in roughly 226-824 ms, while `GET /api/bidops/review-tasks/{id}/jobs` repeatedly failed after about 30,011-30,084 ms with `MySqlConnector.MySqlException: The Command Timeout expired before the operation completed`.
+- Identified the regression source: the review detail page auto-loaded announcement-related background jobs on every page entry/refresh, and the RawNoticeId job filter used `Payload` / `Result` text searches over large background-job diagnostic fields.
+- Changed the review detail page so background jobs are loaded only when the operator opens the “后台任务” tab. Reparse actions no longer wait on the jobs list unless that tab is visible.
+- Changed RawNoticeId background-job search/summary to avoid database `LIKE` scans over large payload/result fields for the normal review-detail path. It now scans a bounded, tenant/BidOps-scoped recent candidate window and performs exact RawNoticeId matching in memory, including deduplication keys.
+- Added test coverage for exact RawNoticeId matching, including guarding against `123` matching `1234` and supporting jobs whose RawNoticeId is only present in the deduplication key.
+- Restarted local WebApi and Worker after the fix.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "SearchAsync_FiltersBidOpsJobsByExactRawNoticeId" --no-restore` succeeded: 1 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- Initial full build failed because running local `Atlas.WebApi` / `Atlas.Worker` processes held output DLL locks. After stopping those two local processes, `dotnet build Atlas.sln --no-restore` succeeded with 0 warnings and 0 errors.
+- Frontend returned `HTTP 200` at `http://localhost:5173`. WebApi returned the expected unauthenticated `HTTP 401` at `http://localhost:5260/api/auth/context`.
+- Post-restart log tail showed no new `/api/bidops/review-tasks/{id}/jobs` timeout entries; the remaining timeout records were the pre-fix `16:19:47` entries.
+
+## 2026-07-03 BidOps Review Reparse Quality Cleanup And Detail Layout
+
+Completed:
+
+- Changed review reparse enqueue paths so stale `ReviewQualityIssue` rows for the current review task are removed immediately when a raw-notice or outcome-supplier AI reparse is submitted.
+- Reset the review task quality summary to a neutral pending-recalculation state at enqueue time; successful Worker parsing still writes the new quality issues through the existing quality evaluator.
+- Added defensive review-detail issue de-duplication by issue type, field, and target object so historical duplicate issue rows do not overwhelm the detail page.
+- Reworked the review detail page so the default view shows core parsed fields and the review decision panel first. Background jobs, announcement evidence/full text, and heavy detail review tables now render in lazy tabs.
+- Added client-side pagination for quality issues, amount candidates, outcome supplier rows, generic supplier leads, and package tables; package requirement details now render only for the selected package instead of every package on the page.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "EnqueueRawNoticeReparseAsync_ClearsStaleQualityIssues|EnqueueBulkApproveAsync_ReservesEligibleTasks" --no-restore` succeeded: 1 passed.
+- `dotnet build Atlas.sln --no-restore` succeeded with 0 errors. Existing nullable/EF warnings remain in unrelated test projects.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsModuleTests" --no-build` succeeded: 150 passed.
+
+## 2026-07-03 BidOps Review Detail Related Jobs
+
+Completed:
+
+- Changed review-task job lookup to show BidOps background jobs related to the review task's `RawNoticeId`, covering attachment processing, structured parse, outcome supplier extraction, and reparse jobs for the same public announcement.
+- Added exact `RawNoticeId` filtering to the background job operations query, matching JSON payload/result and `rawNoticeId=...` result summaries without partial ID matches.
+- Updated the review detail page task panel wording to “公告相关后台任务”, displayed the active RawNoticeId, and added a task-center shortcut pre-filtered by RawNoticeId.
+- Exposed AI request diagnostics (`requestSummaryJson`, `requestBodyJson`, `requestPrompt`) in the BidOps background job detail AI tab.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "SearchAsync_FiltersBidOpsJobsByExactRawNoticeId" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 1 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "SearchAsync_FiltersAndMapsBidOpsProjectCode|SearchByIdsAsync_ReturnsOnlyRequestedTenantScopedBidOpsJobs|SearchAsync_FiltersBidOpsJobsByExactRawNoticeId" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded: 3 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- Initial WebApi/Worker builds failed because local `Atlas.WebApi` PID 18580 and `Atlas.Worker` PID 20076 held output DLL locks. After stopping those local host processes, both `dotnet build src\Atlas.WebApi\Atlas.WebApi.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` and `dotnet build src\Atlas.Worker\Atlas.Worker.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BuildInParallel=false` succeeded with 0 warnings and 0 errors.
+- `git diff --check` succeeded.
+- Restarted local WebApi and Worker. WebApi returned `HTTP 401` at `http://localhost:5260/api/auth/context`, frontend returned `HTTP 200` at `http://localhost:5173`, and Worker process restarted.
+
 ## 2026-07-01 BidOps Lifecycle Count Refresh Fix
 
 Completed:
@@ -3324,3 +3584,176 @@ Verification:
 
 - `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractBuilder_ExtractsWrappedPdfCandidateRows|BidOpsWrappedOutcomeTableParser_DoesNotUseTitleAsProjectNameWithoutExplicitProjectName" --no-restore --logger "console;verbosity=minimal"` succeeded: 2 passed.
 - `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOps" --no-restore --logger "console;verbosity=minimal"` succeeded: 233 passed.
+
+## 2026-07-04 BidOps PDF Table Structure Extraction
+
+Completed:
+
+- Investigated local pending review data for executable validation samples. The tenant database currently has 1851 pending review tasks with `ReviewRecommendation=NeedsReview` and 655 pending tasks with `ReviewRecommendation=NeedsReparse`.
+- Selected `RawNoticeId=327873693386674176` / review task `328034536208338949` as the primary regression sample because its 18FV2F award PDFs show the exact structure-loss symptom: visual table columns such as 分标编号、分标名称、包号、成交人 are split into plain text line fragments.
+- Enhanced `BidOpsTextExtractor` PDF extraction to append a layout-aware `PDF 表格结构 Page N` Markdown section built from PdfPig word coordinates. The extractor now detects table headers, assigns following words into header-derived columns, keeps single-digit sequence/package values, and merges wrapped cells such as `18FV2F900300` + `1-14-05`.
+- Kept the MVP storage contract unchanged: the structured Markdown is embedded into the existing extracted text so current attachment processing and AI prompt input paths can consume it without a new database column.
+- Added regression tests covering plain PDF extraction, simple PDF table extraction, and wrapped PDF table cell merging.
+
+Verification:
+
+- `mysql -h localhost -P 3306 -u root -proot atlas_bidops_runtime -e "SELECT Status, ReviewRecommendation, COUNT(*) AS Count FROM bidops_review_task WHERE Status IN (0,1) AND ReviewRecommendation IN (1,2) GROUP BY Status, ReviewRecommendation;"` confirmed pending review/reparse validation samples exist.
+- `mysql -h localhost -P 3306 -u root -proot atlas_bidops_runtime -e "SELECT Id, RawNoticeId, FileName, FileType, StorageKey, TextContentStorageKey, TextExtractStatus FROM bidops_raw_attachment WHERE RawNoticeId IN (327873693386674176,331402358141620224,331402348666687488,331341155914616832) ORDER BY RawNoticeId, Id LIMIT 30;"` confirmed PDF attachments and extracted text are available for the selected samples.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsTextExtractor_ExtractsPdfTextWithoutRawPdfObjects|BidOpsTextExtractor_ExtractsPdfTableStructureAsMarkdown|BidOpsTextExtractor_MergesWrappedPdfTableCellsByColumn" --no-restore --nologo --verbosity minimal` succeeded: 3 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsTextExtractor" --no-restore --nologo --verbosity minimal` succeeded: 10 passed.
+
+## 2026-07-04 BidOps Outcome Reparse Row Explosion Fix
+
+Completed:
+
+- Investigated review task `328034536208338949` after manual reparse. The latest `bidops.ai.structured-parse` job `331662123849617408` saved 458 outcome supplier records for `RawNoticeId=327873693386674176`, while the previous focused outcome reparse jobs saved 301 records.
+- Confirmed the reparse did remove old outcome rows before inserting new rows; the 458 rows were not old+new duplicates. The new rows came from the latest extraction run itself.
+- Identified two sources of row inflation: result-announcement AI rows were persisted as `Candidate` instead of being normalized to `Awarded`, and appended `PDF 表格结构` Markdown sections were consumed by the outcome supplier extraction path as if they were original evidence, producing Markdown/long cross-section evidence rows.
+- Kept PDF structured text available for review diagnostics, but changed outcome supplier extraction to strip appended `PDF 表格结构` Markdown before deterministic parsing and before sending attachment text to the outcome-supplier AI prompt.
+- Added persistence guards to reject obvious polluted evidence rows that start with Markdown pipes, contain `PDF 表格结构`, or have long evidence that crossed into service-notice/instruction text.
+- Normalized non-failed rows from final result announcements to `Awarded`, so AI returning `Candidate` for a 成交/中标结果公告 no longer creates a second outcome set.
+- Repaired local data for `RawNoticeId=327873693386674176`: removed 144 polluted outcome rows, 127 derived amount candidates, and 144 derived review quality issues. The outcome table now has 314 rows (`Awarded=307`, `Failed=7`, `Candidate=0`) and no Markdown evidence rows. Amount candidates for the notice are down to 33, and the review task risk is now Medium with 312 active medium issues.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_DropsPdfMarkdownOutcomeEvidence|BidOpsOutcomeSupplierExtractionService_NormalizesFinalAwardCandidateRowsToAwarded|BidOpsOutcomeSupplierExtractionService_StripsPdfMarkdownSectionsFromOutcomeSource|BidOpsOutcomeSupplierExtractionService_EnrichesFragmentedLotNoFromUniqueOutcomeContext|BidOpsOutcomeSupplierExtractionService_FillsSingleHyphenLotNoFromInlineOutcomeEvidence|BidOpsOutcomeSupplierExtractionService_KeepsInlineLotNoEvidenceWithLotName" --no-restore --nologo --verbosity minimal` succeeded: 6 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsOutcomeSupplierExtractionService|FullyQualifiedName~BidOpsOutcomeSupplierExtractBuilder|FullyQualifiedName~BidOpsTextExtractor" --no-restore --nologo --verbosity minimal` succeeded: 47 passed.
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded with 0 warnings and 0 errors.
+
+## 2026-07-04 BidOps PDF Table Outcome Merge
+
+Completed:
+
+- Added a dedicated PDF Markdown-table outcome parser for the `PDF 表格结构 Page N` sections appended by `BidOpsTextExtractor`. It reads table rows as structured evidence instead of treating Markdown pipes as free text or sending them back to AI.
+- Merged the dedicated PDF table extracts with the existing deterministic and AI outcome extracts, while still stripping diagnostic Markdown sections from the old text parser and AI prompt input to prevent duplicate row inflation.
+- Added recovery heuristics for State Grid award tables where PDF text extraction wraps or drops boundaries: split `LotNo` prefixes embedded in `LotName`, reconstruct wrapped lot numbers such as `18FV2F900300 1-14-05`, accept long unseparated lot numbers such as `18FV2F9011005` only with package evidence, and fill missing lot names from row evidence.
+- Added same-notice enrichment for rows where the PDF breaks a supplier name before the company suffix, limited to cases where a unique complete supplier name exists in the same extraction result and the row evidence supports the truncated suffix.
+- Repaired local historical data for `RawNoticeId=327873693386674176` / review task `328034536208338949`: the three attached PDFs are represented in the merged outcome detail, stale weak duplicates were removed, missing lot context was backfilled from attachment text/evidence, and two truncated supplier names were expanded.
+
+Verification:
+
+- `mysql --default-character-set=utf8mb4 -h localhost -P 3306 -u root -proot atlas_bidops_runtime -e "SELECT COUNT(*) AS AttachmentCount FROM bidops_raw_attachment WHERE RawNoticeId=327873693386674176;"` returned `3`.
+- `mysql --default-character-set=utf8mb4 -h localhost -P 3306 -u root -proot atlas_bidops_runtime -e "SELECT COUNT(*) AS TotalRows, SUM(LotNo IS NULL OR LotNo='') AS EmptyLotNo, SUM(LotName IS NULL OR LotName='') AS EmptyLotName, SUM(PackageNo IS NULL OR PackageNo='') AS EmptyPackageNo, SUM(EvidenceText LIKE '%PDF 表格结构%' OR EvidenceText LIKE '|%') AS MarkdownEvidence FROM bidops_outcome_supplier_record WHERE RawNoticeId=327873693386674176;"` returned `TotalRows=310`, `EmptyLotNo=0`, `EmptyLotName=0`, `EmptyPackageNo=0`, and `MarkdownEvidence=0`.
+- `mysql --default-character-set=utf8mb4 -h localhost -P 3306 -u root -proot atlas_bidops_runtime -e "SELECT OutcomeType, COUNT(*) AS Count FROM bidops_outcome_supplier_record WHERE RawNoticeId=327873693386674176 GROUP BY OutcomeType;"` returned `Awarded=303` and `Failed=7`.
+- `mysql --default-character-set=utf8mb4 -h localhost -P 3306 -u root -proot atlas_bidops_runtime -e "SELECT COUNT(*) AS DuplicateGroups FROM (SELECT LotNo,LotName,PackageNo,SupplierName,COUNT(*) c FROM bidops_outcome_supplier_record WHERE RawNoticeId=327873693386674176 GROUP BY LotNo,LotName,PackageNo,SupplierName HAVING c>1) d;"` returned `0`.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsOutcomeSupplierExtractionService|FullyQualifiedName~BidOpsOutcomeSupplierExtractBuilder|FullyQualifiedName~BidOpsTextExtractor|BidOpsPdfTableOutcomeParser" --no-restore --nologo --verbosity minimal` succeeded: 54 passed.
+- `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded with 82 existing test-project warnings and 0 errors.
+
+## 2026-07-09 BidOps Local Startup Recovery
+
+Completed:
+
+- Restored `BidOpsOutcomeSupplierExtractBuilder.cs` after the file was found to contain only NUL bytes, preserving the current outcome source diagnostics, raw field, field-evidence, and warning fields.
+- Fixed the restored outcome supplier extraction job handler namespace reference so lifecycle refresh diagnostics compile again.
+- Updated the local BidOps restart scripts so the combined startup stops backend processes, prebuilds WebApi/Worker, shuts down .NET build servers, and starts both backend services with `--no-build` to avoid shared `bin`/`obj` locks.
+- Changed `scripts/restart-bidops-local.ps1` so Worker is opt-in with `-WithWorker`; the default UI startup now keeps only WebApi and Vite running.
+- Reduced `BidOpsLocal` Worker startup pressure by disabling scheduled scan/recovery `RunOnStartup`, lowering recovery batch size, and limiting local AI job concurrency.
+
+Verification:
+
+- BidOps module C# NUL-byte scan returned no corrupted files.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractBuilder_ExtractsWrappedPdfAwardRows|BidOpsOutcomeSupplierExtractBuilder_ExtractsWrappedPdfCandidateRows|BidOpsOutcomeSupplierExtracts_CarrySourceDiagnostics|BidOpsOutcomeSupplierAiExtractionService_ParsesOutcomeSupplierSchemaV2Diagnostics" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded: 4 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "OutcomeSupplierExtractJobHandler_ReturnsJsonResultSummary|OutcomeSupplierRebuildDryRunJobHandler_ReturnsJsonResultSummaryWithoutApplying" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded: 2 passed.
+- `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BaseOutputPath="$env:TEMP\AtlasCodexBuild\"` succeeded with 82 existing warnings and 0 errors.
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\restart-bidops-local.ps1 -StartupWaitSeconds 8` succeeded locally; WebApi, Worker, and Vite were running afterward. `http://localhost:5173/` returned 200, `http://localhost:5260/api/auth/context` returned expected unauthenticated 401, and the proxied review-task API returned 401 instead of the previous proxy/backend 500.
+- After stopping Worker/AI child processes, `http://localhost:5173/bidops/review/tasks/328034536208338949` returned 200 and WebApi auth returned expected unauthenticated 401 with no BidOps Worker or AI CLI child processes running.
+
+## 2026-07-04 BidOps Lot Context Prefix Split Follow-up
+
+Completed:
+
+- Generalized outcome cleanup for rows where `LotName` starts with a complete State Grid lot number, including lot numbers whose final segment is one digit such as `18FV2F9011002-01-1`.
+- When the current `LotNo` conflicts with the lot number embedded at the start of `LotName`, persistence now prefers the embedded lot number only if row evidence contains that embedded number and package context. This fixes context bleed without blindly rewriting ambiguous rows.
+- Repaired local historical rows for `RawNoticeId=327873693386674176`: removed one weak duplicate failed row, split three joined `LotName` values, updated the review task issue count from 312 to 311, and corrected one supplier row to the existing full supplier master `中国电建集团江西省电力设计院有限公司`.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_PrefersLotNameEmbeddedLotNoWhenCurrentContextConflicts|BidOpsOutcomeSupplierExtractionService_SplitsLotNoPrefixFromLotName|FullyQualifiedName~BidOpsOutcomeSupplierExtractionService|BidOpsPdfTableOutcomeParser" --no-restore --nologo --verbosity minimal` succeeded: 40 passed.
+- Local query for `RawNoticeId=327873693386674176` returned `TotalRows=309`, `JoinedLotNameRows=0`, `EmptyLotNo=0`, and `EmptyLotName=0`.
+- `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal /nodeReuse:false` succeeded with 82 existing test-project warnings and 0 errors.
+- `git diff --check` succeeded.
+
+## 2026-07-07 BidOps Local Service Restart Script
+
+Completed:
+
+- Added `scripts/restart-bidops-local.ps1` as a one-command local restart wrapper for BidOps WebApi, Worker, and Atlas Admin Vite frontend.
+- The wrapper reuses the existing `restart-webapi.ps1` and `restart-worker.ps1` scripts, starts the frontend from `frontend/atlas-admin`, writes logs to the existing local log files, and prints health-check results for `http://localhost:5173` and `http://localhost:5260/api/auth/context`.
+
+Verification:
+
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\restart-bidops-local.ps1 -StartupWaitSeconds 5` succeeded locally.
+
+## 2026-07-09 BidOps Outcome Supplier Pipeline Phase 2 Diagnostics
+
+Completed:
+
+- Added diagnostic scoring to outcome-supplier extraction candidates: completeness, evidence support, source trust, total strength score, and `Strong`/`Weak`/`Unsupported` classification.
+- Added `StrengthCounts` to outcome extraction and rebuild dry-run result DTOs, and included source, lot-number validation, and strength distributions in the background job result JSON.
+- Changed merge behavior for covered fallback candidates so a deterministic/weak fallback fills only missing survivor fields such as buyer, lot, package, amount, and evidence, without replacing the stronger survivor or creating a duplicate row.
+- Updated the operations background-job detail page to show an outcome-supplier result summary above the raw result JSON, including dry-run state, existing/preview/saved counts, source distribution, lot-number validation distribution, and strength distribution.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_PreservesPipeDelimitedLotNoEvidence|BidOpsOutcomeSupplierExtractionService_ScoresWeakLegacyOutcomeRows|OutcomeSupplierExtractJobHandler_ReturnsJsonResultSummary|OutcomeSupplierRebuildDryRunJobHandler_ReturnsJsonResultSummaryWithoutApplying|BidOpsOutcomeSupplierExtractionService_MergesMissingFieldsFromCoveredFallback|BidOpsOutcomeSupplierExtractionService_AutomaticMergeDropsLegacyWeakRowCoveredByAi|BidOpsOutcomeSupplierExtractionService_KeepsSameSupplierRowsWithDifferentLotNames|BidOpsOutcomeSupplierExtractionService_ReviewerPromptKeepsDeterministicRowsMissingFromAi" --no-restore --nologo --verbosity minimal` succeeded: 8 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` failed only because the running local `Atlas.WebApi` and `Atlas.Worker` processes locked their normal `bin` output DLLs.
+- `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BaseOutputPath="$env:TEMP\AtlasCodexBuild\"` succeeded with 82 existing warnings and 0 errors.
+- `git diff --check` succeeded; it emitted the existing line-ending warning for `src/Atlas.Modules.BidOps/BidOpsConstants.cs`.
+
+## 2026-07-09 BidOps OutcomeSuppliers Schema V2 Intake
+
+Completed:
+
+- Upgraded the OutcomeSuppliers AI JSON schema and prompt to request `sourceSequenceNo`, `sourcePageNo`, `sourceTableTitle`, `sourceRowText`, raw field values, `fieldEvidence`, and `warnings`.
+- Extended `BidOpsOutcomeSupplierExtract` to carry the new source-row, raw-field, field-evidence, and warning diagnostics while keeping the persisted `OutcomeSupplierRecord` schema unchanged in this phase.
+- Updated AI response parsing to remain compatible with the older schema and to use `sourceRowText` as an evidence fallback when `evidenceText` is empty.
+- Preserved the new diagnostic fields through non-award normalization, persistence sanitization, and covered-fallback field merge.
+- Updated evidence scoring so `sourceRowText`, `fieldEvidence`, source page, and source sequence information improve diagnostic strength scores.
+- Extended the background-job detail AI summary with source-row, field-evidence, and warning-row completeness metrics.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierAiExtractionService_ParsesOutcomeSupplierSchemaV2Diagnostics|BidOpsOutcomeSupplierAiExtractionService_ExtractsDeepSeekJsonRecords|BidOpsOutcomeSupplierAiExtractionService_UsesCodexCliProvider|BidOpsOutcomeSupplierExtracts_CarrySourceDiagnostics" --no-restore --nologo --verbosity minimal` succeeded: 4 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_MergesMissingFieldsFromCoveredFallback|BidOpsOutcomeSupplierExtractionService_PreservesPipeDelimitedLotNoEvidence|BidOpsOutcomeSupplierExtractionService_ScoresWeakLegacyOutcomeRows|BidOpsOutcomeSupplierExtractionService_AutomaticMergeDropsLegacyWeakRowCoveredByAi|BidOpsOutcomeSupplierExtractionService_KeepsSameSupplierRowsWithDifferentLotNames" --no-restore --nologo --verbosity minimal` succeeded: 5 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BaseOutputPath="$env:TEMP\AtlasCodexBuild\"` succeeded with 82 existing warnings and 0 errors.
+- `git diff --check` succeeded; it emitted the existing line-ending warning for `src/Atlas.Modules.BidOps/BidOpsConstants.cs`.
+
+## 2026-07-09 BidOps Outcome Pairwise Merge And Survivor Selection
+
+Completed:
+
+- Replaced the outcome-supplier AI/fallback merge path with an in-memory pairwise merge stage: candidates are scored, grouped, and reduced to one survivor per compatible business row.
+- Added pairwise scoring signals for supplier compatibility, package number, source sequence/page, normalized evidence row, lot number compatibility, lot name compatibility, amount, and outcome type.
+- Added hard conflict guards so different suppliers, package numbers, outcome types, ranks, or incompatible lot names do not merge in automatic mode.
+- Kept source identity stable by selecting survivor primarily by source trust, then strength score and completeness. This preserves the previous behavior where AI remains the primary survivor and deterministic/PDF rows only fill missing fields.
+- Preserved reviewer-prompt correction semantics: reviewer-prompt runs may merge rows where AI changed the supplier name, but only when package and lot context remain compatible.
+- Added merge observability fields to extraction and dry-run results: `CandidateCount`, `MergeGroupCount`, and `MergedCandidateCount`, and surfaced them in background-job result JSON and the operations job detail page.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_PairwiseMergeUsesSourceSequenceForSurvivorFields|BidOpsOutcomeSupplierExtractionService_AutomaticMergePrioritizesAiAnnouncementOrder|BidOpsOutcomeSupplierExtractionService_AutomaticMergeDropsLegacyWeakRowCoveredByAi|BidOpsOutcomeSupplierExtractionService_MergesMissingFieldsFromCoveredFallback|BidOpsOutcomeSupplierExtractionService_KeepsSameSupplierRowsWithDifferentLotNames|OutcomeSupplierExtractJobHandler_ReturnsJsonResultSummary|OutcomeSupplierRebuildDryRunJobHandler_ReturnsJsonResultSummaryWithoutApplying" --no-restore --nologo --verbosity minimal` succeeded: 7 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsOutcomeSupplierExtractionService_ReviewerPromptKeepsAiCorrectionForSamePackage|BidOpsOutcomeSupplierExtractionService_ReviewerPromptKeepsDeterministicRowsMissingFromAi|FullyQualifiedName~BidOpsOutcomeSupplierExtractionService|BidOpsOutcomeSupplierAiExtractionService_ParsesOutcomeSupplierSchemaV2Diagnostics|BidOpsOutcomeSupplierExtracts_CarrySourceDiagnostics|BidOpsPdfTableOutcomeParser" --no-restore --nologo --verbosity minimal` succeeded: 46 passed.
+- `npm run typecheck` succeeded in `frontend/atlas-admin`.
+- `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BaseOutputPath="$env:TEMP\AtlasCodexBuild\"` succeeded with 82 existing warnings and 0 errors.
+- `git diff --check` succeeded; it emitted the existing line-ending warning for `src/Atlas.Modules.BidOps/BidOpsConstants.cs`.
+
+## 2026-07-10 BidOps Review Reparse Outcome Count Fix
+
+Completed:
+
+- Diagnosed review task `328191424086544450`: the top review-page reparse runs the full raw-notice/attachment structured parse path, while the lower outcome prompt reparse runs only `OutcomeSupplierExtractJob` with reviewer prompt text.
+- Confirmed both recent jobs had empty AI outcome responses and the observed 258/77 row counts came from deterministic parser and merge behavior, not from valid model extraction.
+- Hardened PDF structured-table outcome parsing so shifted Markdown rows without reliable lot-number context are dropped instead of becoming persisted 中标明细.
+- Added State Grid sequence/code wrapped-row parsing for result-announcement tables where row number, 分标编号, suffix, 分标名称, 包号, and 成交人 are split across multiple text lines.
+- Fixed wrapped-text result parsing to stop at the next row once a row is complete and to normalize `流标`/failed rows as `Failed`.
+- Limited reviewer-prompt relaxed merge thresholds to runs that actually have AI extract candidates, preventing empty-AI prompt reparses from collapsing different deterministic suppliers under the same package number.
+
+Verification:
+
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOpsPdfTableOutcomeParser|BidOpsWrappedOutcomeTableParser_ExtractsStateGridSequenceSplitAwardRows|BidOpsOutcomeSupplierExtractBuilder_ExtractsWrappedPdfAwardRows|BidOpsOutcomeSupplierExtractionService_ReviewerPrompt" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded: 11 passed.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "BidOps" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false` succeeded: 263 passed.
+- `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BaseOutputPath="$env:TEMP\AtlasCodexBuild\"` succeeded with 82 existing warnings and 0 errors.
+- `git diff --check` succeeded; it emitted the existing line-ending warning for `src/Atlas.Modules.BidOps/BidOpsConstants.cs`.

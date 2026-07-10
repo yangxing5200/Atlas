@@ -35,6 +35,8 @@ public interface IBidOpsQueryService
 
     Task<PagedResult<ProcessingFailureDto>> SearchProcessingFailuresAsync(ProcessingFailureSearchQuery query, CancellationToken ct = default);
 
+    Task<long?> GetReviewTaskRawNoticeIdAsync(long id, CancellationToken ct = default);
+
     Task<IReadOnlyList<long>> GetReviewTaskBackgroundJobIdsAsync(long id, CancellationToken ct = default);
 
     Task<ReviewTaskDetailDto?> GetReviewTaskDetailAsync(long id, CancellationToken ct = default);

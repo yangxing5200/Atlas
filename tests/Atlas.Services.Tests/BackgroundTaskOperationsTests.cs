@@ -267,6 +267,144 @@ public sealed class BackgroundTaskOperationsTests
     }
 
     [Fact]
+    public async Task SearchAsync_FiltersBidOpsJobsByExactRawNoticeId()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var now = DateTime.Now;
+
+        fixture.DbContext.BackgroundJobs.AddRange(
+            new BackgroundJob
+            {
+                Id = 1009,
+                TenantId = FixedIdentity.TestTenantId,
+                Queue = "bidops",
+                JobType = "bidops.ai.structured-parse",
+                JobName = "Structured parse",
+                Payload = "{\"rawNoticeId\":123,\"projectCode\":\"SGCC-001\"}",
+                Status = BackgroundJobStatus.Succeeded,
+                CreatedAt = now,
+                AvailableAtUtc = now,
+                CompletedAtUtc = now,
+                AttemptCount = 1,
+                MaxAttempts = 3
+            },
+            new BackgroundJob
+            {
+                Id = 1010,
+                TenantId = FixedIdentity.TestTenantId,
+                Queue = "bidops",
+                JobType = "bidops.ai.structured-parse",
+                JobName = "Structured parse",
+                DeduplicationKey = "bidops:structured-parse:v1:42:1234",
+                Payload = "{\"rawNoticeId\": 1234}",
+                Status = BackgroundJobStatus.Succeeded,
+                CreatedAt = now.AddSeconds(-1),
+                AvailableAtUtc = now.AddSeconds(-1),
+                CompletedAtUtc = now,
+                AttemptCount = 1,
+                MaxAttempts = 3
+            },
+            new BackgroundJob
+            {
+                Id = 1011,
+                TenantId = FixedIdentity.TestTenantId,
+                Queue = "bidops",
+                JobType = "bidops.document.attachment-process",
+                JobName = "Attachment process",
+                Payload = "{}",
+                Result = "rawNoticeId=123;projectCode=SGCC-001;attachments=2",
+                Status = BackgroundJobStatus.Succeeded,
+                CreatedAt = now.AddSeconds(-2),
+                AvailableAtUtc = now.AddSeconds(-2),
+                CompletedAtUtc = now,
+                AttemptCount = 1,
+                MaxAttempts = 3
+            },
+            new BackgroundJob
+            {
+                Id = 1012,
+                TenantId = FixedIdentity.TestTenantId,
+                Queue = "bidops",
+                JobType = "bidops.outcome.supplier-extract",
+                JobName = "Outcome supplier extract",
+                Payload = "{\"RawNoticeId\": 123}",
+                Result = "{\"rawNoticeId\":123,\"savedCount\":8}",
+                Status = BackgroundJobStatus.Succeeded,
+                CreatedAt = now.AddSeconds(-3),
+                AvailableAtUtc = now.AddSeconds(-3),
+                CompletedAtUtc = now,
+                AttemptCount = 1,
+                MaxAttempts = 3
+            },
+            new BackgroundJob
+            {
+                Id = 1014,
+                TenantId = FixedIdentity.TestTenantId,
+                Queue = "bidops",
+                JobType = "bidops.ai.structured-parse",
+                JobName = "Structured parse with deduplication key",
+                DeduplicationKey = "bidops:structured-parse:v1:42:123",
+                Payload = "{}",
+                Status = BackgroundJobStatus.Pending,
+                CreatedAt = now.AddSeconds(-4),
+                AvailableAtUtc = now.AddSeconds(-4),
+                AttemptCount = 0,
+                MaxAttempts = 3
+            },
+            new BackgroundJob
+            {
+                Id = 1013,
+                TenantId = 999999,
+                Queue = "bidops",
+                JobType = "bidops.ai.structured-parse",
+                JobName = "Other tenant",
+                Payload = "{\"rawNoticeId\":123}",
+                Status = BackgroundJobStatus.Succeeded,
+                CreatedAt = now,
+                AvailableAtUtc = now,
+                CompletedAtUtc = now,
+                AttemptCount = 1,
+                MaxAttempts = 3
+            });
+        await fixture.DbContext.SaveChangesAsync();
+
+        var backfillHandler = new BackgroundJobBusinessLinkBackfillJobHandler(
+            fixture.DbContext,
+            NullLogger<BackgroundJobBusinessLinkBackfillJobHandler>.Instance);
+        var backfillPayload = JsonSerializer.Serialize(
+            new BackgroundJobBusinessLinkBackfillJobPayload(BatchSize: 20, MaxRows: 100, IncludeResult: true),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var backfillResult = await backfillHandler.HandleAsync(
+            new BackgroundJobExecutionContext(new BackgroundJob { Payload = backfillPayload }),
+            CancellationToken.None);
+
+        Assert.True(backfillResult.Succeeded);
+        Assert.Contains("updated=6", backfillResult.Result);
+
+        var result = await fixture.Service.SearchAsync(
+            new BackgroundJobSearchQuery
+            {
+                RawNoticeId = 123,
+                PageSize = 20
+            },
+            bidOpsOnly: true);
+
+        Assert.Equal(4, result.Total);
+        Assert.Contains(result.Items, x => x.Id == 1009);
+        Assert.Contains(result.Items, x => x.Id == 1011);
+        Assert.Contains(result.Items, x => x.Id == 1012);
+        Assert.Contains(result.Items, x => x.Id == 1014);
+        Assert.All(result.Items, item =>
+        {
+            Assert.Equal(BackgroundJobBusinessConstants.BidOpsSourceModule, item.SourceModule);
+            Assert.Equal(BackgroundJobBusinessConstants.RawNoticeBusinessType, item.BusinessType);
+            Assert.Equal(123, item.BusinessId);
+        });
+        Assert.DoesNotContain(result.Items, x => x.Id == 1010);
+        Assert.DoesNotContain(result.Items, x => x.Id == 1013);
+    }
+
+    [Fact]
     public async Task SearchByIdsAsync_ReturnsOnlyRequestedTenantScopedBidOpsJobs()
     {
         await using var fixture = await CreateFixtureAsync();

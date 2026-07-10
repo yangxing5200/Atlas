@@ -1,10 +1,12 @@
 using Atlas.BackgroundTasks;
+using Atlas.Core.Entities.Global;
 using Atlas.Core.Services;
 using Atlas.Data.Abstractions;
 using Atlas.Modules.BidOps.Entities.Crawling;
 using Atlas.Modules.BidOps.Models;
 using Atlas.Modules.BidOps.Services;
 using Microsoft.Extensions.Logging;
+using System.Globalization;
 
 namespace Atlas.Modules.BidOps.BackgroundJobs;
 
@@ -44,6 +46,10 @@ public sealed class MockCrawlJobHandler : IBackgroundJobHandler
             context.Job.Id,
             ct);
         var raw = await _rawNotices.GetByIdAsync(rawNoticeId, ct);
+        context.Job.SourceModule = BackgroundJobBusinessConstants.BidOpsSourceModule;
+        context.Job.BusinessType = BackgroundJobBusinessConstants.RawNoticeBusinessType;
+        context.Job.BusinessId = rawNoticeId;
+        context.Job.CorrelationId = rawNoticeId.ToString(CultureInfo.InvariantCulture);
 
         await _jobs.EnqueueAsync(
             new EnqueueBackgroundJobRequest<AttachmentProcessJobPayload>

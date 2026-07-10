@@ -6,6 +6,7 @@ public sealed class BackgroundJobSearchQuery
 {
     public string? Keyword { get; set; }
     public string? ProjectCode { get; set; }
+    public long? RawNoticeId { get; set; }
     public long? TenantId { get; set; }
     public string? Queue { get; set; }
     public string? JobType { get; set; }
@@ -36,6 +37,10 @@ public class BackgroundJobListItemDto
     public string JobName { get; set; } = string.Empty;
     public string ProjectCode { get; set; } = string.Empty;
     public string? DeduplicationKey { get; set; }
+    public string? SourceModule { get; set; }
+    public string? BusinessType { get; set; }
+    public long? BusinessId { get; set; }
+    public string? CorrelationId { get; set; }
     public long? TenantId { get; set; }
     public long? StoreId { get; set; }
     public BackgroundJobStatus Status { get; set; }

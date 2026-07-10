@@ -35,6 +35,11 @@ public interface IBidOpsReviewService
         ReviewOutcomeAiReparseRequest request,
         CancellationToken ct = default);
 
+    Task<EnqueueJobDto> EnqueueOutcomeSupplierRebuildDryRunAsync(
+        long rawNoticeId,
+        OutcomeSupplierRebuildDryRunRequest request,
+        CancellationToken ct = default);
+
     Task<OutcomeSupplierRecordDto> AddOutcomeSupplierRecordAsync(
         long reviewTaskId,
         ReviewOutcomeSupplierRecordEditRequest request,

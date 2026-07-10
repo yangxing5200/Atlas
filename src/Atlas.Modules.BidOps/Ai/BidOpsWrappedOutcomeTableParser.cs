@@ -23,6 +23,14 @@ public static class BidOpsWrappedOutcomeTableParser
         @"^[A-Za-z0-9][A-Za-z0-9\-_/（）()]*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    private static readonly Regex SequenceCodeStartRegex = new(
+        @"^\s*(?<seq>\d{1,4})\s+(?<tail>[A-Za-z0-9][A-Za-z0-9\-_/（）()]*.*)$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex LeadingLotCodeFragmentRegex = new(
+        @"^\s*(?<code>(?:[A-Za-z0-9][A-Za-z0-9\-_/（）()]*[-_/][A-Za-z0-9][A-Za-z0-9\-_/（）()]*|[A-Za-z0-9]{10,}|[-_/][A-Za-z0-9][A-Za-z0-9\-_/（）()]*))(?<tail>.*)$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     public static IReadOnlyList<BidOpsOutcomeSupplierExtract> Extract(
         string? title,
         string? noticeType,
@@ -80,6 +88,7 @@ public static class BidOpsWrappedOutcomeTableParser
         }
 
         results.AddRange(ExtractHeaderDrivenWrappedRows(lines, outcomeType, projectCode, projectName));
+        results.AddRange(ExtractSequenceCodeAwardRows(lines, outcomeType, projectCode, projectName));
 
         return results
             .Where(x => !string.IsNullOrWhiteSpace(x.SupplierName))
@@ -138,6 +147,231 @@ public static class BidOpsWrappedOutcomeTableParser
         }
 
         return results;
+    }
+
+    private static IReadOnlyList<BidOpsOutcomeSupplierExtract> ExtractSequenceCodeAwardRows(
+        IReadOnlyList<string> lines,
+        string outcomeType,
+        string projectCode,
+        string projectName)
+    {
+        if (outcomeType != BidOpsOutcomeTypes.Awarded)
+            return [];
+
+        var results = new List<BidOpsOutcomeSupplierExtract>();
+        var inTable = false;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var line = lines[i];
+            if (LooksLikeHeaderDrivenWrappedAwardHeader(line))
+            {
+                inTable = true;
+                continue;
+            }
+
+            if (!inTable)
+                continue;
+
+            if (LooksLikePdfTableMarkdownLine(line) ||
+                (results.Count > 0 && LooksLikeHeaderDrivenWrappedAwardBoundary(line)))
+            {
+                break;
+            }
+
+            if (!TryReadSequenceCodeRowStart(line, out var sequenceNo, out var firstCodeFragment, out var firstTail))
+                continue;
+
+            if (!TryParseSequenceCodeAwardRow(
+                    lines,
+                    i,
+                    sequenceNo,
+                    firstCodeFragment,
+                    firstTail,
+                    projectCode,
+                    projectName,
+                    out var record,
+                    out var nextIndex))
+            {
+                continue;
+            }
+
+            results.Add(record);
+            i = Math.Max(i, nextIndex - 1);
+        }
+
+        return results;
+    }
+
+    private static bool TryParseSequenceCodeAwardRow(
+        IReadOnlyList<string> lines,
+        int startIndex,
+        string sequenceNo,
+        string firstCodeFragment,
+        string firstTail,
+        string projectCode,
+        string projectName,
+        out BidOpsOutcomeSupplierExtract record,
+        out int nextIndex)
+    {
+        record = new BidOpsOutcomeSupplierExtract();
+        nextIndex = startIndex + 1;
+
+        var buffer = new List<string> { firstCodeFragment };
+        var evidenceLines = new List<string> { lines[startIndex] };
+        if (!string.IsNullOrWhiteSpace(firstTail))
+            buffer.Add(firstTail);
+
+        var endIndex = startIndex + 1;
+        for (; endIndex < lines.Count && buffer.Count < 90; endIndex++)
+        {
+            var line = lines[endIndex];
+            if (LooksLikePdfTableMarkdownLine(line))
+                break;
+
+            if (TryReadSequenceCodeRowStart(line, out _, out _, out _) &&
+                SequenceCodeAwardBufferLooksComplete(buffer))
+            {
+                break;
+            }
+
+            if (SequenceCodeAwardBufferLooksComplete(buffer) &&
+                LooksLikeHeaderDrivenWrappedAwardBoundary(line))
+            {
+                break;
+            }
+
+            buffer.Add(line);
+            evidenceLines.Add(line);
+        }
+
+        nextIndex = endIndex;
+        return TryBuildSequenceCodeAwardRecord(
+            sequenceNo,
+            buffer,
+            evidenceLines,
+            projectCode,
+            projectName,
+            out record);
+    }
+
+    private static bool TryBuildSequenceCodeAwardRecord(
+        string sequenceNo,
+        IReadOnlyList<string> buffer,
+        IReadOnlyList<string> evidenceLines,
+        string projectCode,
+        string projectName,
+        out BidOpsOutcomeSupplierExtract record)
+    {
+        record = new BidOpsOutcomeSupplierExtract();
+
+        var codeSegments = new List<string>();
+        var rowFragments = new List<string>();
+        var readingCode = true;
+        foreach (var fragment in buffer)
+        {
+            if (readingCode && TrySplitLeadingLotCodeFragment(fragment, out var codeFragment, out var remainder))
+            {
+                codeSegments.Add(codeFragment);
+                if (!string.IsNullOrWhiteSpace(remainder))
+                    rowFragments.Add(remainder);
+                continue;
+            }
+
+            readingCode = false;
+            rowFragments.Add(fragment);
+        }
+
+        if (codeSegments.Count == 0 ||
+            !TryLocatePackage(rowFragments, out var packageLineIndex, out var packageMatch))
+        {
+            return false;
+        }
+
+        var lotNameFragments = rowFragments
+            .Take(packageLineIndex)
+            .ToList();
+        var packageLine = rowFragments[packageLineIndex];
+        var packagePrefix = packageLine[..packageMatch.Index];
+        if (!string.IsNullOrWhiteSpace(packagePrefix))
+            lotNameFragments.Add(packagePrefix);
+
+        var packageNo = BidOpsTextQuality.CleanExtractedValue(packageMatch.Groups["package"].Value);
+        var tailFragments = new List<string>();
+        var packageTail = packageLine[(packageMatch.Index + packageMatch.Length)..];
+        if (!string.IsNullOrWhiteSpace(packageTail))
+            tailFragments.Add(packageTail);
+        tailFragments.AddRange(rowFragments.Skip(packageLineIndex + 1));
+
+        string supplierName;
+        int supplierStartIndex;
+        var outcomeType = BidOpsOutcomeTypes.Awarded;
+        if (!TrySplitTrailingSupplier(tailFragments, out supplierStartIndex, out supplierName))
+        {
+            if (!TrySplitFailedOutcome(tailFragments, out supplierStartIndex, out supplierName))
+                return false;
+
+            outcomeType = BidOpsOutcomeTypes.Failed;
+        }
+
+        var lotNo = Truncate(JoinFragments(codeSegments), 128);
+        var lotName = Truncate(JoinFragments(lotNameFragments), 300);
+        if (string.IsNullOrWhiteSpace(lotNo) || string.IsNullOrWhiteSpace(lotName))
+            return false;
+
+        var packageName = JoinFragments(tailFragments.Take(supplierStartIndex));
+        record = new BidOpsOutcomeSupplierExtract
+        {
+            SupplierName = supplierName,
+            OutcomeType = outcomeType,
+            SourceType = BidOpsOutcomeSupplierExtractSourceTypes.WrappedTextParser,
+            SourceParserVersion = BidOpsOutcomeSupplierExtractParserVersions.WrappedTextParser,
+            SourceSequenceNo = sequenceNo,
+            ProjectCode = projectCode,
+            ProjectName = projectName,
+            LotNo = lotNo,
+            LotName = lotName,
+            PackageNo = packageNo,
+            PackageName = Truncate(packageName, 500),
+            EvidenceText = Truncate(string.Join(" ", evidenceLines.Take(32)), 1000),
+            Confidence = outcomeType == BidOpsOutcomeTypes.Failed ? 0.86m : 0.89m
+        };
+        return true;
+    }
+
+    private static bool SequenceCodeAwardBufferLooksComplete(IReadOnlyList<string> buffer)
+    {
+        if (!TryLocatePackage(buffer, out var packageLineIndex, out var packageMatch))
+            return false;
+
+        var tailFragments = new List<string>();
+        var packageTail = buffer[packageLineIndex][(packageMatch.Index + packageMatch.Length)..];
+        if (!string.IsNullOrWhiteSpace(packageTail))
+            tailFragments.Add(packageTail);
+        tailFragments.AddRange(buffer.Skip(packageLineIndex + 1));
+
+        return TrySplitTrailingSupplier(tailFragments, out _, out _) ||
+               TrySplitFailedOutcome(tailFragments, out _, out _);
+    }
+
+    private static bool TryReadSequenceCodeRowStart(
+        string line,
+        out string sequenceNo,
+        out string firstCodeFragment,
+        out string firstTail)
+    {
+        sequenceNo = string.Empty;
+        firstCodeFragment = string.Empty;
+        firstTail = string.Empty;
+
+        var match = SequenceCodeStartRegex.Match(line);
+        if (!match.Success)
+            return false;
+
+        if (!TrySplitLeadingLotCodeFragment(match.Groups["tail"].Value, out firstCodeFragment, out firstTail))
+            return false;
+
+        sequenceNo = match.Groups["seq"].Value;
+        return true;
     }
 
     private static bool TryParseHeaderDrivenWrappedRow(
@@ -208,6 +442,8 @@ public static class BidOpsWrappedOutcomeTableParser
         {
             SupplierName = supplierName,
             OutcomeType = outcomeType,
+            SourceType = BidOpsOutcomeSupplierExtractSourceTypes.WrappedTextParser,
+            SourceParserVersion = BidOpsOutcomeSupplierExtractParserVersions.WrappedTextParser,
             ProjectCode = projectCode,
             ProjectName = projectName,
             LotNo = Truncate(JoinFragments(codeSegments), 128),
@@ -251,7 +487,7 @@ public static class BidOpsWrappedOutcomeTableParser
         for (; endIndex < lines.Count && buffer.Count < 90; endIndex++)
         {
             var line = lines[endIndex];
-            if (buffer.Count > 2 && LooksLikeRowStart(line) && BufferLooksComplete(buffer))
+            if (buffer.Count > 0 && LooksLikeRowStart(line) && BufferLooksComplete(buffer))
                 break;
 
             if (BufferLooksComplete(buffer) && LooksLikeOutcomeSectionBoundary(line))
@@ -309,31 +545,53 @@ public static class BidOpsWrappedOutcomeTableParser
         if (!consumedAmount)
             amount = null;
 
+        var rowOutcomeType = outcomeType;
         var supplierName = BidOpsSupplierNameNormalizer.Clean(JoinFragments(supplierFragments));
+        if (string.IsNullOrWhiteSpace(supplierName) &&
+            TrySplitFailedOutcome(supplierFragments, out _, out supplierName))
+        {
+            rowOutcomeType = BidOpsOutcomeTypes.Failed;
+        }
+        else if (LooksLikeFailedOutcome(supplierName))
+        {
+            supplierName = "流标";
+            rowOutcomeType = BidOpsOutcomeTypes.Failed;
+        }
+
         if (string.IsNullOrWhiteSpace(supplierName))
             return false;
 
         record = new BidOpsOutcomeSupplierExtract
         {
             SupplierName = supplierName,
-            OutcomeType = outcomeType,
-            Rank = outcomeType == BidOpsOutcomeTypes.Candidate ? ExtractRank(buffer) ?? 1 : ExtractRank(buffer),
+            OutcomeType = rowOutcomeType,
+            Rank = rowOutcomeType == BidOpsOutcomeTypes.Candidate ? ExtractRank(buffer) ?? 1 : ExtractRank(buffer),
             AwardAmount = amount,
+            SourceType = BidOpsOutcomeSupplierExtractSourceTypes.WrappedTextParser,
+            SourceParserVersion = BidOpsOutcomeSupplierExtractParserVersions.WrappedTextParser,
             ProjectCode = projectCode,
             ProjectName = projectName,
             LotNo = lotNo,
             LotName = lotName,
             PackageNo = packageNo,
             EvidenceText = Truncate(string.Join(" ", buffer.Take(24)), 1000),
-            Confidence = amount.HasValue ? 0.92m : 0.86m
+            Confidence = rowOutcomeType == BidOpsOutcomeTypes.Failed ? 0.84m : amount.HasValue ? 0.92m : 0.86m
         };
         return true;
     }
 
     private static bool BufferLooksComplete(IReadOnlyList<string> buffer)
     {
-        if (!TryLocatePackage(buffer, out _, out _))
+        if (!TryLocatePackage(buffer, out var packageLineIndex, out var packageMatch))
             return false;
+
+        var tailFragments = new List<string>();
+        var packageTail = buffer[packageLineIndex][(packageMatch.Index + packageMatch.Length)..];
+        if (!string.IsNullOrWhiteSpace(packageTail))
+            tailFragments.Add(packageTail);
+        tailFragments.AddRange(buffer.Skip(packageLineIndex + 1));
+        if (TrySplitFailedOutcome(tailFragments, out _, out _))
+            return true;
 
         var compact = JoinFragments(buffer);
         return !string.IsNullOrWhiteSpace(BidOpsSupplierNameNormalizer.Clean(compact));
@@ -362,20 +620,43 @@ public static class BidOpsWrappedOutcomeTableParser
 
     private static string BuildLotNo(IReadOnlyList<string> segments)
     {
-        var parts = segments
-            .Select(CleanSegment)
-            .Where(x => CodeFragmentRegex.IsMatch(x) && x.Any(char.IsDigit))
-            .ToList();
+        var parts = new List<string>();
+        foreach (var segment in segments)
+        {
+            if (TrySplitLeadingLotCodeFragment(segment, out var codeFragment, out _))
+            {
+                parts.Add(codeFragment);
+                continue;
+            }
+
+            var cleaned = CleanSegment(segment);
+            if (CodeFragmentRegex.IsMatch(cleaned) && cleaned.Any(char.IsDigit))
+                parts.Add(cleaned);
+        }
+
         return Truncate(string.Concat(parts), 128);
     }
 
     private static string BuildLotName(IReadOnlyList<string> segments)
     {
-        var parts = segments
-            .Select(CleanSegment)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Where(x => !(CodeFragmentRegex.IsMatch(x) && x.Any(char.IsDigit)))
-            .ToList();
+        var parts = new List<string>();
+        foreach (var segment in segments)
+        {
+            if (TrySplitLeadingLotCodeFragment(segment, out _, out var remainder))
+            {
+                if (!string.IsNullOrWhiteSpace(remainder))
+                    parts.Add(remainder);
+                continue;
+            }
+
+            var cleaned = CleanSegment(segment);
+            if (!string.IsNullOrWhiteSpace(cleaned) &&
+                !(CodeFragmentRegex.IsMatch(cleaned) && cleaned.Any(char.IsDigit)))
+            {
+                parts.Add(cleaned);
+            }
+        }
+
         return Truncate(JoinFragments(parts), 300);
     }
 
@@ -602,6 +883,72 @@ public static class BidOpsWrappedOutcomeTableParser
         return !string.IsNullOrWhiteSpace(cleaned) &&
                CodeFragmentRegex.IsMatch(cleaned) &&
                cleaned.Any(char.IsDigit);
+    }
+
+    private static bool TrySplitLeadingLotCodeFragment(
+        string value,
+        out string codeFragment,
+        out string remainder)
+    {
+        codeFragment = string.Empty;
+        remainder = string.Empty;
+
+        var cleaned = BidOpsTextQuality.CleanExtractedValue(value).Trim();
+        var match = LeadingLotCodeFragmentRegex.Match(cleaned);
+        if (!match.Success)
+            return false;
+
+        var code = match.Groups["code"].Value.Trim();
+        if (!code.Any(char.IsDigit) ||
+            (!code.Contains('-', StringComparison.Ordinal) &&
+             !code.Contains('_', StringComparison.Ordinal) &&
+             !code.Contains('/', StringComparison.Ordinal) &&
+             !code.StartsWith("-", StringComparison.Ordinal) &&
+             code.Length < 10))
+        {
+            return false;
+        }
+
+        codeFragment = code;
+        remainder = match.Groups["tail"].Value.Trim();
+        return true;
+    }
+
+    private static bool TrySplitFailedOutcome(
+        IReadOnlyList<string> fragments,
+        out int statusStartIndex,
+        out string supplierName)
+    {
+        statusStartIndex = -1;
+        supplierName = string.Empty;
+        if (fragments.Count == 0)
+            return false;
+
+        var lowerBound = Math.Max(0, fragments.Count - 4);
+        for (var i = fragments.Count - 1; i >= lowerBound; i--)
+        {
+            var candidate = JoinFragments(fragments.Skip(i));
+            if (!LooksLikeFailedOutcome(candidate))
+                continue;
+
+            statusStartIndex = i;
+            supplierName = "流标";
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool LooksLikeFailedOutcome(string value)
+    {
+        var cleaned = BidOpsTextQuality.CleanExtractedValue(value);
+        return ContainsAny(cleaned, "流标", "废标", "采购失败", "成交失败", "中标失败");
+    }
+
+    private static bool LooksLikePdfTableMarkdownLine(string line)
+    {
+        return line.TrimStart().StartsWith("|", StringComparison.Ordinal) ||
+               NormalizeHeaderText(line).StartsWith("PDF表格结构", StringComparison.Ordinal);
     }
 
     private static bool TrySplitTrailingSupplier(

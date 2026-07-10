@@ -24,6 +24,49 @@ interface AiResponseEntry {
   finishReason: string
   rawResponseBody: string
   assistantContent: string
+  requestSummaryJson: string
+  requestBodyJson: string
+  requestPrompt: string
+  summary: AiResponseSummary
+}
+
+interface AiResponseSummary {
+  parseable: boolean
+  records: number | null
+  packages: number | null
+  requirements: number | null
+  supplierNameFilled: number | null
+  lotNoFilled: number | null
+  lotNameFilled: number | null
+  packageNoFilled: number | null
+  evidenceTextFilled: number | null
+  sourceRowTextFilled: number | null
+  fieldEvidenceFilled: number | null
+  warningRows: number | null
+}
+
+interface OutcomeDiagnosticsSummary {
+  present: boolean
+  dryRun: boolean | null
+  isOutcomeNotice: boolean | null
+  existingCount: number | null
+  previewExtractedCount: number | null
+  previewSavedCount: number | null
+  extractedCount: number | null
+  savedCount: number | null
+  candidateCount: number | null
+  mergeGroupCount: number | null
+  mergedCandidateCount: number | null
+  deltaCount: number | null
+  sourceCounts: Record<string, number>
+  lotNoValidationCounts: Record<string, number>
+  strengthCounts: Record<string, number>
+}
+
+interface CountMapEntry {
+  key: string
+  label: string
+  value: number
 }
 
 const route = useRoute()
@@ -40,6 +83,13 @@ const pageTitle = computed(() => (bidOpsMode.value ? 'BidOps 后台任务详情'
 const formattedPayload = computed(() => formatJsonText(job.value?.payload))
 const formattedResult = computed(() => formatJsonText(job.value?.result))
 const parsedResult = computed(() => parseJsonObject(job.value?.result))
+const outcomeDiagnostics = computed(() => summarizeOutcomeDiagnostics(parsedResult.value))
+const hasOutcomeDiagnostics = computed(() => outcomeDiagnostics.value.present)
+const outcomeSourceEntries = computed(() => countMapEntries(outcomeDiagnostics.value.sourceCounts))
+const outcomeLotNoValidationEntries = computed(() =>
+  countMapEntries(outcomeDiagnostics.value.lotNoValidationCounts),
+)
+const outcomeStrengthEntries = computed(() => countMapEntries(outcomeDiagnostics.value.strengthCounts))
 const aiResponses = computed(() => {
   const value = parsedResult.value?.aiResponses ?? parsedResult.value?.deepSeekResponses
   if (!Array.isArray(value)) return []
@@ -146,6 +196,73 @@ function parseJsonObject(value?: string | null): Record<string, unknown> | null 
   }
 }
 
+function summarizeOutcomeDiagnostics(root: Record<string, unknown> | null): OutcomeDiagnosticsSummary {
+  const empty = createEmptyOutcomeDiagnostics()
+  if (!root) return empty
+
+  const source = getObject(root, 'outcomeSupplierExtraction') ?? root
+  const sourceCounts = getNumberRecord(source, 'sourceCounts')
+  const lotNoValidationCounts = getNumberRecord(source, 'lotNoValidationCounts')
+  const strengthCounts = getNumberRecord(source, 'strengthCounts')
+  const hasCounts =
+    Object.keys(sourceCounts).length > 0 ||
+    Object.keys(lotNoValidationCounts).length > 0 ||
+    Object.keys(strengthCounts).length > 0
+  const hasSummaryFields = [
+    'dryRun',
+    'isOutcomeNotice',
+    'existingCount',
+    'previewExtractedCount',
+    'previewSavedCount',
+    'extractedCount',
+    'savedCount',
+    'candidateCount',
+    'mergeGroupCount',
+    'mergedCandidateCount',
+    'deltaCount',
+  ].some((key) => getValue(source, key) !== undefined && getValue(source, key) !== null)
+
+  if (!hasCounts && !hasSummaryFields) return empty
+
+  return {
+    present: true,
+    dryRun: getBoolean(source, 'dryRun'),
+    isOutcomeNotice: getBoolean(source, 'isOutcomeNotice'),
+    existingCount: getNumber(source, 'existingCount'),
+    previewExtractedCount: getNumber(source, 'previewExtractedCount'),
+    previewSavedCount: getNumber(source, 'previewSavedCount'),
+    extractedCount: getNumber(source, 'extractedCount'),
+    savedCount: getNumber(source, 'savedCount'),
+    candidateCount: getNumber(source, 'candidateCount'),
+    mergeGroupCount: getNumber(source, 'mergeGroupCount'),
+    mergedCandidateCount: getNumber(source, 'mergedCandidateCount'),
+    deltaCount: getNumber(source, 'deltaCount'),
+    sourceCounts,
+    lotNoValidationCounts,
+    strengthCounts,
+  }
+}
+
+function createEmptyOutcomeDiagnostics(): OutcomeDiagnosticsSummary {
+  return {
+    present: false,
+    dryRun: null,
+    isOutcomeNotice: null,
+    existingCount: null,
+    previewExtractedCount: null,
+    previewSavedCount: null,
+    extractedCount: null,
+    savedCount: null,
+    candidateCount: null,
+    mergeGroupCount: null,
+    mergedCandidateCount: null,
+    deltaCount: null,
+    sourceCounts: {},
+    lotNoValidationCounts: {},
+    strengthCounts: {},
+  }
+}
+
 function normalizeAiResponse(value: unknown): AiResponseEntry | null {
   if (!value || typeof value !== 'object') return null
 
@@ -166,23 +283,201 @@ function normalizeAiResponse(value: unknown): AiResponseEntry | null {
     finishReason: getString(source, 'finishReason'),
     rawResponseBody,
     assistantContent,
+    requestSummaryJson: getString(source, 'requestSummaryJson'),
+    requestBodyJson: getString(source, 'requestBodyJson'),
+    requestPrompt: getString(source, 'requestPrompt'),
+    summary: summarizeAiResponse(assistantContent),
   }
 }
 
+function summarizeAiResponse(assistantContent: string): AiResponseSummary {
+  const empty: AiResponseSummary = {
+    parseable: false,
+    records: null,
+    packages: null,
+    requirements: null,
+    supplierNameFilled: null,
+    lotNoFilled: null,
+    lotNameFilled: null,
+    packageNoFilled: null,
+    evidenceTextFilled: null,
+    sourceRowTextFilled: null,
+    fieldEvidenceFilled: null,
+    warningRows: null,
+  }
+  const parsed = parseJsonObject(assistantContent)
+  if (!parsed) return empty
+
+  const records = getArray(parsed, 'records')
+  return {
+    parseable: true,
+    records: records?.length ?? null,
+    packages: getArray(parsed, 'packages')?.length ?? null,
+    requirements: getArray(parsed, 'requirements')?.length ?? null,
+    supplierNameFilled: records ? countFilled(records, 'supplierName') : null,
+    lotNoFilled: records ? countFilled(records, 'lotNo') : null,
+    lotNameFilled: records ? countFilled(records, 'lotName') : null,
+    packageNoFilled: records ? countFilled(records, 'packageNo') : null,
+    evidenceTextFilled: records ? countFilled(records, 'evidenceText') : null,
+    sourceRowTextFilled: records ? countFilled(records, 'sourceRowText') : null,
+    fieldEvidenceFilled: records ? countFilledFieldEvidence(records) : null,
+    warningRows: records ? countWarningRows(records) : null,
+  }
+}
+
+function getArray(source: Record<string, unknown>, key: string) {
+  const value = getValue(source, key)
+  return Array.isArray(value) ? value : null
+}
+
+function countFilled(rows: unknown[], key: string) {
+  return rows.filter((row) => {
+    if (!row || typeof row !== 'object') return false
+    const value = (row as Record<string, unknown>)[key]
+    return value !== null && value !== undefined && String(value).trim().length > 0
+  }).length
+}
+
+function countFilledFieldEvidence(rows: unknown[]) {
+  return rows.filter((row) => {
+    if (!row || typeof row !== 'object') return false
+    const value = (row as Record<string, unknown>).fieldEvidence
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+    return Object.values(value).some((item) => item !== null && item !== undefined && String(item).trim().length > 0)
+  }).length
+}
+
+function countWarningRows(rows: unknown[]) {
+  return rows.filter((row) => {
+    if (!row || typeof row !== 'object') return false
+    const value = (row as Record<string, unknown>).warnings
+    return Array.isArray(value) && value.length > 0
+  }).length
+}
+
+function formatAiUseName(use?: string | null) {
+  const labels: Record<string, string> = {
+    NoticeStaging: '公告结构解析',
+    OutcomeSuppliers: '中标成交明细解析',
+    LifecycleFieldEnrichment: '闭环字段补全',
+  }
+  const key = String(use || '')
+  return labels[key] || key || 'AI 调用'
+}
+
+function aiResponseTitle(item: AiResponseEntry, index: number) {
+  return `调用 ${index + 1}：${formatAiUseName(item.use)}`
+}
+
+function formatFilledRatio(filled: number | null, total: number | null) {
+  if (filled === null || total === null) return '-'
+  if (total === 0) return '0 / 0'
+  return `${filled} / ${total}`
+}
+
+function formatNullableNumber(value: number | null) {
+  return value === null ? '-' : String(value)
+}
+
+function formatDeltaCount(value: number | null) {
+  if (value === null) return '-'
+  return value > 0 ? `+${value}` : String(value)
+}
+
+function formatBooleanFlag(value: boolean | null, truthyLabel: string, falsyLabel: string) {
+  if (value === null) return '-'
+  return value ? truthyLabel : falsyLabel
+}
+
+function countMapEntries(map: Record<string, number>): CountMapEntry[] {
+  return Object.entries(map)
+    .filter(([, value]) => Number.isFinite(value))
+    .sort(([leftKey, leftValue], [rightKey, rightValue]) => rightValue - leftValue || leftKey.localeCompare(rightKey))
+    .map(([key, value]) => ({
+      key,
+      label: formatDiagnosticKey(key),
+      value,
+    }))
+}
+
+function formatDiagnosticKey(key: string) {
+  const labels: Record<string, string> = {
+    Unknown: '未知来源',
+    AiOutcomeSuppliers: 'AI 明细解析',
+    LegacyTextParser: '旧文本解析',
+    WrappedTextParser: '分段文本解析',
+    PdfStructuredTable: 'PDF 结构表',
+    CandidateEvidenceParser: '候选证据',
+    AwardEvidenceParser: '成交证据',
+    NotValidated: '未校验',
+    Empty: '为空',
+    Accepted: '已通过',
+    Rejected: '已驳回',
+    NotScored: '未评分',
+    Strong: '强候选',
+    Weak: '弱候选',
+    Unsupported: '无支撑',
+  }
+  return labels[key] || key || '-'
+}
+
+function getValue(source: Record<string, unknown>, key: string) {
+  if (Object.prototype.hasOwnProperty.call(source, key)) return source[key]
+
+  const pascalKey = key.charAt(0).toUpperCase() + key.slice(1)
+  if (Object.prototype.hasOwnProperty.call(source, pascalKey)) return source[pascalKey]
+
+  return undefined
+}
+
 function getString(source: Record<string, unknown>, key: string) {
-  const value = source[key]
+  const value = getValue(source, key)
   if (value === null || value === undefined) return ''
   return typeof value === 'string' ? value : String(value)
 }
 
 function getNumber(source: Record<string, unknown>, key: string) {
-  const value = source[key]
+  const value = getValue(source, key)
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
   if (typeof value === 'string' && value.trim()) {
     const parsed = Number(value)
     return Number.isFinite(parsed) ? parsed : null
   }
   return null
+}
+
+function getBoolean(source: Record<string, unknown>, key: string) {
+  const value = getValue(source, key)
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true') return true
+    if (normalized === 'false') return false
+  }
+  return null
+}
+
+function getObject(source: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const value = getValue(source, key)
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function getNumberRecord(source: Record<string, unknown>, key: string) {
+  const value = getObject(source, key)
+  if (!value) return {}
+
+  return Object.entries(value).reduce<Record<string, number>>((accumulator, [entryKey, entryValue]) => {
+    const parsed =
+      typeof entryValue === 'number'
+        ? entryValue
+        : typeof entryValue === 'string' && entryValue.trim()
+          ? Number(entryValue)
+          : Number.NaN
+    if (Number.isFinite(parsed)) accumulator[entryKey] = parsed
+    return accumulator
+  }, {})
 }
 
 function decodeUnicodeEscapes(value: string) {
@@ -267,11 +562,101 @@ onMounted(loadData)
         </el-tab-pane>
 
         <el-tab-pane label="结果">
+          <section v-if="hasOutcomeDiagnostics" class="outcome-diagnostics">
+            <header class="outcome-diagnostics__header">
+              <strong>中标明细解析摘要</strong>
+              <div class="outcome-diagnostics__tags">
+                <el-tag v-if="outcomeDiagnostics.dryRun !== null" size="small" :type="outcomeDiagnostics.dryRun ? 'warning' : 'success'">
+                  {{ outcomeDiagnostics.dryRun ? 'Dry Run' : '已落库' }}
+                </el-tag>
+                <el-tag v-if="outcomeDiagnostics.isOutcomeNotice !== null" size="small" type="info">
+                  {{ formatBooleanFlag(outcomeDiagnostics.isOutcomeNotice, '中标公告', '非中标公告') }}
+                </el-tag>
+              </div>
+            </header>
+            <div class="ai-summary-grid">
+              <div>
+                <span>已有明细</span>
+                <strong>{{ formatNullableNumber(outcomeDiagnostics.existingCount) }}</strong>
+              </div>
+              <div>
+                <span>预览抽取</span>
+                <strong>{{ formatNullableNumber(outcomeDiagnostics.previewExtractedCount) }}</strong>
+              </div>
+              <div>
+                <span>预览保留</span>
+                <strong>{{ formatNullableNumber(outcomeDiagnostics.previewSavedCount) }}</strong>
+              </div>
+              <div>
+                <span>本次抽取</span>
+                <strong>{{ formatNullableNumber(outcomeDiagnostics.extractedCount) }}</strong>
+              </div>
+              <div>
+                <span>本次落库</span>
+                <strong>{{ formatNullableNumber(outcomeDiagnostics.savedCount) }}</strong>
+              </div>
+              <div>
+                <span>合并前候选</span>
+                <strong>{{ formatNullableNumber(outcomeDiagnostics.candidateCount) }}</strong>
+              </div>
+              <div>
+                <span>Merge Groups</span>
+                <strong>{{ formatNullableNumber(outcomeDiagnostics.mergeGroupCount) }}</strong>
+              </div>
+              <div>
+                <span>被合并候选</span>
+                <strong>{{ formatNullableNumber(outcomeDiagnostics.mergedCandidateCount) }}</strong>
+              </div>
+              <div>
+                <span>差异</span>
+                <strong>{{ formatDeltaCount(outcomeDiagnostics.deltaCount) }}</strong>
+              </div>
+            </div>
+
+            <div class="diagnostic-map-grid">
+              <section class="diagnostic-map-section">
+                <h3>来源分布</h3>
+                <div v-if="outcomeSourceEntries.length" class="diagnostic-count-list">
+                  <div v-for="entry in outcomeSourceEntries" :key="entry.key" class="diagnostic-count-row">
+                    <span>{{ entry.label }}</span>
+                    <strong>{{ entry.value }}</strong>
+                  </div>
+                </div>
+                <span v-else class="diagnostic-empty">暂无统计</span>
+              </section>
+              <section class="diagnostic-map-section">
+                <h3>分标编号校验</h3>
+                <div v-if="outcomeLotNoValidationEntries.length" class="diagnostic-count-list">
+                  <div v-for="entry in outcomeLotNoValidationEntries" :key="entry.key" class="diagnostic-count-row">
+                    <span>{{ entry.label }}</span>
+                    <strong>{{ entry.value }}</strong>
+                  </div>
+                </div>
+                <span v-else class="diagnostic-empty">暂无统计</span>
+              </section>
+              <section class="diagnostic-map-section">
+                <h3>强弱评分</h3>
+                <div v-if="outcomeStrengthEntries.length" class="diagnostic-count-list">
+                  <div v-for="entry in outcomeStrengthEntries" :key="entry.key" class="diagnostic-count-row">
+                    <span>{{ entry.label }}</span>
+                    <strong>{{ entry.value }}</strong>
+                  </div>
+                </div>
+                <span v-else class="diagnostic-empty">暂无统计</span>
+              </section>
+            </div>
+          </section>
           <pre class="code-panel">{{ formattedResult }}</pre>
         </el-tab-pane>
 
         <el-tab-pane v-if="hasAiResponses" label="AI 返回">
           <div class="deepseek-list">
+            <el-alert
+              title="AI 原始返回用于诊断，不等同于审核页最终落库结果；最终中标明细还会经过确定性解析、合并、清洗和持久化。"
+              type="info"
+              show-icon
+              :closable="false"
+            />
             <section
               v-for="(item, index) in aiResponses"
               :key="`${item.use}-${index}`"
@@ -279,7 +664,7 @@ onMounted(loadData)
             >
               <header class="deepseek-response__header">
                 <div>
-                  <strong>调用 {{ index + 1 }}</strong>
+                  <strong>{{ aiResponseTitle(item, index) }}</strong>
                   <span>{{ item.use || 'AI' }}</span>
                 </div>
                 <div class="deepseek-response__meta">
@@ -298,6 +683,67 @@ onMounted(loadData)
                   {{ item.responseCharacters ?? '-' }} / {{ item.assistantCharacters ?? '-' }}
                 </el-descriptions-item>
               </el-descriptions>
+              <div class="ai-summary-grid">
+                <div>
+                  <span>Records</span>
+                  <strong>{{ item.summary.records ?? '-' }}</strong>
+                </div>
+                <div>
+                  <span>Packages</span>
+                  <strong>{{ item.summary.packages ?? '-' }}</strong>
+                </div>
+                <div>
+                  <span>Requirements</span>
+                  <strong>{{ item.summary.requirements ?? '-' }}</strong>
+                </div>
+                <div>
+                  <span>供应商</span>
+                  <strong>{{ formatFilledRatio(item.summary.supplierNameFilled, item.summary.records) }}</strong>
+                </div>
+                <div>
+                  <span>分标编号</span>
+                  <strong>{{ formatFilledRatio(item.summary.lotNoFilled, item.summary.records) }}</strong>
+                </div>
+                <div>
+                  <span>分标名称</span>
+                  <strong>{{ formatFilledRatio(item.summary.lotNameFilled, item.summary.records) }}</strong>
+                </div>
+                <div>
+                  <span>包号</span>
+                  <strong>{{ formatFilledRatio(item.summary.packageNoFilled, item.summary.records) }}</strong>
+                </div>
+                <div>
+                  <span>证据文本</span>
+                  <strong>{{ formatFilledRatio(item.summary.evidenceTextFilled, item.summary.records) }}</strong>
+                </div>
+                <div>
+                  <span>原始行</span>
+                  <strong>{{ formatFilledRatio(item.summary.sourceRowTextFilled, item.summary.records) }}</strong>
+                </div>
+                <div>
+                  <span>字段证据</span>
+                  <strong>{{ formatFilledRatio(item.summary.fieldEvidenceFilled, item.summary.records) }}</strong>
+                </div>
+                <div>
+                  <span>警告行</span>
+                  <strong>{{ item.summary.warningRows ?? '-' }}</strong>
+                </div>
+              </div>
+
+              <section v-if="item.requestSummaryJson" class="deepseek-response__section">
+                <h3>AI 请求摘要</h3>
+                <pre class="code-panel">{{ formatAiResponseText(item.requestSummaryJson) }}</pre>
+              </section>
+
+              <section v-if="item.requestBodyJson" class="deepseek-response__section">
+                <h3>AI 请求体</h3>
+                <pre class="code-panel">{{ formatAiResponseText(item.requestBodyJson) }}</pre>
+              </section>
+
+              <section v-if="item.requestPrompt" class="deepseek-response__section">
+                <h3>AI 提示词 / 输入内容</h3>
+                <pre class="code-panel">{{ formatAiResponseText(item.requestPrompt) }}</pre>
+              </section>
 
               <section class="deepseek-response__section">
                 <h3>Assistant Content</h3>
@@ -383,6 +829,77 @@ onMounted(loadData)
   gap: 16px;
 }
 
+.outcome-diagnostics {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.outcome-diagnostics__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.outcome-diagnostics__header strong {
+  color: #17202a;
+  font-size: 15px;
+}
+
+.outcome-diagnostics__tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.diagnostic-map-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.diagnostic-map-section {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #dce3ee;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.diagnostic-map-section h3 {
+  margin: 0;
+  color: #17202a;
+  font-size: 13px;
+}
+
+.diagnostic-count-list {
+  display: grid;
+  gap: 6px;
+}
+
+.diagnostic-count-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #445064;
+  font-size: 13px;
+}
+
+.diagnostic-count-row strong {
+  color: #17202a;
+  font-size: 13px;
+}
+
+.diagnostic-empty {
+  color: #8a94a6;
+  font-size: 13px;
+}
+
 .deepseek-response {
   display: grid;
   gap: 12px;
@@ -417,6 +934,31 @@ onMounted(loadData)
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.ai-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.ai-summary-grid > div {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid #dce3ee;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.ai-summary-grid span {
+  color: #687385;
+  font-size: 12px;
+}
+
+.ai-summary-grid strong {
+  color: #17202a;
+  font-size: 14px;
 }
 
 .deepseek-response__section {

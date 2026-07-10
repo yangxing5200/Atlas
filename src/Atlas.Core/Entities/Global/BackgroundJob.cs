@@ -12,6 +12,10 @@ public sealed class BackgroundJob : BaseEntity, ISnowflakeId
     public string? DeduplicationKey { get; set; }
     public long? TenantId { get; set; }
     public long? StoreId { get; set; }
+    public string? SourceModule { get; set; }
+    public string? BusinessType { get; set; }
+    public long? BusinessId { get; set; }
+    public string? CorrelationId { get; set; }
     public string Payload { get; set; } = string.Empty;
     public BackgroundJobStatus Status { get; set; } = BackgroundJobStatus.Pending;
     public int Priority { get; set; }

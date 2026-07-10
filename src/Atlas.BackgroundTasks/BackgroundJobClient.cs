@@ -46,6 +46,16 @@ public sealed class BackgroundJobClient : IBackgroundJobClient
         var deduplicationKey = string.IsNullOrWhiteSpace(request.DeduplicationKey)
             ? null
             : request.DeduplicationKey.Trim();
+        var payloadJson = JsonSerializer.Serialize(request.Payload, JsonOptions);
+        var businessLink = BackgroundJobBusinessLinkInference.Resolve(
+            jobType,
+            queue,
+            payloadJson,
+            deduplicationKey,
+            request.SourceModule,
+            request.BusinessType,
+            request.BusinessId,
+            request.CorrelationId);
 
         if (deduplicationKey != null)
         {
@@ -79,7 +89,11 @@ public sealed class BackgroundJobClient : IBackgroundJobClient
             DeduplicationKey = deduplicationKey,
             TenantId = request.TenantId,
             StoreId = request.StoreId,
-            Payload = JsonSerializer.Serialize(request.Payload, JsonOptions),
+            SourceModule = businessLink.SourceModule,
+            BusinessType = businessLink.BusinessType,
+            BusinessId = businessLink.BusinessId,
+            CorrelationId = businessLink.CorrelationId,
+            Payload = payloadJson,
             Status = BackgroundJobStatus.Pending,
             Priority = request.Priority,
             AvailableAtUtc = request.AvailableAtUtc ?? now,

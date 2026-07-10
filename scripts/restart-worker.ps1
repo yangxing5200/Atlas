@@ -1,7 +1,8 @@
 param(
     [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [string]$Environment = "BidOpsLocal",
-    [int]$StartupWaitSeconds = 3
+    [int]$StartupWaitSeconds = 3,
+    [switch]$NoBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -62,6 +63,10 @@ $escapedProjectRoot = $ProjectRoot.Replace("'", "''")
 $escapedProjectPath = $projectPath.Replace("'", "''")
 $escapedLogPath = $logPath.Replace("'", "''")
 $escapedEnvironment = $Environment.Replace("'", "''")
+$noBuildArg = ""
+if ($NoBuild) {
+    $noBuildArg = "--no-build "
+}
 
 Write-Host "Starting Atlas.Worker with DOTNET_ENVIRONMENT='$Environment'..."
 $command = @"
@@ -74,7 +79,7 @@ if ([string]::IsNullOrWhiteSpace(`$env:DEEPSEEK_API_KEY)) {
 if ([string]::IsNullOrWhiteSpace(`$env:DEEPSEEK_API_KEY)) {
     `$env:DEEPSEEK_API_KEY = [Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY', 'Machine')
 }
-dotnet run --project '$escapedProjectPath' *> '$escapedLogPath'
+dotnet run $noBuildArg--project '$escapedProjectPath' *> '$escapedLogPath'
 "@
 
 $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
