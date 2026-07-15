@@ -77,6 +77,10 @@ public static class BidOpsPermissionCodes
     /// </summary>
     public const string BusinessRead = "bidops.business.read";
     /// <summary>
+    /// 管理正式业务库公告权限。
+    /// </summary>
+    public const string BusinessManage = "bidops.business.manage";
+    /// <summary>
     /// 查看商机权限。
     /// </summary>
     public const string OpportunityRead = "bidops.opportunity.read";

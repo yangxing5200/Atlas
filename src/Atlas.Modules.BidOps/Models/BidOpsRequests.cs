@@ -21,6 +21,36 @@ public sealed class NoticeSearchQuery : BidOpsPagedQuery
     public string? LifecycleReviewStatus { get; set; }
 }
 
+/// <summary>
+/// 人工修正正式公告的业务字段。修改只作用于 Formal 层，不回写 Raw/Staging 数据。
+/// </summary>
+public sealed class UpdateNoticeRequest
+{
+    public string Title { get; set; } = string.Empty;
+
+    public string NoticeType { get; set; } = string.Empty;
+
+    public string ProjectName { get; set; } = string.Empty;
+
+    public string? ProjectCode { get; set; }
+
+    public string? BuyerName { get; set; }
+
+    public string? AgencyName { get; set; }
+
+    public string? Region { get; set; }
+
+    public decimal? BudgetAmount { get; set; }
+
+    public DateTime? PublishTime { get; set; }
+
+    public DateTime? SignupDeadline { get; set; }
+
+    public DateTime? BidDeadline { get; set; }
+
+    public DateTime? OpenBidTime { get; set; }
+}
+
 public sealed class CrawlRunLogSearchQuery : BidOpsPagedQuery
 {
     public long? SourceId { get; set; }

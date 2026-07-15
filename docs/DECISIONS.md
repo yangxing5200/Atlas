@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-07-14 BidOps Formal Notice Manual Editing Boundary
+
+- Formal notice correction uses a dedicated `bidops.business.manage` tenant permission. Read-only users can continue to view the formal notice list/detail, while only explicitly authorized operators can call `PUT /api/bidops/notices/{id}` or see the edit action.
+- Editable fields are limited to formal business facts already stored on `bidops_notice`: title, notice type, project name/code, buyer, agency, region, budget, publication time, signup deadline, bid deadline, and opening time. Raw/staging identifiers, the formal record status, tenant ownership, and creation metadata are not client-editable.
+- Manual correction updates only the Formal `Notice` row through Atlas's scoped repository and unit of work. It does not rewrite Raw evidence, Staging extraction, packages, outcome-source evidence, or other denormalized downstream snapshots. This preserves the original collection/review trail; downstream synchronization can be introduced later as a separately reviewed workflow if a concrete business rule requires it.
+- The update is a synchronous bounded CRUD operation in WebApi and does not enqueue Worker work. Existing columns already cover every editable field, so no tenant migration is required.
+
 ## 2026-07-09 BidOps Local Right-Click Startup Default
 
 - The combined BidOps local restart script defaults to starting the full local stack: WebApi, Worker, and Atlas Admin frontend. This matches right-click execution from Explorer, where passing `-WithWorker` is awkward and users usually expect background jobs to run.

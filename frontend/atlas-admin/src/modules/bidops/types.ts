@@ -526,14 +526,32 @@ export interface NoticeDto {
   projectName: string
   projectCode: string
   buyerName: string
+  agencyName: string
   region: string
   budgetAmount?: number | null
   publishTime?: string | null
+  signupDeadline?: string | null
   bidDeadline?: string | null
+  openBidTime?: string | null
   status: string
   lifecycleReviewStatus: string
   createdAt: string
   updatedAt?: string | null
+}
+
+export interface UpdateNoticeRequest {
+  title: string
+  noticeType: string
+  projectName: string
+  projectCode?: string | null
+  buyerName?: string | null
+  agencyName?: string | null
+  region?: string | null
+  budgetAmount?: number | null
+  publishTime?: string | null
+  signupDeadline?: string | null
+  bidDeadline?: string | null
+  openBidTime?: string | null
 }
 
 export interface TenderPackageDto {

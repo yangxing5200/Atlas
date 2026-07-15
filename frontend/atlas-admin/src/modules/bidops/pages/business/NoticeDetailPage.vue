@@ -1,26 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Box, DataAnalysis, Document, Link } from '@element-plus/icons-vue'
+import { ArrowLeft, Box, DataAnalysis, Document, Edit, Link } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { lifecycleApi } from '@/api/bidops/lifecycle.api'
 import { noticesApi } from '@/api/bidops/notices.api'
 import { packagesApi } from '@/api/bidops/packages.api'
 import DataTable from '@/shared/components/DataTable.vue'
+import FormDrawer from '@/shared/components/FormDrawer.vue'
 import PageContainer from '@/shared/components/PageContainer.vue'
 import { usePermission } from '@/shared/composables/usePermission'
+import { useRequest } from '@/shared/composables/useRequest'
 import { formatDateTime } from '@/shared/utils/date'
 import { formatMoney } from '@/shared/utils/money'
 import BidOpsStatusTag from '../../components/BidOpsStatusTag.vue'
+import PermissionButton from '../../components/PermissionButton.vue'
 import { BIDOPS_PERMISSIONS } from '../../constants'
-import type { NoticeDto, TenderPackageDto } from '../../types'
-import { formatCategory, formatNoticeType, formatPackageNo, isResultNoticeType } from '../../utils/display'
+import type { NoticeDto, TenderPackageDto, UpdateNoticeRequest } from '../../types'
+import { formatCategory, formatNoticeType, formatPackageNo, isResultNoticeType, noticeTypeOptions } from '../../utils/display'
 
 const route = useRoute()
 const router = useRouter()
 const { visible: canAnalyzeLifecycle } = usePermission(BIDOPS_PERMISSIONS.CRAWL_IMPORT)
 const loading = ref(false)
 const analyzeLoading = ref(false)
+const editDrawerOpen = ref(false)
 const notice = ref<NoticeDto | null>(null)
 const packages = ref<TenderPackageDto[]>([])
 const noticeId = computed(() => String(route.params.id || ''))
@@ -30,6 +34,22 @@ const canAnalyze = computed(() =>
   !!notice.value?.rawNoticeId &&
   isResultNoticeType(notice.value.noticeType, notice.value.title),
 )
+const editRequest = useRequest()
+
+const editForm = reactive<UpdateNoticeRequest>({
+  title: '',
+  noticeType: 'TenderAnnouncement',
+  projectName: '',
+  projectCode: '',
+  buyerName: '',
+  agencyName: '',
+  region: '',
+  budgetAmount: null,
+  publishTime: null,
+  signupDeadline: null,
+  bidDeadline: null,
+  openBidTime: null,
+})
 
 async function loadData() {
   loading.value = true
@@ -69,11 +89,49 @@ async function analyzeLifecycle() {
   }
 }
 
+function syncEditForm() {
+  if (!notice.value) return
+
+  Object.assign(editForm, {
+    title: notice.value.title,
+    noticeType: notice.value.noticeType,
+    projectName: notice.value.projectName,
+    projectCode: notice.value.projectCode,
+    buyerName: notice.value.buyerName,
+    agencyName: notice.value.agencyName,
+    region: notice.value.region,
+    budgetAmount: notice.value.budgetAmount ?? null,
+    publishTime: notice.value.publishTime ?? null,
+    signupDeadline: notice.value.signupDeadline ?? null,
+    bidDeadline: notice.value.bidDeadline ?? null,
+    openBidTime: notice.value.openBidTime ?? null,
+  })
+}
+
+function openEdit() {
+  syncEditForm()
+  editDrawerOpen.value = true
+}
+
+async function submitEdit() {
+  if (!editForm.title.trim() || !editForm.noticeType.trim() || !editForm.projectName.trim()) {
+    ElMessage.warning('公告标题、公告类型和项目名称不能为空')
+    return
+  }
+
+  await editRequest.run(async () => {
+    notice.value = await noticesApi.update(noticeId.value, editForm)
+    ElMessage.success('公告信息已更新')
+    editDrawerOpen.value = false
+    syncEditForm()
+  })
+}
+
 onMounted(loadData)
 </script>
 
 <template>
-  <PageContainer :title="pageTitle" description="查看正式公告基础信息、关联原始公告和包件。">
+  <PageContainer :title="pageTitle" description="查看并维护正式公告基础信息、关联原始公告和包件。">
     <template #actions>
       <el-button :icon="ArrowLeft" @click="router.push('/bidops/notices')">返回</el-button>
       <el-button
@@ -90,6 +148,14 @@ onMounted(loadData)
       >
         包件
       </el-button>
+      <PermissionButton
+        v-if="notice"
+        :permission="BIDOPS_PERMISSIONS.BUSINESS_MANAGE"
+        :icon="Edit"
+        @click="openEdit"
+      >
+        编辑公告
+      </PermissionButton>
       <el-button
         v-if="canAnalyze"
         type="primary"
@@ -122,12 +188,16 @@ onMounted(loadData)
           <el-descriptions-item label="公告标题" :span="2">{{ notice.title || '-' }}</el-descriptions-item>
           <el-descriptions-item label="公告类型">{{ formatNoticeType(notice.noticeType) }}</el-descriptions-item>
           <el-descriptions-item label="状态"><BidOpsStatusTag :value="notice.status" /></el-descriptions-item>
+          <el-descriptions-item label="项目名称" :span="2">{{ notice.projectName || '-' }}</el-descriptions-item>
           <el-descriptions-item label="采购编号">{{ notice.projectCode || '-' }}</el-descriptions-item>
           <el-descriptions-item label="采购人">{{ notice.buyerName || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="代理机构">{{ notice.agencyName || '-' }}</el-descriptions-item>
           <el-descriptions-item label="地区">{{ notice.region || '-' }}</el-descriptions-item>
           <el-descriptions-item label="预算金额">{{ formatMoney(notice.budgetAmount) }}</el-descriptions-item>
           <el-descriptions-item label="发布时间">{{ formatDateTime(notice.publishTime) }}</el-descriptions-item>
+          <el-descriptions-item label="报名截止">{{ formatDateTime(notice.signupDeadline) }}</el-descriptions-item>
           <el-descriptions-item label="投标截止">{{ formatDateTime(notice.bidDeadline) }}</el-descriptions-item>
+          <el-descriptions-item label="开标时间">{{ formatDateTime(notice.openBidTime) }}</el-descriptions-item>
           <el-descriptions-item label="RawNoticeId">
             <el-button link type="primary" :icon="Link" @click="router.push(`/bidops/crawl/raw-notices/${notice.rawNoticeId}`)">
               {{ notice.rawNoticeId }}
@@ -168,6 +238,62 @@ onMounted(loadData)
           </el-table-column>
         </DataTable>
       </section>
+
+      <FormDrawer
+        v-model="editDrawerOpen"
+        title="编辑公告信息"
+        width="760px"
+        :submitting="editRequest.loading"
+        @submit="submitEdit"
+      >
+        <el-alert
+          title="本次修改只更新正式公告，不会改写原始公告和审核暂存数据。"
+          type="info"
+          :closable="false"
+          show-icon
+          class="edit-tip"
+        />
+        <el-form :model="editForm" label-width="110px" class="form-grid">
+          <el-form-item label="公告标题" required class="full-row">
+            <el-input v-model.trim="editForm.title" maxlength="500" show-word-limit />
+          </el-form-item>
+          <el-form-item label="公告类型" required>
+            <el-select v-model="editForm.noticeType" filterable style="width: 100%">
+              <el-option v-for="item in noticeTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="项目名称" required>
+            <el-input v-model.trim="editForm.projectName" maxlength="500" />
+          </el-form-item>
+          <el-form-item label="采购编号">
+            <el-input v-model.trim="editForm.projectCode" maxlength="128" />
+          </el-form-item>
+          <el-form-item label="地区">
+            <el-input v-model.trim="editForm.region" maxlength="128" />
+          </el-form-item>
+          <el-form-item label="采购人">
+            <el-input v-model.trim="editForm.buyerName" maxlength="300" />
+          </el-form-item>
+          <el-form-item label="代理机构">
+            <el-input v-model.trim="editForm.agencyName" maxlength="300" />
+          </el-form-item>
+          <el-form-item label="预算金额">
+            <el-input-number v-model="editForm.budgetAmount" :min="0" :precision="2" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="发布时间">
+            <el-date-picker v-model="editForm.publishTime" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" clearable style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="报名截止">
+            <el-date-picker v-model="editForm.signupDeadline" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" clearable style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="投标截止">
+            <el-date-picker v-model="editForm.bidDeadline" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" clearable style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="开标时间">
+            <el-date-picker v-model="editForm.openBidTime" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" clearable style="width: 100%" />
+          </el-form-item>
+        </el-form>
+      </FormDrawer>
     </template>
   </PageContainer>
 </template>
@@ -225,6 +351,20 @@ onMounted(loadData)
   font-size: 13px;
 }
 
+.edit-tip {
+  margin-bottom: 18px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+.full-row {
+  grid-column: 1 / -1;
+}
+
 @media (max-width: 720px) {
   .notice-summary {
     flex-direction: column;
@@ -232,6 +372,14 @@ onMounted(loadData)
 
   .summary-tags {
     justify-content: flex-start;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .full-row {
+    grid-column: auto;
   }
 }
 </style>
