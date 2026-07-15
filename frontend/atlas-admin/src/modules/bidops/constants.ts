@@ -6,6 +6,7 @@ export const BIDOPS_PERMISSIONS = {
   REVIEW_READ: 'bidops.review.read',
   REVIEW_APPROVE: 'bidops.review.approve',
   BUSINESS_READ: 'bidops.business.read',
+  BUSINESS_MANAGE: 'bidops.business.manage',
   OPPORTUNITY_READ: 'bidops.opportunity.read',
   OPPORTUNITY_MANAGE: 'bidops.opportunity.manage',
   OPPORTUNITY_WATCH: 'bidops.opportunity.watch',

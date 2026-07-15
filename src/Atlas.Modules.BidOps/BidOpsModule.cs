@@ -52,6 +52,7 @@ public sealed class BidOpsModule : AtlasModule
         context.Services.AddScoped<IBidOpsCodexCliClient, BidOpsCodexCliClient>();
         context.Services.AddScoped<IBidOpsReviewService, BidOpsReviewService>();
         context.Services.AddScoped<IBidOpsReviewQualityService, BidOpsReviewQualityService>();
+        context.Services.AddScoped<IBidOpsNoticeService, BidOpsNoticeService>();
         context.Services.AddScoped<IBidOpsOpportunityService, BidOpsOpportunityService>();
         context.Services.AddScoped<IBidOpsOpportunityMaintenanceService, BidOpsOpportunityMaintenanceService>();
         context.Services.AddScoped<IBidOpsSupplierService, BidOpsSupplierService>();
@@ -212,6 +213,15 @@ public sealed class BidOpsModule : AtlasModule
                 PermissionScope.Tenant,
                 resource: BidOpsDataResources.Notice,
                 action: "read")
+            .AddPermission(
+                BidOpsPermissionCodes.BusinessManage,
+                "Manage BidOps formal tender notices",
+                BidOpsCapabilities.Business,
+                BidOpsSystemValues.ModuleName,
+                PermissionScope.Tenant,
+                resource: BidOpsDataResources.Notice,
+                action: "manage",
+                riskLevel: AtlasPermissionRiskLevel.Medium)
             .AddPermission(
                 BidOpsPermissionCodes.OpportunityRead,
                 "Read BidOps opportunities",

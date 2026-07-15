@@ -1,5 +1,26 @@
 # Implementation Log
 
+## 2026-07-14 BidOps Formal Notice Detail Editing
+
+Completed:
+
+- Extended formal notice detail/list contracts with agency name, signup deadline, and opening time, and rendered the complete editable announcement facts on `/bidops/notices/:id`.
+- Added tenant-scoped `PUT /api/bidops/notices/{id}` backed by `IBidOpsNoticeService`, Atlas `IRepository<Notice>` data-scope tracking, and `IUnitOfWork`; the service validates required business fields and rejects negative budgets.
+- Added the dedicated `bidops.business.manage` permission and hid the edit action from read-only operators.
+- Added a formal notice edit drawer for title, notice type, project identity, buyer/agency, region, budget, publication time, signup deadline, bid deadline, and opening time. The UI explicitly states that Raw/Staging evidence is not rewritten.
+- Added contract and service tests for the update route, authorization, DI registration, expanded DTO, successful field persistence, required-field guards, and negative-budget guard.
+- No database migration was required because the Formal Notice entity already owns all edited columns.
+
+Verification:
+
+- `dotnet build src\Atlas.Modules.BidOps\Atlas.Modules.BidOps.csproj --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsNoticeEdit\"` succeeded with 0 warnings and 0 errors.
+- `dotnet test tests\Atlas.Services.Tests\Atlas.Services.Tests.csproj --filter "FullyQualifiedName~BidOpsNoticeEditingTests" --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:OutDir="$env:TEMP\AtlasVerify\BidOpsNoticeEditTestsFinal\"` succeeded: 6 passed, 0 failed, 0 skipped.
+- `npm.cmd run typecheck` succeeded in `frontend/atlas-admin`.
+- `npm.cmd run build` succeeded in `frontend/atlas-admin`; Vite reported only its existing third-party PURE-comment and large-chunk advisory warnings.
+- `dotnet build Atlas.sln --no-restore --nologo --verbosity minimal /nodeReuse:false /m:1 -p:UseSharedCompilation=false -p:BaseOutputPath="$env:TEMP\AtlasVerify\BidOpsNoticeEditSolutionRetry\"` succeeded with 82 existing test-project warnings and 0 errors. The first solution attempt hit a transient `Atlas.Services/obj/Debug/net8.0/Atlas.Services.dll` file lock; the immediate isolated-output retry succeeded without stopping the running WebApi/Worker processes.
+- `git diff --check` found no whitespace errors; Git emitted only existing CRLF normalization warnings for the global model snapshot and `ReviewCorrectionSample.cs`.
+- The BidOps data-access boundary scan found no forbidden API usage; its only `DbContext` matches were pre-existing explanatory comments in outcome extraction and review task code.
+
 ## 2026-07-09 BidOps Local Restart Script Recovery
 
 Completed:
